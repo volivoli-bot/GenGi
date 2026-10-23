@@ -127,6 +127,17 @@ export class Hud {
     this.barBg.setPosition(W / 2, H * 0.62); this.barFill.setPosition(W / 2 - 108, H * 0.62); this.barText.setPosition(W / 2, H * 0.62 - 10);
   }
 
+  /** Hueco para el inventario compacto: derecha, entre el minimapa y la barra de progreso. */
+  panelArea() {
+    const W = this.sc.scale.width, H = this.sc.scale.height;
+    const ins = this.insets;
+    const width = Math.min(300, Math.round((W - ins.left - ins.right) * 0.64));
+    let top = this.miniRect.y + this.miniRect.s + 10;
+    let bottom = H * 0.62 - 28;
+    if (bottom - top < 200) { top = ins.top + 60; bottom = Math.max(top + 200, H - ins.bottom - 160); }
+    return { top: Math.round(top), height: Math.round(bottom - top), width, right: ins.right + 8 };
+  }
+
   /** ¿Toca este punto algún control? (para que el joystick no lo robe) */
   hitTest(x: number, y: number) {
     const btns = [...this.abilities, this.quick, this.pauseBtn, this.bagBtn];
@@ -171,7 +182,7 @@ export class Hud {
 
   flashHurt() { this.hurt.fillAlpha = 0.28; }
 
-  drawMinimap(px: number, py: number, exits: { x: number; y: number; open: boolean }[], closed: { x: number; y: number }[], extra: { x: number; y: number; color: number }[]) {
+  drawMinimap(px: number, py: number, exits: { x: number; y: number; open: boolean }[], closed: { x: number; y: number }[], extra: { x: number; y: number; color: number }[], view?: Phaser.Geom.Rectangle) {
     const { x, y, s } = this.miniRect;
     const k = s / WORLD;
     const g = this.mini.clear();
@@ -179,6 +190,7 @@ export class Hud {
     for (const c of closed) g.fillStyle(0x777777, 0.8).fillCircle(x + c.x * k, y + c.y * k, 3);
     for (const e of exits) g.fillStyle(e.open ? 0x4cd964 : 0xffb02e, 1).fillCircle(x + e.x * k, y + e.y * k, 4.5);
     for (const e of extra) g.fillStyle(e.color, 1).fillCircle(x + e.x * k, y + e.y * k, 2);
+    if (view) g.lineStyle(1, 0xe8e2d0, 0.45).strokeRect(x + Math.max(0, view.x) * k, y + Math.max(0, view.y) * k, Math.min(view.width, WORLD) * k, Math.min(view.height, WORLD) * k);
     g.fillStyle(0xffffff, 1).fillCircle(x + px * k, y + py * k, 3);
   }
 
@@ -189,7 +201,8 @@ export class Hud {
     while (this.arrowTexts.length < exits.length) this.arrowTexts.push(this.sc.add.text(0, 0, '', { fontFamily: FONT, fontSize: '12px', color: '#4cd964', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5).setScrollFactor(0).setDepth(D - 1));
     const cx = W / 2, cy = (this.miniRect.y + this.miniRect.s + 24 + H - this.insets.bottom - 240) / 2;
     exits.forEach((e, i) => {
-      const sx = e.x - cam.worldView.x, sy = e.y - cam.worldView.y;
+      // a píxeles de pantalla (la cámara del mundo tiene zoom; el HUD no)
+      const sx = (e.x - cam.worldView.x) * cam.zoom, sy = (e.y - cam.worldView.y) * cam.zoom;
       const txt = this.arrowTexts[i];
       if (sx > 0 && sx < W && sy > 0 && sy < H) { txt.setVisible(false); return; }
       const ang = Math.atan2(sy - cy, sx - cx);

@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import {
   LOCKED_CRATE_NOISE, LOCKED_CRATE_SEC, LOOT_ENEMY_BLOCK_TILES, LOOT_REACH_TILES, LOOT_RING_SEC,
   PLAYER_MAX_HP, PLAYER_SPEED_TILES, RAID_AUTOSAVE_SEC, TILE, WORLD, COLORS,
+  RAID_ZOOM_FACTOR,
 } from '../config/constants';
 import { DIFFICULTY, scaling } from '../config/difficulty';
 import { ABILITIES, AbilityId, ITEMS } from '../data/items';
@@ -25,6 +26,8 @@ export interface RaidHost {
   openInventory(): void;
   closeInventory(): void;
   isInventoryOpen(): boolean;
+  /** ¿El punto de pantalla está sobre un panel DOM (inventario)? Esos toques nunca llegan al juego. */
+  overUi(x: number, y: number): boolean;
   refreshInventory(): void;
   onPauseChange(paused: boolean, reason: 'usuario' | 'segundo-plano' | 'reanudada'): void;
 }
@@ -68,6 +71,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   containers: ContainerObj[] = [];
   acidGfx: Phaser.GameObjects.Graphics | null = null;
   scanGfx: Phaser.GameObjects.Graphics | null = null;
+  reloadGfx: Phaser.GameObjects.Graphics | null = null;
   paused = false;
   ended = false;
   god = false;
@@ -144,11 +148,12 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
 
     this.acidGfx = this.add.graphics().setDepth(3);
     this.scanGfx = this.add.graphics().setDepth(25);
+    this.reloadGfx = this.add.graphics().setDepth(26);
 
     const cam = this.cameras.main;
     // margen fuera del mapa para que el jugador quede siempre centrado y por encima de los botones
-    const pad = 200;
-    cam.setBounds(-pad, -pad, WORLD + pad * 2, WORLD + pad * 2).startFollow(this.player, true, 0.15, 0.15).setFollowOffset(0, -70);
+    const pad = 120;
+    cam.setBounds(-pad, -pad, WORLD + pad * 2, WORLD + pad * 2).startFollow(this.player, true, 0.15, 0.15);
     cam.setBackgroundColor('#0d0e10');
     this.applyZoom();
     this.scale.on('resize', this.onResize, this);
@@ -178,8 +183,16 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   private buildUi(ui: Phaser.Scene) {
     this.ui = ui;
     const hud = this.hud = new Hud(ui);
-    this.joy = new Joystick(ui, (x, y) => hud.hitTest(x, y) || this.paused);
-    ui.input.on('pointerdown', (pt: Phaser.Input.Pointer) => { if (!this.paused && !this.ended) hud.handleTap(pt.x, pt.y); });
+    const overUi = (pt: Phaser.Input.Pointer) => {
+      const ev = pt.event as Event | undefined;
+      const cv = this.game.canvas;
+      // el toque empezó fuera del canvas (sobre el DOM) o cae dentro del panel abierto
+      if (ev && ev.target && ev.target !== cv) return true;
+      const r = cv.getBoundingClientRect();
+      return this.host.overUi(r.left + pt.x * (r.width / this.scale.width), r.top + pt.y * (r.height / this.scale.height));
+    };
+    this.joy = new Joystick(ui, (x, y, pt) => hud.hitTest(x, y) || this.paused || (!!pt && overUi(pt)));
+    ui.input.on('pointerdown', (pt: Phaser.Input.Pointer) => { if (!this.paused && !this.ended && !overUi(pt)) hud.handleTap(pt.x, pt.y); });
     this.keys = ui.input.keyboard!.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,ONE,TWO,THREE,Q,I,P') as Record<string, Phaser.Input.Keyboard.Key>;
     ui.input.keyboard!.on('keydown-P', () => this.setPaused(!this.paused, 'usuario'));
     ui.input.keyboard!.on('keydown-I', () => this.toggleInventory());
@@ -204,7 +217,11 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   private onResize() { this.applyZoom(); this.hud?.layout(); }
   private applyZoom() {
     const m = Math.min(this.scale.width, this.scale.height);
-    this.cameras.main.setZoom(Phaser.Math.Clamp(m / 480, 0.7, 1.2));
+    // Basu: cámara 1,6× más cerca que la v0 para que jugador y avisos se lean en el móvil
+    const z = Phaser.Math.Clamp((m / 480) * RAID_ZOOM_FACTOR, 1.1, 2);
+    this.cameras.main.setZoom(z);
+    // el jugador queda ~60 px de pantalla por encima del centro (los botones están abajo)
+    this.cameras.main.setFollowOffset(0, -60 / z);
   }
 
   // ---------- Mundo ----------
@@ -212,9 +229,26 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const g = this.add.graphics().setDepth(0);
     g.fillStyle(COLORS.suelo[0], 1).fillRect(0, 0, WORLD, WORLD);
     const rng = seeded(this.snap.seed + 7);
-    for (let i = 0; i < 260; i++) {
-      g.fillStyle(rng() < 0.5 ? COLORS.suelo[1] : COLORS.musgo, 0.35);
-      g.fillCircle(rng() * WORLD, rng() * WORLD, 10 + rng() * 40);
+    // Suelo: grietas y cascotes grises/ocres de bajo contraste (el verde tóxico queda reservado al peligro)
+    const crackCols = [COLORS.contorno, COLORS.suelo[2], COLORS.oxido];
+    for (let i = 0; i < 420; i++) {
+      let x = rng() * WORLD, y = rng() * WORLD;
+      let a = rng() * Math.PI * 2;
+      g.lineStyle(1 + rng() * 2, crackCols[Math.floor(rng() * 3)], 0.22 + rng() * 0.12);
+      g.beginPath().moveTo(x, y);
+      const segs = 3 + Math.floor(rng() * 4);
+      for (let s = 0; s < segs; s++) {
+        a += (rng() - 0.5) * 1.2; const l = 8 + rng() * 22;
+        x += Math.cos(a) * l; y += Math.sin(a) * l; g.lineTo(x, y);
+        if (rng() < 0.25) { const b = a + (rng() < 0.5 ? 1 : -1) * (0.6 + rng() * 0.6); g.moveTo(x, y).lineTo(x + Math.cos(b) * l * 0.6, y + Math.sin(b) * l * 0.6).moveTo(x, y); }
+      }
+      g.strokePath();
+    }
+    for (let i = 0; i < 700; i++) {
+      const x = rng() * WORLD, y = rng() * WORLD, s = 2 + rng() * 6;
+      g.fillStyle(rng() < 0.65 ? COLORS.suelo[1] : COLORS.oxido, 0.3 + rng() * 0.2);
+      const n = 1 + Math.floor(rng() * 3);
+      for (let k = 0; k < n; k++) g.fillRect(x + (rng() - 0.5) * 14, y + (rng() - 0.5) * 14, s * (0.6 + rng()), s * (0.5 + rng() * 0.8));
     }
     g.lineStyle(2, COLORS.contorno, 0.25);
     for (let i = 0; i <= WORLD; i += TILE * 10) { g.lineBetween(i, 0, i, WORLD); g.lineBetween(0, i, WORLD, i); }
@@ -235,26 +269,38 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   private populate() {
     const rng = seeded(this.snap.seed + 99);
     const spawn = this.map.spawn;
+    const minD = DIFFICULTY.initialMinDistTiles;
+    // Reparto por sectores (4×4 de 15 casillas) para que no se amontonen; se excluyen los cercanos a la entrada
+    const SECT = 4, sw = WORLD / SECT;
+    const sectors: { sx: number; sy: number }[] = [];
+    for (let sy = 0; sy < SECT; sy++) for (let sx = 0; sx < SECT; sx++) {
+      if (Math.hypot((sx + 0.5) * sw - spawn.x, (sy + 0.5) * sw - spawn.y) >= minD * TILE) sectors.push({ sx, sy });
+    }
+    for (let i = sectors.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [sectors[i], sectors[j]] = [sectors[j], sectors[i]]; }
+    let si = 0;
     const farPoint = (minFromSpawn: number) => {
+      const sec = sectors[si++ % Math.max(1, sectors.length)];
       for (let i = 0; i < 40; i++) {
-        const x = (2 + rng() * 56) * TILE, y = (2 + rng() * 56) * TILE;
+        const x = sec ? (sec.sx + 0.1 + rng() * 0.8) * sw : (2 + rng() * 56) * TILE;
+        const y = sec ? (sec.sy + 0.1 + rng() * 0.8) * sw : (2 + rng() * 56) * TILE;
         if (Math.hypot(x - spawn.x, y - spawn.y) < minFromSpawn * TILE) continue;
         if (pointInWalls(this.walls, x, y, TILE * 0.8)) continue;
         return { x, y };
       }
       return { x: WORLD / 2, y: WORLD / 3 };
     };
+    this.snap.stream = { groups: DIFFICULTY.streamErranteGroups, hinchados: DIFFICULTY.streamHinchados, t: DIFFICULTY.streamIntervalSec };
     for (let g = 0; g < DIFFICULTY.initialErranteGroups; g++) {
-      const c = farPoint(15);
+      const c = farPoint(minD);
       const n = DIFFICULTY.erranteGroupMin + Math.floor(rng() * (DIFFICULTY.erranteGroupMax - DIFFICULTY.erranteGroupMin + 1));
       for (let i = 0; i < n; i++) this.spawnAt('errante', c.x + (rng() - 0.5) * TILE * 3, c.y + (rng() - 0.5) * TILE * 3);
     }
-    for (let i = 0; i < DIFFICULTY.initialHinchados; i++) { const c = farPoint(14); this.spawnAt('hinchado', c.x, c.y); }
+    for (let i = 0; i < DIFFICULTY.initialHinchados; i++) { const c = farPoint(minD); this.spawnAt('hinchado', c.x, c.y); }
     const el = this.map.eliteBox;
     const ab = this.spawnAt('abominacion', el.x, el.y - TILE * 2);
     ab.gx = el.x; ab.gy = el.y;
     // más Errantes en la zona peligrosa
-    for (let i = 0; i < 6; i++) this.spawnAt('errante', el.x + (rng() - 0.5) * TILE * 12, el.y + (rng() - 0.5) * TILE * 12);
+    for (let i = 0; i < DIFFICULTY.eliteGuards; i++) this.spawnAt('errante', el.x + (rng() - 0.5) * TILE * 12, el.y + (rng() - 0.5) * TILE * 12);
 
     // botín
     const d = this.map.danger;
@@ -446,7 +492,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       return;
     }
     // recarga automática en cuanto el cargador se vacía
-    if (ws.mag && lo.arma && (lo.arma.mag ?? 0) <= 0 && countOf(lo.mochila, 'municion') > 0) { p.reload = ws.reloadSec ?? 1.5; this.hud?.toast('Recargando…', 1.2); return; }
+    if (ws.mag && lo.arma && (lo.arma.mag ?? 0) <= 0 && countOf(lo.mochila, 'municion') > 0) { p.reload = ws.reloadSec ?? 1.5; return; }
     this.attackT -= dt;
     if (this.attackT > 0) return;
     const range = ws.rangeTiles * TILE + (ws.melee ? this.playerRadius : 0);
@@ -454,7 +500,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     if (!t) return;
     if (ws.mag && lo.arma) {
       if ((lo.arma.mag ?? 0) <= 0) {
-        if (countOf(lo.mochila, 'municion') > 0) { p.reload = ws.reloadSec ?? 1.5; this.hud?.toast('Recargando…', 1.2); }
+        if (countOf(lo.mochila, 'municion') > 0) p.reload = ws.reloadSec ?? 1.5;
         else if (!this.noAmmoWarned) { this.noAmmoWarned = true; this.hud?.toast('¡Sin munición!'); }
         return;
       }
@@ -471,10 +517,32 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.player.rotation = ang - Math.PI / 2;
     if (melee) {
       const arc = this.add.graphics().setDepth(11);
-      arc.lineStyle(6, COLORS.toxico, 0.9).beginPath().arc(this.player.x, this.player.y, TILE * 0.9, ang - 0.7, ang + 0.7).strokePath();
+      arc.lineStyle(6, COLORS.hueso, 0.9).beginPath().arc(this.player.x, this.player.y, TILE * 0.9, ang - 0.7, ang + 0.7).strokePath();
       this.tweens.add({ targets: arc, alpha: 0, duration: 160, onComplete: () => arc.destroy() });
-    } else this.tracer(this.player.x, this.player.y, t.x, t.y);
+    } else if (this.snap.loadout.arma?.def === 'arco') this.arrowFx(this.player.x, this.player.y, t.x, t.y);
+    else this.tracer(this.player.x, this.player.y, t.x, t.y);
     this.enemies.damage(t, dmg, { ang, force: knock });
+  }
+
+  /** Flecha del arco (arte flecha.svg, que apunta 45° arriba-derecha). */
+  private arrowFx(x1: number, y1: number, x2: number, y2: number) {
+    const ang = Math.atan2(y2 - y1, x2 - x1);
+    const img = this.add.image(x1, y1, 'flecha').setDisplaySize(TILE * 0.8, TILE * 0.8).setRotation(ang + Math.PI / 4).setDepth(12);
+    this.tweens.add({ targets: img, x: x2, y: y2, duration: Math.max(60, Math.hypot(x2 - x1, y2 - y1) / 1.6), onComplete: () => img.destroy() });
+  }
+
+  /** Anillo pequeño de recarga sobre el jugador (sustituye al texto centrado). */
+  private drawReload() {
+    const g = this.reloadGfx; if (!g) return;
+    g.clear();
+    const p = this.snap.player;
+    if (p.reload <= 0) return;
+    const total = weaponStats(this.snap.loadout.arma).reloadSec ?? 1.5;
+    const k = Phaser.Math.Clamp(1 - p.reload / total, 0, 1);
+    const x = this.player.x, y = this.player.y - 34;
+    g.fillStyle(COLORS.contorno, 0.6).fillCircle(x, y, 9);
+    g.lineStyle(3, COLORS.hueso, 0.35).strokeCircle(x, y, 7);
+    g.lineStyle(3, COLORS.hueso, 1).beginPath().arc(x, y, 7, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2).strokePath();
   }
 
   private tracer(x1: number, y1: number, x2: number, y2: number, color = 0xfff2a8) {
@@ -508,7 +576,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       }
       case 'torbellino': {
         const r = TILE * 1.8;
-        const fx = this.add.circle(px, py, r, COLORS.toxico, 0.25).setStrokeStyle(4, COLORS.toxico).setDepth(11);
+        const fx = this.add.circle(px, py, r, COLORS.hueso, 0.18).setStrokeStyle(4, COLORS.hueso).setDepth(11);
         this.tweens.add({ targets: fx, alpha: 0, angle: 360, duration: 300, onComplete: () => fx.destroy() });
         for (const e of [...this.enemies.list]) if (Math.hypot(e.x - px, e.y - py) <= r + e.def.size * 0.3) { this.enemies.damage(e, 15 * ws.dmgMult); e.bleed = 4; }
         break;
@@ -526,7 +594,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
           const perp = Math.abs(-rx * Math.sin(ang) + ry * Math.cos(ang));
           return { e, along, perp };
         }).filter(h => h.along > 0 && h.along < L && h.perp < h.e.def.size * 0.45).sort((a, b) => a.along - b.along).slice(0, 3);
-        this.tracer(px, py, px + Math.cos(ang) * L, py + Math.sin(ang) * L, COLORS.toxico);
+        this.arrowFx(px, py, px + Math.cos(ang) * L, py + Math.sin(ang) * L);
         for (const h of hits) this.enemies.damage(h.e, ws.dmg * 1.5, { ang, force: 200 });
         this.noise(px, py, ws.noise);
         break;
@@ -737,7 +805,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     L.t += dt;
     const k = Math.min(1, L.t / need);
     L.ring.lineStyle(6, 0x000000, 0.6).strokeCircle(c.snap.x, c.snap.y, 30);
-    L.ring.lineStyle(5, COLORS.toxico, 1).beginPath().arc(c.snap.x, c.snap.y, 30, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2).strokePath();
+    L.ring.lineStyle(5, COLORS.hueso, 1).beginPath().arc(c.snap.x, c.snap.y, 30, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2).strokePath();
     if (L.t >= need) {
       L.t = 0; L.done.add(c.snap.id);
       c.snap.opened = true;
@@ -763,6 +831,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     if (this.debug) { this.fpsT -= dtMs; if (this.fpsT <= 0) { this.fpsT = 500; this.hud.fps.setText(`${Math.round(this.game.loop.actualFps)} fps · ${this.enemies.list.length} enemigos · guardados ${this.snap.saves}`); } }
     if (this.paused) return;
     const dt = Math.min(dtMs, 50) / 1000;
+    this.drawReload();
     const s = this.snap, p = s.player, lo = s.loadout;
     s.elapsed += dt;
     const minute = s.elapsed / 60;
@@ -783,6 +852,22 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     s.spawnTimer += dt * scaling(minute).spawn;
     if (s.spawnTimer >= DIFFICULTY.baseSpawnIntervalSec) { s.spawnTimer = 0; this.spawnWave(); }
     if (s.hordeCd > 0) s.hordeCd -= dt;
+    // resto de la población inicial, en goteo y fuera de cámara (no todo de golpe)
+    const sq = s.stream;
+    if (sq && sq.groups + sq.hinchados > 0) {
+      sq.t -= dt;
+      if (sq.t <= 0) {
+        sq.t = DIFFICULTY.streamIntervalSec;
+        const pt = this.offscreenPoint(14, 28);
+        if (pt && this.enemies.list.length < DIFFICULTY.maxAlive) {
+          if (sq.groups > 0) {
+            sq.groups--;
+            const n = DIFFICULTY.erranteGroupMin + Math.floor(Math.random() * (DIFFICULTY.erranteGroupMax - DIFFICULTY.erranteGroupMin + 1));
+            for (let i = 0; i < n; i++) this.spawnAt('errante', pt.x + (Math.random() - 0.5) * TILE * 3, pt.y + (Math.random() - 0.5) * TILE * 3);
+          } else { sq.hinchados--; this.spawnAt('hinchado', pt.x, pt.y); }
+        }
+      }
+    }
     if (this.idleT >= DIFFICULTY.idleCorredorSec) {
       this.idleT = 0;
       const pt = this.offscreenPoint(10, 14);
@@ -863,7 +948,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const exitsView = s.exits.map(e => ({ x: e.x, y: e.y, open: this.extraction.isOpen(e), name: EXIT_NAMES[e.type] }));
     this.hud.drawArrows(this.cameras.main, exitsView);
     const closed = this.map.exitLocs.filter((_, i) => !s.exits.some(e => e.loc === i));
-    this.hud.drawMinimap(this.player.x, this.player.y, exitsView, closed, this.scanT > 0 ? this.enemies.list.map(e => ({ x: e.x, y: e.y, color: COLORS.peligro })) : []);
+    this.hud.drawMinimap(this.player.x, this.player.y, exitsView, closed, this.scanT > 0 ? this.enemies.list.map(e => ({ x: e.x, y: e.y, color: COLORS.peligro })) : [], this.cameras.main.worldView);
     this.hud.update(dt);
 
     this.autosaveT += dt;

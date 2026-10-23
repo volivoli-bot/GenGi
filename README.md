@@ -5,12 +5,13 @@ GenGi v1: un juego 2D top-down para móvil (roguelike de extracción) hecho con 
 ## Qué incluye
 
 - **Refugio:** equipar, vender y preparar la siguiente incursión.
-- **Botín e inventario:** rarezas, mochila, bolsillo seguro y alijo (lo que no cabe pasa a excedente).
+- **Botín e inventario:** rarezas, mochila, bolsillo seguro y alijo (lo que no cabe pasa a excedente). El panel de la incursión es compacto y no deja pasar los toques al mapa. Al entrar, el cargador sale lleno con la munición de la mochila.
 - **Extracción:** salidas a pie, de generador, con bengala y de pago.
+- **Raid:** cámara a 1,6×, suelo nuevo, anillo de recarga y arte de munición y flechas.
 - **Guardado versionado:** la partida queda en el navegador, se puede exportar e importar, y una incursión a medias se retoma donde se dejó.
 - **Registro de incursiones.**
 - **PWA:** manifiesto e iconos, y service worker en la build de producción.
-- Scripts de QA en `qa/` (Puppeteer contra el preview local). No los ejecuta `npm run build` ni el workflow de GitHub Pages.
+- Scripts de QA en `qa/` (`qa.mjs`, `fog.mjs`, `stress.mjs`, `shots.mjs`; Puppeteer contra el preview local). No los ejecuta `npm run build` ni el workflow de GitHub Pages.
 
 ## Requisitos
 
@@ -47,6 +48,8 @@ En el refugio aparecen botones para borrar la partida y sumar 500 chapas. En la 
 - `state()` — copia del guardado.
 - `start()` — empieza una incursión.
 - `give(id, rareza, cantidad)` — añade un objeto al alijo o, en raid, a la mochila.
+- `equipFromStash(id)` — en el refugio, equipa el primer objeto del alijo con ese id.
+- `stashToBackpack(id)` — pasa una pila del alijo a la mochila.
 - `chapas(n)` — suma chapas.
 - `god(on)` — invulnerabilidad.
 - `hurt(n)` / `kill()` — daño o muerte.

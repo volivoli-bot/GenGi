@@ -20,10 +20,41 @@ ok('4.4 registro incluido en exportación', 'raidLog' in JSON.parse(ex));
 // exits
 const xc=await E(()=>gengi.exitCheck(300)); ok('3.1 salida garantizada (300 mapas)', xc.bad===0, JSON.stringify(xc.seen));
 // start raid
-await E(()=>{gengi.give('pistola','reforzado');}); 
+// equipa la pistola y lleva 20 balas en la mochila, como haría el jugador en el refugio
+await E(()=>{gengi.give('pistola','reforzado');gengi.give('municion','comun',20);});
+await E(()=>gengi.equipFromStash('pistola')); await E(()=>gengi.stashToBackpack('municion'));
 await E(()=>gengi.start()); await sleep(1500);
 await E(()=>{gengi.god(true);gengi.clearEnemies();});
 st=await E(()=>gengi.state()); ok('equipo sale del refugio al entrar (1 escritura)', st.activeRaid && !st.loadout.arma);
+{const lo=st.activeRaid.loadout; const ammo=lo.mochila.filter(i=>i.def==='municion').reduce((n,i)=>n+i.qty,0);
+ ok('2b se entra con el cargador lleno desde la mochila', lo.arma.def==='pistola'&&lo.arma.mag===12&&ammo===8, `mag=${lo.arma.mag} municion_mochila=${ammo}`);}
+// inventario compacto: los toques sobre el panel nunca pasan al joystick ni a los botones
+{
+  await E(()=>{gengi.clearEnemies();gengi.give('vendaje','comun',3);gengi.god(false);gengi.hurt(40);gengi.god(true);gengi.inventory();}); await sleep(300);
+  const geo=await E(()=>{const r=document.querySelector('.sheet').getBoundingClientRect();return {l:r.left,t:r.top,r:r.right,b:r.bottom,W:innerWidth,H:innerHeight}});
+  const snapState=()=>E(()=>{const s=gengi.raid();return JSON.stringify({cds:s.snap.player.cds,bag:s.snap.loadout.mochila.map(i=>i.def+i.qty),joy:s.joy.pointerId})});
+  const s0=await snapState();
+  // 1) toque en la parte izquierda del panel (mitad izquierda de pantalla = zona del joystick)
+  await p.touchscreen.touchStart(geo.l+12, geo.t+60); await sleep(120);
+  const joyDuring=await E(()=>gengi.raid().joy.pointerId); await p.touchscreen.touchEnd(); await sleep(100);
+  // 2) se fuerza el panel encima de los botones de habilidad y se toca justo sobre uno de ellos
+  const btn=await E(()=>{const h=gengi.raid().hud;const b=h.abilities[0].bg;const q=h.quick.bg;const el=document.querySelector('.sheet');Object.assign(el.style,{top:(q.y-60)+'px',height:'200px'});return {x:b.x,y:b.y,qx:q.x,qy:q.y}});
+  await p.touchscreen.tap(btn.x, btn.y); await sleep(100); await p.touchscreen.tap(btn.qx, btn.qy); await sleep(150);
+  const s1=await snapState(); const stillOpen=await E(()=>!!document.querySelector('.sheet'));
+  // control positivo: sin panel, el mismo toque SÍ usa el consumible rápido (el test es sensible)
+  await E(()=>document.querySelector('.sheet .btn.x')?.click()); await sleep(100);
+  await p.touchscreen.tap(btn.qx, btn.qy); await sleep(150); const s2=await snapState();
+  ok('1b control: sin panel el toque llega al botón', s2!==s1, s2);
+  ok('1b toques sobre el panel no llegan a joystick/botones', joyDuring===null && s0===s1 && stillOpen, `joy=${joyDuring} antes=${s0} despues=${s1}`);
+  // 3) con el panel abierto, el joystick (abajo-izquierda) sigue funcionando: se puede huir
+  await E(()=>{gengi.inventory();document.querySelector('.sheet .btn.x')?.click();gengi.inventory();}); await sleep(200);
+  const x0=await E(()=>gengi.raid().player.x);
+  await p.touchscreen.touchStart(60, geo.H-120); await sleep(50); await p.touchscreen.touchMove(120, geo.H-120); await sleep(900);
+  const moved=await E(()=>({x:gengi.raid().player.x,open:!!document.querySelector('.sheet'),paused:gengi.raid().paused}));
+  await p.touchscreen.touchEnd();
+  ok('1c con el inventario abierto el joystick mueve al jugador (sin pausa)', moved.open && !moved.paused && moved.x-x0>20, `dx=${(moved.x-x0).toFixed(0)}`);
+  await E(()=>document.querySelector('.sheet .btn.x')?.click());
+}
 // pause stops clock
 await E(()=>gengi.minute(3)); await E(()=>gengi.pause());
 const t0=await E(()=>gengi.raid().snap.elapsed); await sleep(2000); const t1=await E(()=>gengi.raid().snap.elapsed);

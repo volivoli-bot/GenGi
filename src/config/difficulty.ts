@@ -17,11 +17,19 @@ export const DIFFICULTY = {
   statScalePerMinute: 0.04,
   /** Segundos entre oleadas de aparición en el minuto 0 (se divide por el multiplicador de aparición). */
   baseSpawnIntervalSec: 9,
-  /** Población inicial. */
-  initialErranteGroups: 9,
+  /** Población inicial: lo que ya está en el mapa al entrar (repartido por sectores, lejos del jugador). */
+  initialErranteGroups: 5,
   erranteGroupMin: 3,
   erranteGroupMax: 5,
-  initialHinchados: 4,
+  initialHinchados: 2,
+  /** Errantes que patrullan la zona peligrosa junto a la Abominación. */
+  eliteGuards: 4,
+  /** Resto de la población inicial: entra poco a poco, fuera de cámara, durante el primer medio minuto. */
+  streamErranteGroups: 4,
+  streamHinchados: 2,
+  streamIntervalSec: 6,
+  /** Distancia mínima (casillas) al punto de entrada para la población inicial. */
+  initialMinDistTiles: 15,
   /** Límite de enemigos vivos a la vez (rendimiento en móvil). */
   maxAlive: 75,
 

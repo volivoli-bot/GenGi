@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { COLORS } from './config/constants';
 
 export const ART = ['player', 'errante', 'corredor', 'hinchado', 'abominacion', 'caja', 'bate', 'machete', 'arco', 'pistola',
-  'casco', 'chaleco', 'tablas', 'vendaje', 'botiquin', 'bengala', 'generador', 'chapa', 'extraccion', 'aviso-ataque'];
+  'casco', 'chaleco', 'tablas', 'vendaje', 'botiquin', 'bengala', 'generador', 'chapa', 'extraccion', 'aviso-ataque', 'municion', 'flecha'];
 
 /** Carga el arte vectorial y avisa a la app. */
 export class BootScene extends Phaser.Scene {

@@ -17,7 +17,7 @@ export function h(tag: string, attrs: Attrs = {}, ...kids: (Node | string | null
   return el;
 }
 
-const PLACEHOLDER: Record<string, string> = { ropa: '👕', municion: '🔸' };
+const PLACEHOLDER: Record<string, string> = { ropa: '👕' };
 
 export function itemIcon(id: string): HTMLElement {
   const d = ITEMS[id];

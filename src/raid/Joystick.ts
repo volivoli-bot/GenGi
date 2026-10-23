@@ -8,12 +8,12 @@ export class Joystick {
   private pointerId: number | null = null;
   private readonly radius = 60;
 
-  constructor(private scene: Phaser.Scene, private blocked: (x: number, y: number) => boolean = () => false) {
+  constructor(private scene: Phaser.Scene, private blocked: (x: number, y: number, p?: Phaser.Input.Pointer) => boolean = () => false) {
     this.base = scene.add.circle(0, 0, this.radius, 0xffffff, 0.08).setStrokeStyle(3, 0xffffff, 0.35).setScrollFactor(0).setDepth(1000).setVisible(false);
-    this.knob = scene.add.circle(0, 0, 26, 0x39ff88, 0.55).setScrollFactor(0).setDepth(1001).setVisible(false);
+    this.knob = scene.add.circle(0, 0, 26, 0xe8e2d0, 0.5).setScrollFactor(0).setDepth(1001).setVisible(false);
 
     scene.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
-      if (this.pointerId !== null || p.x > scene.scale.width / 2 || this.blocked(p.x, p.y)) return;
+      if (this.pointerId !== null || p.x > scene.scale.width / 2 || this.blocked(p.x, p.y, p)) return;
       this.pointerId = p.id;
       this.base.setPosition(p.x, p.y).setVisible(true);
       this.knob.setPosition(p.x, p.y).setVisible(true);

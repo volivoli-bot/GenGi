@@ -2,8 +2,8 @@ import Phaser from 'phaser';
 import { ITEMS } from './data/items';
 import { EnemyType } from './data/enemies';
 import { Rarity } from './data/rarity';
-import { addToList, emptyLoadout, gearValue, itemLabel, makeItem } from './game/inventory';
-import { cashChapas, ensureFreeGear } from './game/hubOps';
+import { addToList, emptyLoadout, gearValue, itemLabel, loadMagazine, makeItem } from './game/inventory';
+import { cashChapas, ensureFreeGear, equip, toBackpack } from './game/hubOps';
 import { STASH_SLOTS, TILE } from './config/constants';
 import { newRaidSnapshot, RaidHost, RaidScene } from './raid/RaidScene';
 import { LEGACY_SAMPLE } from './save/migrations';
@@ -62,6 +62,7 @@ export class App implements RaidHost {
     const d = this.save.data;
     if (d.activeRaid) return;
     ensureFreeGear(d);
+    loadMagazine(d.loadout); // se entra con el cargador lleno a partir de la munición de la mochila
     const valueIn = gearValue(d.loadout);
     const seed = (Math.random() * 2 ** 31) >>> 0;
     // El equipo pasa a la raid: sale del guardado del refugio en la MISMA escritura.
@@ -93,6 +94,7 @@ export class App implements RaidHost {
   openInventory() { const s = this.raidScene(); if (s && !s.paused && !s.ended) this.inv.open(); }
   closeInventory() { this.inv.close(); }
   isInventoryOpen() { return this.inv.isOpen; }
+  overUi(x: number, y: number) { return this.inv.contains(x, y); }
   refreshInventory() { this.inv.refresh(); }
 
   endRaid(result: 'extraido' | 'muerto', detail: { cause?: string; exit?: ExitState }) {
@@ -171,6 +173,9 @@ export class App implements RaidHost {
       help: () => Object.keys(api).join(', '),
       state: () => JSON.parse(JSON.stringify(app.save.data)),
       start: () => app.startRaid(),
+      /** Refugio: equipa el primer objeto del alijo con ese id / pasa una pila del alijo a la mochila. */
+      equipFromStash: (id: string) => { const it = app.save.data.stash.find(i => i.def === id); const r = it ? equip(app.save.data, it.uid) : null; app.save.save(); app.hub.render(); return r; },
+      stashToBackpack: (id: string) => { const it = app.save.data.stash.find(i => i.def === id); const r = it ? toBackpack(app.save.data, it.uid) : null; app.save.save(); app.hub.render(); return r; },
       exportStr: () => app.save.exportString(),
       importStr: (str: string) => { app.save.importString(str); return JSON.parse(JSON.stringify(app.save.data)); },
       /** Comprueba en n semillas que siempre hay una salida a pie o generador. */

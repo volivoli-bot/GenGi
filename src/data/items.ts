@@ -52,7 +52,7 @@ export const ITEMS: Record<string, ItemDef> = {
     heal: { amount: 30, seconds: 2 }, desc: '+30 de vida en 2 s.' },
   botiquin: { id: 'botiquin', nombre: 'Botiquín', kind: 'consumible', icon: 'botiquin', weight: 0.8, value: 60, small: true, rolls: false, maxStack: 3,
     heal: { amount: 70, seconds: 4 }, desc: '+70 de vida en 4 s.' },
-  municion: { id: 'municion', nombre: 'Munición 9 mm', kind: 'municion', icon: null, weight: 0.02, value: 4, small: true, rolls: false, maxStack: 48, desc: 'Escasa y cara.' },
+  municion: { id: 'municion', nombre: 'Munición 9 mm', kind: 'municion', icon: 'municion', weight: 0.02, value: 4, small: true, rolls: false, maxStack: 48, desc: 'Escasa y cara.' },
   bengala: { id: 'bengala', nombre: 'Bengala', kind: 'bengala', icon: 'bengala', weight: 0.5, value: 50, small: true, rolls: false, maxStack: 2, desc: 'Abre la extracción de bengala (min 8-10).' },
   chapas: { id: 'chapas', nombre: 'Chapas', kind: 'chapas', icon: 'chapa', weight: 0, value: 1, small: true, rolls: false, maxStack: 999, desc: 'Moneda. Se ingresa al extraer.' },
 };

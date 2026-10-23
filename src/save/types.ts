@@ -77,6 +77,8 @@ export interface RaidSnapshot {
   exits: ExitState[];
   acid: { x: number; y: number; t: number }[];
   spawnTimer: number;
+  /** Población inicial pendiente de entrar en streaming (persistida para retomar exacto). */
+  stream?: { groups: number; hinchados: number; t: number };
   hordeCd: number;
   /** Contador monotónico de guardados de esta raid (diagnóstico). */
   saves: number;

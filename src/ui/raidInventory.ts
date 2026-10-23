@@ -43,12 +43,12 @@ export class RaidInventory {
     this.lastNear = near ? near.id + ':' + near.items.length : '';
     const cell = (it: ItemInst | null, from: 'yo' | 'cerca', label?: string) =>
       itemCell(it, { label, selected: !!it && this.sel?.uid === it.uid, onClick: it ? () => { this.sel = this.sel?.uid === it.uid ? null : { uid: it.uid, from }; this.render(); } : undefined });
-    const el = h('div', { class: 'sheet' },
+    const el = h('div', { class: 'sheet side' },
       h('div', { class: 'row' },
         h('b', {}, 'Mochila'),
-        h('span', { class: 'hint' }, ` · el juego NO se pausa · peso ${totalWeight(lo).toFixed(1)} (vel ${Math.round(speedMult(lo) * 100)} %)`),
+        h('span', { class: 'hint' }, `sin pausa · peso ${totalWeight(lo).toFixed(1)} · vel ${Math.round(speedMult(lo) * 100)}%`),
         h('span', { class: 'spacer' }),
-        h('button', { class: 'btn', style: 'padding:6px 14px', onclick: () => this.close() }, '✕'),
+        h('button', { class: 'btn x', onclick: () => this.close() }, '✕'),
       ),
       h('div', { class: 'scroll' },
         h('h3', {}, 'Equipado'),
@@ -60,9 +60,26 @@ export class RaidInventory {
         this.detail(sc, near?.id ?? null),
       ),
     );
+    // Panel compacto a la derecha, entre el minimapa y la barra de progreso: la zona del joystick
+    // (abajo a la izquierda) y los botones de habilidad (abajo a la derecha) quedan libres.
+    const g = sc.hud?.panelArea();
+    if (g) Object.assign(el.style, { top: g.top + 'px', height: g.height + 'px', width: g.width + 'px', right: g.right + 'px' });
+    // Ningún toque sobre el panel llega al juego (joystick/botones) aunque el navegador los propague.
+    for (const ev of ['pointerdown', 'pointermove', 'pointerup', 'touchstart', 'touchmove', 'touchend', 'mousedown', 'mouseup']) {
+      el.addEventListener(ev, e => e.stopPropagation(), { passive: true });
+    }
+    const keepScroll = this.el?.querySelector('.scroll')?.scrollTop ?? 0;
     this.el?.remove();
     this.root.append(el);
     this.el = el;
+    const sc2 = el.querySelector('.scroll'); if (sc2) sc2.scrollTop = keepScroll;
+  }
+
+  /** ¿El punto (en píxeles CSS de la ventana) cae sobre el panel? */
+  contains(x: number, y: number) {
+    if (!this.el) return false;
+    const r = this.el.getBoundingClientRect();
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
   }
 
   private detail(sc: RaidScene, nearId: number | null) {

@@ -43,4 +43,8 @@ export const COLORS = {
   toxico: 0xb6ff3c,
   mutacion: 0xff3cc8,
   peligro: 0xff3b30,
+  hueso: 0xe8e2d0,
 };
+
+/** Acercamiento de la cámara de la raid respecto a la v0 (Basu: 1,5–2×). */
+export const RAID_ZOOM_FACTOR = 1.6;

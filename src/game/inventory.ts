@@ -132,3 +132,18 @@ export function itemLabel(it: ItemInst) {
   const d = def(it);
   return d.nombre + (it.qty > 1 ? ` ×${it.qty}` : '');
 }
+
+/**
+ * Llena el cargador del arma equipada con la munición que llevas en la mochila.
+ * Se llama al entrar en la raid: se entra con el arma cargada (la munición sale de la mochila
+ * y queda guardada en el arma, `mag`, dentro del loadout/instantánea). Devuelve las balas cargadas.
+ */
+export function loadMagazine(lo: Loadout): number {
+  const ws = weaponStats(lo.arma);
+  if (!lo.arma || !ws.mag) return 0;
+  const need = ws.mag - (lo.arma.mag ?? 0);
+  if (need <= 0) return 0;
+  const got = consume(lo.mochila, 'municion', need);
+  lo.arma.mag = (lo.arma.mag ?? 0) + got;
+  return got;
+}
