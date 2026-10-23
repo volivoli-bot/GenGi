@@ -16,6 +16,13 @@ export interface RaidCtx {
   damagePlayer(n: number, cause: string): void;
   addAcid(x: number, y: number, r?: number): void;
   onEnemyDeath(e: Enemy): void;
+  /** ¿El punto está dentro de la vista de cámara, con un margen interior (px de mundo)? */
+  onScreen(x: number, y: number, margin?: number): boolean;
+}
+
+/** Ha detectado al jugador (lo persigue o le está atacando). */
+export function hasDetected(e: Enemy) {
+  return !e.dead && (e.state === 'chase' || e.state === 'windup' || e.state === 'attack' || e.state === 'recover' || e.state === 'cone');
 }
 
 type State = 'idle' | 'chase' | 'investigate' | 'windup' | 'attack' | 'recover' | 'swell' | 'cone';
@@ -56,6 +63,13 @@ export class Enemy {
 export class EnemyManager {
   list: Enemy[] = [];
   group: Phaser.Physics.Arcade.Group;
+  /** Diagnóstico QA: avisos de ataque iniciados dentro/fuera de pantalla (fuera debe ser siempre 0). */
+  teleStats = { on: 0, off: 0 };
+  /** Margen interior para que el aviso se lea entero: un poco más que el cuerpo del enemigo. */
+  private teleMargin(e: Enemy) { return Math.max(TILE * 0.75, e.def.size * 0.6); }
+  /** Regla de diseño: ningún aviso de ataque empieza fuera de la pantalla. */
+  canTelegraph(e: Enemy) { return this.c.onScreen(e.x, e.y, this.teleMargin(e)); }
+  private countTele(e: Enemy) { if (this.c.onScreen(e.x, e.y, 0)) this.teleStats.on++; else this.teleStats.off++; }
   constructor(private c: RaidCtx) {
     this.group = c.world.physics.add.group();
   }
@@ -75,7 +89,7 @@ export class EnemyManager {
       if (extra.maxHp !== undefined) e.maxHp = extra.maxHp;
       if (extra.dmg !== undefined) e.dmg = extra.dmg;
       e.gx = extra.gx; e.gy = extra.gy; e.bleed = extra.bleed ?? 0;
-      if (extra.swell !== undefined) { this.startSwell(e); e.t = extra.swell; }
+      if (extra.swell !== undefined) { this.startSwell(e, true); e.t = extra.swell; }
     }
     if (type === 'hinchado') {
       e.icon = this.c.world.add.text(x, y - 40, '⚠', { fontSize: '22px', color: '#b6ff3c', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setDepth(30).setVisible(false);
@@ -112,14 +126,19 @@ export class EnemyManager {
     }
     if (e.state === 'idle' || e.state === 'investigate') e.state = 'chase';
     if (e.hp <= 0) {
-      if (e.def.type === 'hinchado') { this.startSwell(e); return false; }
+      if (e.def.type === 'hinchado') {
+        // fuera de pantalla no hay hinchazón ni explosión: revienta sin daño (nunca un golpe que no se pudo ver)
+        if (!this.canTelegraph(e)) { this.kill(e); return true; }
+        this.startSwell(e); return false;
+      }
       this.kill(e);
       return true;
     }
     return false;
   }
 
-  private startSwell(e: Enemy) {
+  private startSwell(e: Enemy, restoring = false) {
+    if (!restoring) this.countTele(e);
     e.state = 'swell'; e.t = ATTACKS.hinchado.swell; e.hp = 0;
     e.body.setVelocity(0, 0);
     this.clearTele(e);
@@ -202,8 +221,9 @@ export class EnemyManager {
         if (e.sees && fromGuard < ATTACKS.abominacion.guardTiles * TILE) e.state = 'chase';
         if (e.state !== 'chase') { this.moveTo(e, gx, gy, sp * 0.6, 8); continue; }
         e.coneT -= dt;
-        if (e.coneT <= 0 && dist < ATTACKS.abominacion.coneTiles * TILE) { this.startCone(e, px, py); continue; }
-        if (dist < ATTACKS.abominacion.triggerTiles * TILE) { this.startWindup(e, px, py); continue; }
+        const vis = this.canTelegraph(e);
+        if (vis && e.coneT <= 0 && dist < ATTACKS.abominacion.coneTiles * TILE) { this.startCone(e, px, py); continue; }
+        if (vis && dist < ATTACKS.abominacion.triggerTiles * TILE) { this.startWindup(e, px, py); continue; }
         this.moveTo(e, px, py, sp); continue;
       }
 
@@ -212,7 +232,8 @@ export class EnemyManager {
         if (!e.sees && e.t < -3) { e.state = 'investigate'; e.goal = { x: px, y: py, until: now + 4 }; }
         if (e.sees) e.t = 0;
         const trig = e.def.type === 'errante' ? ATTACKS.errante.triggerTiles : e.def.type === 'corredor' ? ATTACKS.corredor.triggerTiles : 0;
-        if (trig && dist < trig * TILE && e.sees) { this.startWindup(e, px, py); continue; }
+        // fuera de pantalla puede acercarse, pero no empezar el ataque
+        if (trig && dist < trig * TILE && e.sees && this.canTelegraph(e)) { this.startWindup(e, px, py); continue; }
         this.moveTo(e, px, py, sp);
         continue;
       }
@@ -232,7 +253,7 @@ export class EnemyManager {
 
   private damageTick(e: Enemy, n: number) {
     e.hp -= n;
-    if (e.hp <= 0) { if (e.def.type === 'hinchado') this.startSwell(e); else this.kill(e); }
+    if (e.hp <= 0) { if (e.def.type === 'hinchado' && this.canTelegraph(e)) this.startSwell(e); else this.kill(e); }
   }
 
   private moveTo(e: Enemy, x: number, y: number, speed: number, stopDist = 0) {
@@ -253,6 +274,7 @@ export class EnemyManager {
   }
 
   private startWindup(e: Enemy, px: number, py: number) {
+    this.countTele(e);
     e.state = 'windup';
     e.hitDone = false;
     const sc = this.c.world;
@@ -323,6 +345,7 @@ export class EnemyManager {
   }
 
   private startCone(e: Enemy, px: number, py: number) {
+    this.countTele(e);
     const A = ATTACKS.abominacion;
     e.state = 'cone'; e.t = A.coneWindup; e.coneT = A.coneEvery;
     e.body.setVelocity(0, 0);

@@ -71,3 +71,9 @@ Velocidad: -2 % por punto de peso total (máx -40 %).
   - De pago: hay que entregar un objeto de valor (Reforzado o mejor) para salir.
 - Para extraer hay que aguantar 8 s dentro de la zona. Si te golpean, el contador se pausa y retrocede 2 s.
 - En el minuto 15 llega la niebla tóxica (ver Raid).
+
+## Cámara y avisos fuera de pantalla
+- Zoom 1,4x (unas 7 casillas de ancho en vertical).
+- Ningún enemigo inicia su aviso de ataque (destello, agachada, círculo) fuera de la pantalla.
+- Flecha roja en el borde de la pantalla por cada enemigo que te ha detectado y está fuera de la vista; parpadea si es un Corredor.
+- Principio: difícil pero nunca injusto, todo golpe se ha podido ver venir.

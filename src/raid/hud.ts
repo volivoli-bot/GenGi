@@ -63,6 +63,9 @@ export class Hud {
   barText: Phaser.GameObjects.Text;
   mini: Phaser.GameObjects.Graphics;
   arrows: Phaser.GameObjects.Graphics;
+  threats: Phaser.GameObjects.Graphics;
+  /** QA: flechas de amenaza dibujadas en el último fotograma. */
+  threatShown: { type: string; x: number; y: number }[] = [];
   arrowTexts: Phaser.GameObjects.Text[] = [];
   fog: Phaser.GameObjects.Rectangle;
   hurt: Phaser.GameObjects.Rectangle;
@@ -96,6 +99,7 @@ export class Hud {
     this.barText = t(14).setOrigin(0.5, 1).setVisible(false);
     this.mini = sc.add.graphics().setScrollFactor(0).setDepth(D);
     this.arrows = sc.add.graphics().setScrollFactor(0).setDepth(D - 1);
+    this.threats = sc.add.graphics().setScrollFactor(0).setDepth(D - 1);
     this.layout();
   }
 
@@ -192,6 +196,38 @@ export class Hud {
     for (const e of extra) g.fillStyle(e.color, 1).fillCircle(x + e.x * k, y + e.y * k, 2);
     if (view) g.lineStyle(1, 0xe8e2d0, 0.45).strokeRect(x + Math.max(0, view.x) * k, y + Math.max(0, view.y) * k, Math.min(view.width, WORLD) * k, Math.min(view.height, WORLD) * k);
     g.fillStyle(0xffffff, 1).fillCircle(x + px * k, y + py * k, 3);
+  }
+
+  /**
+   * Flechas ROJAS en el mismo borde de la pantalla: una por enemigo que te ha detectado y está fuera de vista
+   * (más cercanos primero, con tope). El Corredor parpadea; el Hinchado late. Sin texto, para no confundirlas con las salidas.
+   */
+  drawThreats(cam: Phaser.Cameras.Scene2D.Camera, player: { x: number; y: number }, list: { x: number; y: number; type: string }[], now: number, max = 8) {
+    const g = this.threats.clear();
+    this.threatShown = [];
+    const W = this.sc.scale.width, H = this.sc.scale.height, ins = this.insets;
+    const toScr = (x: number, y: number) => ({ x: (x - cam.worldView.x) * cam.zoom, y: (y - cam.worldView.y) * cam.zoom });
+    const c = toScr(player.x, player.y);
+    const x0 = ins.left + 16, x1 = W - ins.right - 16, y0 = ins.top + 16, y1 = H - ins.bottom - 16;
+    const sorted = list.map(e => ({ ...e, d: Math.hypot(e.x - player.x, e.y - player.y) })).sort((a, b) => a.d - b.d).slice(0, max);
+    for (const e of sorted) {
+      const s = toScr(e.x, e.y);
+      const ang = Math.atan2(s.y - c.y, s.x - c.x);
+      const dx = Math.cos(ang), dy = Math.sin(ang);
+      const tx = dx > 0 ? (x1 - c.x) / dx : dx < 0 ? (x0 - c.x) / dx : Infinity;
+      const ty = dy > 0 ? (y1 - c.y) / dy : dy < 0 ? (y0 - c.y) / dy : Infinity;
+      const r = Math.max(0, Math.min(tx, ty));
+      const ax = c.x + dx * r, ay = c.y + dy * r;
+      this.threatShown.push({ type: e.type, x: ax, y: ay });
+      if (e.type === 'corredor' && Math.floor(now * 6) % 2 === 1) continue; // parpadeo
+      const k = (e.type === 'hinchado' ? 1 + 0.25 * Math.sin(now * 9) : 1) * (e.type === 'abominacion' ? 1.35 : 1);
+      const L = 20 * k, Wd = 6.5 * k;
+      g.fillStyle(0xff3b30, 0.95).lineStyle(2, 0x14110f, 1).beginPath();
+      g.moveTo(ax + dx * L * 0.5, ay + dy * L * 0.5);
+      g.lineTo(ax - dx * L * 0.5 - dy * Wd, ay - dy * L * 0.5 + dx * Wd);
+      g.lineTo(ax - dx * L * 0.5 + dy * Wd, ay - dy * L * 0.5 - dx * Wd);
+      g.closePath(); g.fillPath(); g.strokePath();
+    }
   }
 
   /** Flechas en el borde de la pantalla apuntando a las salidas fuera de vista. */

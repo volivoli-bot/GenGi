@@ -14,7 +14,7 @@ import {
 } from '../game/inventory';
 import { rollContainer, rollItem, seeded } from '../game/loot';
 import type { ContainerSnap, ExitState, RaidSnapshot, Settings } from '../save/types';
-import { Enemy, EnemyManager, RaidCtx } from './enemies';
+import { Enemy, EnemyManager, hasDetected, RaidCtx } from './enemies';
 import { chooseExits, EXIT_NAMES, ExtractionManager } from './extraction';
 import { Hud } from './hud';
 import { Joystick } from './Joystick';
@@ -217,7 +217,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   private onResize() { this.applyZoom(); this.hud?.layout(); }
   private applyZoom() {
     const m = Math.min(this.scale.width, this.scale.height);
-    // Basu: cámara 1,6× más cerca que la v0 para que jugador y avisos se lean en el móvil
+    // Diseño (Cámara y avisos): zoom 1,4× respecto a la v0 (~7 casillas de ancho en vertical) para que jugador y avisos se lean en el móvil
     const z = Phaser.Math.Clamp((m / 480) * RAID_ZOOM_FACTOR, 1.1, 2);
     this.cameras.main.setZoom(z);
     // el jugador queda ~60 px de pantalla por encima del centro (los botones están abajo)
@@ -463,11 +463,19 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.host.endRaid(result, detail);
   }
 
-  private pickTarget(rangePx: number, melee: boolean): Enemy | null {
+  /** ¿Punto dentro de la vista de cámara (con margen interior en px de mundo)? */
+  onScreen(x: number, y: number, margin = 0) {
+    const v = this.cameras.main.worldView;
+    return x >= v.x + margin && x <= v.right - margin && y >= v.y + margin && y <= v.bottom - margin;
+  }
+
+  pickTarget(rangePx: number, melee: boolean): Enemy | null {
     const px = this.player.x, py = this.player.y;
     const cands: { e: Enemy; d: number }[] = [];
     for (const e of this.enemies.list) {
       if (!e.targetable) continue;
+      // a distancia (arco, pistola) solo se dispara a lo que se ve en pantalla
+      if (!melee && !this.onScreen(e.x, e.y)) continue;
       const d = Math.hypot(e.x - px, e.y - py) - e.def.size * 0.3;
       if (d > rangePx) continue;
       if (!lineClear(this.walls, px, py, e.x, e.y)) continue;
@@ -947,6 +955,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.hud.pauseBtn.set({ icon: null, label: '', cd: 0, maxCd: 0, enabled: true });
     const exitsView = s.exits.map(e => ({ x: e.x, y: e.y, open: this.extraction.isOpen(e), name: EXIT_NAMES[e.type] }));
     this.hud.drawArrows(this.cameras.main, exitsView);
+    const threats = this.enemies.list.filter(e => hasDetected(e) && !this.onScreen(e.x, e.y)).map(e => ({ x: e.x, y: e.y, type: e.def.type as string }));
+    this.hud.drawThreats(this.cameras.main, this.player, threats, s.elapsed);
     const closed = this.map.exitLocs.filter((_, i) => !s.exits.some(e => e.loc === i));
     this.hud.drawMinimap(this.player.x, this.player.y, exitsView, closed, this.scanT > 0 ? this.enemies.list.map(e => ({ x: e.x, y: e.y, color: COLORS.peligro })) : [], this.cameras.main.worldView);
     this.hud.update(dt);

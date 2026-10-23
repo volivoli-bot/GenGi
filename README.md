@@ -7,11 +7,11 @@ GenGi v1: un juego 2D top-down para móvil (roguelike de extracción) hecho con 
 - **Refugio:** equipar, vender y preparar la siguiente incursión.
 - **Botín e inventario:** rarezas, mochila, bolsillo seguro y alijo (lo que no cabe pasa a excedente). El panel de la incursión es compacto y no deja pasar los toques al mapa. Al entrar, el cargador sale lleno con la munición de la mochila.
 - **Extracción:** salidas a pie, de generador, con bengala y de pago.
-- **Raid:** cámara a 1,6×, suelo nuevo, anillo de recarga y arte de munición y flechas.
+- **Raid:** cámara a 1,4×, suelo nuevo, anillo de recarga y arte de munición y flechas. Los enemigos que te han visto y quedan fuera de pantalla se marcan con flechas rojas en el borde (un Corredor parpadea). El aviso de ataque solo empieza si el enemigo está en pantalla.
 - **Guardado versionado:** la partida queda en el navegador, se puede exportar e importar, y una incursión a medias se retoma donde se dejó.
 - **Registro de incursiones.**
 - **PWA:** manifiesto e iconos, y service worker en la build de producción.
-- Scripts de QA en `qa/` (`qa.mjs`, `fog.mjs`, `stress.mjs`, `shots.mjs`; Puppeteer contra el preview local). No los ejecuta `npm run build` ni el workflow de GitHub Pages.
+- Scripts de QA en `qa/` (`qa.mjs`, `fog.mjs`, `stress.mjs`, `shots.mjs`, `offscreen.mjs`; Puppeteer contra el preview local). No los ejecuta `npm run build` ni el workflow de GitHub Pages.
 
 ## Requisitos
 
