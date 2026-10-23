@@ -1,6 +1,6 @@
 // QA de la v2 (7 puntos + arma de reserva): node qa/v2.mjs (con `npx vite preview --port 4173` en marcha)
 import puppeteer from 'puppeteer-core';
-const URL='http://localhost:4173/?debug=1&noelite';
+const URL=(process.env.GENGI_BASE||'http://localhost:4173/')+'?debug=1&noelite';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const res=[]; const ok=(n,c,i='')=>{res.push(`${c?'PASS':'FAIL'} ${n} ${i}`);console.log(`${c?'PASS':'FAIL'} ${n} ${i}`);};
 const b=await puppeteer.launch({executablePath:'/usr/bin/google-chrome',headless:'new',args:['--no-sandbox','--use-gl=swiftshader','--enable-unsafe-swiftshader','--window-size=390,844']});
@@ -26,7 +26,8 @@ await E(()=>gengi.start()); await sleep(1500); await E(setup); await E(()=>__cal
 
 // ---------- 0. Anuncio de salidas al empezar + carteles ----------
 {const r=await E(()=>{const s=gengi.raid();return {msg:s.hud.msg.text,signs:s.children.list.filter(o=>o.texture?.key==='cartel_evacuacion').length,seen:s.seenExitList(),exits:s.snap.exits.map(e=>e.loc)}});
- ok('7 al empezar se anuncian las 2 salidas activas', /Salidas activas/.test(r.msg) && r.exits.length===2, JSON.stringify(r.msg));
+ // v4: el helipuerto (con tarjeta) también se anuncia: 2 salidas normales + helipuerto opcional
+ ok('7 al empezar se anuncian las 2 salidas activas', /Salidas activas/.test(r.msg) && r.exits.length>=2 && (r.msg.match(/\(/g)||[]).length - (/Helicóptero/.test(r.msg)?1:0) === 2, JSON.stringify(r.msg));
  ok('7 carteles de evacuación en paredes', r.signs>=6, `carteles=${r.signs}`);}
 
 // ---------- 1. Inercia ----------

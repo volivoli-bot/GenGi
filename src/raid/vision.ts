@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { TILE } from '../config/constants';
 import { VISION } from '../config/v2';
 import { LINGER } from '../config/v31';
+import { PERF } from '../config/v32';
 import { lineClear, Rect, WallIndex, segRect } from './map';
 
 /**
@@ -20,8 +21,15 @@ export class Vision {
   /** v3.1 §9.3: «fotos» recientes del polígono (por capa) que siguen visibles LINGER.sec y se apagan por capas. */
   private hist: { t: number; layers: Float32Array[] }[] = [];
   private lastSample = -1e9;
+  /** v3.2: arrays de fotos caducadas para reutilizar, último recálculo (ms reales) y clave de la última máscara dibujada. */
+  private spare: Float32Array[][] = [];
+  private lastCalcMs = -1e9;
+  private lastMaskKey = NaN;
+  private samplePose = { x: NaN, y: NaN, a: NaN, v: -1 };
+  private bins = new Float32Array(0);
+  private wallNow() { return this.sc.time.now; }
   /** QA: redibujos por memoria y fotos vivas. */
-  lingerStats = { redraws: 0, samples: 0 };
+  lingerStats = { redraws: 0, samples: 0, polys: 0 };
   private near: Rect[] = [];
   version = 0;
   enabled = true;
@@ -53,12 +61,17 @@ export class Vision {
     if (!this.enabled) { this.hist.length = 0; return; }
     const L = this.last;
     const had = this.hist.length > 0;
-    while (this.hist.length && now - this.hist[0].t >= LINGER.sec) this.hist.shift();
-    if (Math.abs(L.x - x) < 2 && Math.abs(L.y - y) < 2 && Math.abs(Phaser.Math.Angle.Wrap(L.a - facing)) < 0.012 && L.v === wallsVersion) {
-      // quieto: solo se redibuja mientras se apaga la memoria
-      if (had) { this.drawMasks(now); this.lingerStats.redraws++; }
+    while (this.hist.length && now - this.hist[0].t >= LINGER.sec) { const h = this.hist.shift()!; if (this.spare.length < 4) this.spare.push(h.layers); }
+    const dA = Math.abs(Phaser.Math.Angle.Wrap(L.a - facing)), dP = Math.max(Math.abs(L.x - x), Math.abs(L.y - y));
+    const still = dP < 2 && dA < 0.012 && L.v === wallsVersion;
+    // v3.2: recálculo con tope (≈30 Hz) salvo saltos grandes o cambio de paredes
+    const throttled = !still && L.v === wallsVersion && dP < PERF.fogForcePx && dA < PERF.fogForceRad && this.wallNow() - this.lastCalcMs < PERF.fogMinRedrawMs;
+    if (still || throttled) {
+      // quieto: solo se redibuja cuando una foto de la memoria deja de contar en alguna capa
+      if (had && this.maskKey(now) !== this.lastMaskKey) { this.drawMasks(now); this.lingerStats.redraws++; }
       return;
     }
+    this.lastCalcMs = this.wallNow();
     L.x = x; L.y = y; L.a = facing; L.v = wallsVersion;
     this.version++;
     const R = this.R;
@@ -103,27 +116,71 @@ export class Vision {
     }
     this.drawMasks(now);
     // foto para la memoria (si no se repite demasiado seguido)
-    if (LINGER.sec > 0 && now - this.lastSample >= LINGER.sampleSec) {
-      this.lastSample = now; this.lingerStats.samples++;
-      this.hist.push({ t: now, layers: this.polys.map(pl => { const a = new Float32Array(pl.length * 2); pl.forEach((p, i) => { a[i * 2] = p.x; a[i * 2 + 1] = p.y; }); return a; }) });
+    // v3.2: no se guarda foto si la mirada apenas cambió desde la anterior (la anterior ya cubre esa zona)
+    const sp = this.samplePose;
+    const moved = Math.abs(sp.x - x) > PERF.lingerMinPx || Math.abs(sp.y - y) > PERF.lingerMinPx || Math.abs(Phaser.Math.Angle.Wrap(sp.a - facing)) > PERF.lingerMinRad || sp.v !== wallsVersion;
+    if (LINGER.sec > 0 && now - this.lastSample >= LINGER.sampleSec && moved) {
+      this.lastSample = now; this.lingerStats.samples++; sp.x = x; sp.y = y; sp.a = facing; sp.v = wallsVersion;
+      // v3.2: foto simplificada (1 de cada PERF.lingerDecimate puntos) y arrays reciclados de las fotos caducadas
+      const st = Math.max(1, PERF.lingerDecimate);
+      const spare = this.spare.pop();
+      const layers = this.polys.map((pl, k) => {
+        const m = Math.ceil(pl.length / st);
+        let a = spare?.[k];
+        if (!a || a.length !== m * 2) a = new Float32Array(m * 2);
+        for (let i = 0, j = 0; i < pl.length; i += st, j++) { a[j * 2] = pl[i].x; a[j * 2 + 1] = pl[i].y; }
+        return a;
+      });
+      this.hist.push({ t: now, layers });
     }
   }
 
   /** Máscaras = polígono actual ∪ fotos recientes. La capa k guarda una foto mientras edad < sec·(NL-k)/NL: se apaga por pasos. */
+  /** Qué fotos cuentan en cada capa ahora (si no cambia, la máscara es la misma y no hace falta redibujar). */
+  private maskKey(now: number) {
+    const NL = this.masks.length; let key = this.hist.length ? this.hist[0].t * 1000 : 0;
+    for (let k = 0; k < NL; k++) { const keep = LINGER.sec * (NL - k) / NL; let c = 0; for (const h of this.hist) if (now - h.t < keep) c++; key = key * 31 + c; }
+    return key;
+  }
   private drawMasks(now: number) {
+    this.lastMaskKey = this.maskKey(now);
     const NL = this.masks.length;
     for (let k = 0; k < NL; k++) {
       const g = this.masks[k].clear().fillStyle(0xffffff, 1);
-      g.fillPoints(this.polys[k], true, true);
+      g.fillPoints(this.polys[k], true, true); this.lingerStats.polys++;
       const keep = LINGER.sec * (NL - k) / NL;
+      // v3.2: las fotos vivas de esta capa se funden en UN polígono (unión radial desde el jugador: por cada sector
+      // angular, la distancia máxima). Antes: un polígono por foto (hasta 10 por capa, cada uno rellenando el stencil).
+      let alive = 0, only: Float32Array | null = null;
+      for (const h of this.hist) { if (now - h.t >= keep) continue; const a = h.layers[k]; if (!a || a.length < 6) continue; alive++; only = a; }
+      if (alive === 0) continue;
+      if (alive === 1 && only) {
+        g.beginPath(); g.moveTo(only[0], only[1]);
+        for (let i = 2; i < only.length; i += 2) g.lineTo(only[i], only[i + 1]);
+        g.closePath(); g.fillPath(); this.lingerStats.polys++;
+        continue;
+      }
+      const B = PERF.lingerBins, bins = this.bins.length === B ? this.bins : (this.bins = new Float32Array(B));
+      bins.fill(0);
+      const ox = this.ox, oy = this.oy, TWO_PI = Math.PI * 2;
       for (const h of this.hist) {
         if (now - h.t >= keep) continue;
         const a = h.layers[k];
         if (!a || a.length < 6) continue;
-        g.beginPath(); g.moveTo(a[0], a[1]);
-        for (let i = 2; i < a.length; i += 2) g.lineTo(a[i], a[i + 1]);
-        g.closePath(); g.fillPath();
+        for (let i = 0; i < a.length; i += 2) {
+          const dx = a[i] - ox, dy = a[i + 1] - oy, d = Math.sqrt(dx * dx + dy * dy);
+          let bi = Math.floor(((Math.atan2(dy, dx) + Math.PI) / TWO_PI) * B); if (bi >= B) bi = 0;
+          if (d > bins[bi]) bins[bi] = d;
+        }
       }
+      const floor = this.nearR * 0.5;
+      g.beginPath();
+      for (let i = 0; i < B; i++) {
+        const ang = -Math.PI + ((i + 0.5) / B) * TWO_PI, d = Math.max(bins[i], floor);
+        const x = ox + Math.cos(ang) * d, y = oy + Math.sin(ang) * d;
+        if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      g.closePath(); g.fillPath(); this.lingerStats.polys++;
     }
   }
 

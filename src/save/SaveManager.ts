@@ -1,12 +1,15 @@
 import { ITEMS } from '../data/items';
 import { RARITIES } from '../data/rarity';
 import { emptyLoadout, ItemInst } from '../game/inventory';
-import { migrate } from './migrations';
+import { migrate, profileIdFor } from './migrations';
+import { newProgress } from '../game/levels';
+import { ATTR_IDS } from '../config/levels';
+import { ANTI_ROLLBACK } from '../config/v4';
 import { createStorage, SaveStorage } from './storage';
 import { SAVE_VERSION, SaveData, Settings, Refugio, VendorState } from './types';
 import { STATION_IDS, StationDef, STATIONS, VENDOR_IDS, VendorId } from '../config/v3';
 
-export const newRefugio = (): Refugio => ({ levels: { alijo: 1, bolsillo: 1, generador: 1, enfermeria: 1, taller: 1, radio: 1 }, crafts: [] });
+export const newRefugio = (): Refugio => ({ levels: { alijo: 1, bolsillo: 1, generador: 1, enfermeria: 1, taller: 1, radio: 1, gimnasio: 1, pizarra: 1 }, crafts: [] });
 export const newVendor = (): VendorState => ({ xp: 0, stock: [], stockAt: -1, stockLevel: 0, offers: [], active: null, progress: 0, missionsDone: 0, buyXp: 0 });
 const newVendors = () => Object.fromEntries(VENDOR_IDS.map(v => [v, newVendor()])) as Record<VendorId, VendorState>;
 
@@ -22,6 +25,9 @@ export function newSave(): SaveData {
     seenExits: {},
     refugio: newRefugio(),
     vendors: newVendors(),
+    prog: newProgress(),
+    profileId: profileIdFor(now + ':' + Math.random()),
+    rev: 0,
   };
 }
 
@@ -47,7 +53,40 @@ function normalize(d: Partial<SaveData>): SaveData {
     raidLog: d.raidLog ?? [],
     activeRaid: d.activeRaid ?? null,
     seenExits: d.seenExits && typeof d.seenExits === 'object' ? d.seenExits : {},
+    prog: normProg(d.prog),
+    profileId: typeof d.profileId === 'string' && d.profileId ? d.profileId : d.createdAt ? profileIdFor(String(d.createdAt)) : base.profileId,
+    rev: Number.isFinite(d.rev) ? Math.max(0, Math.floor(d.rev!)) : 0,
   } as SaveData;
+}
+
+function normProg(p: Partial<SaveData['prog']> | undefined): SaveData['prog'] {
+  const b = newProgress();
+  if (!p || typeof p !== 'object') return b;
+  const int = (v: unknown, min: number) => Number.isFinite(v) ? Math.max(min, Math.floor(v as number)) : min;
+  const attrs = { ...b.attrs };
+  for (const a of ATTR_IDS) attrs[a] = int(p.attrs?.[a], 0);
+  const gym: SaveData['prog']['gym'] = {};
+  for (const a of ATTR_IDS) if (p.gym?.[a]) gym[a] = int(p.gym[a], 0);
+  return { ...b, level: int(p.level, 1), xp: int(p.xp, 0), total: int(p.total, 0), free: int(p.free, 0), attrs, gym,
+    cheapRespecAt: Number.isFinite(p.cheapRespecAt) ? p.cheapRespecAt! : -999, freeResets: int(p.freeResets, 0), lastLevelUp: int(p.lastLevelUp, 0) };
+}
+
+/** Marca más alta (incursiones jugadas, guardados) vista de cada partida en este dispositivo. */
+type Mark = { raids: number; rev: number };
+function readMarks(): Record<string, Mark> {
+  try { const o = JSON.parse(localStorage.getItem(ANTI_ROLLBACK.storageKey) ?? '{}'); return o && typeof o === 'object' ? o : {}; } catch { return {}; }
+}
+function writeMark(id: string, m: Mark) {
+  try {
+    const all = readMarks(); const o = all[id];
+    if (o && (o.raids > m.raids || (o.raids === m.raids && o.rev >= m.rev))) return;
+    all[id] = m; localStorage.setItem(ANTI_ROLLBACK.storageKey, JSON.stringify(all));
+  } catch { /* sin espacio */ }
+}
+/** ¿Es `m` anterior a la marca guardada? */
+export function isRollback(id: string, m: Mark) {
+  const o = readMarks()[id];
+  return !!o && (m.raids < o.raids || (m.raids === o.raids && m.rev < o.rev));
 }
 
 function normRefugio(r: Partial<Refugio> | undefined): Refugio {
@@ -83,6 +122,8 @@ export class SaveManager {
   /** Escritura síncrona inmediata. Siempre sobrescribe: nunca se vuelve a un estado anterior. */
   save() {
     this.data.updatedAt = new Date().toISOString();
+    this.data.rev = (this.data.rev ?? 0) + 1;
+    writeMark(this.data.profileId, { raids: this.data.stats.raids, rev: this.data.rev });
     try { this.storage.write(JSON.stringify(this.data)); this.lastError = null; }
     catch (e) { this.lastError = 'No se pudo guardar: ' + e; }
   }
@@ -96,6 +137,12 @@ export class SaveManager {
     if (parsed.saveVersion !== undefined && typeof parsed.saveVersion !== 'number') throw new Error('Archivo no válido');
     const d = normalize(migrate(parsed));
     delete (d as unknown as Record<string, unknown>).exportedAt;
+    // anti-retroceso: una copia anterior de la misma partida no se puede importar
+    if (ANTI_ROLLBACK.enabled) {
+      writeMark(this.data.profileId, { raids: this.data.stats.raids, rev: this.data.rev });
+      if (isRollback(d.profileId, { raids: d.stats.raids, rev: d.rev }))
+        throw new Error('Esa copia es anterior a tu partida actual: no se puede volver atrás. Solo se puede importar una copia más reciente de esta partida o una partida distinta.');
+    }
     this.data = d;
     this.save();
   }

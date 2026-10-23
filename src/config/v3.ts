@@ -1,3 +1,4 @@
+import { BAG_PRICES, BAG_RECIPES, HIERRO_BAGS } from './v4';
 /**
  * Diseño v3 (Basu, gengi-art/diseno-v3.md §1-§6): refugio, materiales, vendedores, enemigos nuevos y mutaciones.
  * TODOS los números de la v3 están aquí; el resto del código solo los lee.
@@ -33,11 +34,13 @@ export const MATERIAL_LOOT = {
 };
 
 // ---------------------------------------------------------------- §2 Refugio
-export type StationId = 'alijo' | 'bolsillo' | 'generador' | 'enfermeria' | 'taller' | 'radio';
-export const STATION_IDS: StationId[] = ['alijo', 'bolsillo', 'generador', 'enfermeria', 'taller', 'radio'];
+export type StationId = 'alijo' | 'bolsillo' | 'generador' | 'enfermeria' | 'taller' | 'radio' | 'gimnasio' | 'pizarra';
+/** v4.0 (§3): Gimnasio y Pizarra, conectadas con los niveles. */
+export const STATION_IDS: StationId[] = ['alijo', 'bolsillo', 'generador', 'enfermeria', 'taller', 'radio', 'gimnasio', 'pizarra'];
 export type Cost = Partial<Record<'chapas' | MaterialId, number>>;
 
-export interface StationDef { nombre: string; icon: string; levels: { desc: string; cost?: Cost }[] }
+/** `icon` con «/» = ruta bajo art/ (v4); sin «/», art/v3/refugio/. `minLevel` (v4.0 §3): nivel de personaje para construir ese nivel. */
+export interface StationDef { nombre: string; icon: string; levels: { desc: string; cost?: Cost; minLevel?: number }[] }
 export const STATIONS: Record<StationId, StationDef> = {
   alijo: { nombre: 'Alijo', icon: 'estacion_alijo', levels: [
     { desc: '30 casillas' },
@@ -56,13 +59,23 @@ export const STATIONS: Record<StationId, StationDef> = {
     { desc: 'Fabrica vendajes con tela', cost: { chapas: 300, mat_tela: 6 } },
     { desc: 'Fabrica botiquines y adrenalina', cost: { chapas: 1000, mat_muestra: 4 } }] },
   taller: { nombre: 'Taller', icon: 'estacion_taller', levels: [
-    { desc: 'Mesa básica' },
-    { desc: 'Fabrica munición y flechas', cost: { chapas: 400, mat_chatarra: 10 } },
-    { desc: '+1 rasgo extra a un arma o armadura', cost: { chapas: 1400, mat_componentes: 8 } }] },
+    { desc: 'Mesa básica · riñoneras' },
+    { desc: 'Fabrica munición, flechas y mochilas de senderismo', cost: { chapas: 400, mat_chatarra: 10 } },
+    { desc: '+1 rasgo extra a un arma o armadura · mochilas táctica y anómala', cost: { chapas: 1400, mat_componentes: 8 } }] },
   radio: { nombre: 'Radio', icon: 'estacion_radio', levels: [
     { desc: 'Sabes los nombres de las salidas' },
     { desc: 'Revela 1 salida activa al empezar', cost: { chapas: 700, mat_componentes: 6 } },
     { desc: 'Sabes dónde está la Abominación y su botín', cost: { chapas: 1600, mat_componentes: 10 } }] },
+  // v4.0 §3: cada nivel construido sube +5 el máximo de UN atributo a elegir (50 → 55, 60, 65)
+  gimnasio: { nombre: 'Gimnasio', icon: 'v4/atributo_fuerza', levels: [
+    { desc: 'Sin construir' },
+    { desc: '+5 al máximo de un atributo (55)', cost: { chapas: 900, mat_chatarra: 12, mat_componentes: 4 }, minLevel: 12 },
+    { desc: '+5 al máximo de otro (o el mismo: 60)', cost: { chapas: 2200, mat_chatarra: 20, mat_componentes: 8 }, minLevel: 20 },
+    { desc: '+5 más (hasta 65)', cost: { chapas: 4500, mat_componentes: 14, mat_muestra: 4 }, minLevel: 30 }] },
+  pizarra: { nombre: 'Pizarra', icon: 'v4/ui_subir_nivel', levels: [
+    { desc: 'Reparte tus puntos de atributo' },
+    { desc: 'Quitar un punto cuesta 1 y devuelve 1, una vez cada 3 incursiones', cost: { chapas: 500, mat_tela: 4, mat_componentes: 3 }, minLevel: 6 },
+    { desc: '1 cambio completo gratis por cada 10 niveles', cost: { chapas: 1500, mat_componentes: 8 }, minLevel: 15 }] },
 };
 export const STASH_BY_LEVEL = [30, 45, 70];
 export const POCKET_BY_LEVEL = [1, 2, 4];
@@ -76,6 +89,8 @@ export const RECIPES: Recipe[] = [
   { id: 'adrenalina', station: 'enfermeria', level: 3, out: 'adrenalina', qty: 1, cost: { mat_muestra: 2, mat_componentes: 1 }, nombre: 'Adrenalina' },
   { id: 'municion', station: 'taller', level: 2, out: 'municion', qty: 12, cost: { mat_chatarra: 4 }, nombre: '12 balas 9 mm' },
   { id: 'flechas', station: 'taller', level: 2, out: 'flechas', qty: 12, cost: { mat_chatarra: 3, mat_tela: 1 }, nombre: '12 flechas' },
+  // v4 §1: el Taller fabrica mochilas
+  ...BAG_RECIPES.map(r => ({ ...r, station: 'taller' as StationId, qty: 1 })),
 ];
 /** Taller nivel 3: un rasgo extra (instantáneo; una vez por objeto, Reforzado o mejor). */
 export const TRAIT_UPGRADE_COST: Cost = { chapas: 150, mat_componentes: 3 };
@@ -100,7 +115,8 @@ export const VENDORS = {
   basePrice: {
     vendaje: 20, botiquin: 80, bengala: 90, adrenalina: 120, granada: 110, antidoto: 90, estimulante: 140,
     bate: 28, machete: 60, arco: 95, ballesta: 130, pistola: 150, municion: 6, flechas: 2.5, virotes: 3.5,
-    tablas: 55, chaleco: 190, casco: 120, mochila_media: 160, mochila_grande: 420,
+    tablas: 55, chaleco: 190, casco: 120,
+    ...BAG_PRICES,
   } as Record<string, number>,
   refPriceMult: 1.35,
   defs: {
@@ -120,8 +136,8 @@ export const VENDORS = {
   chispasGear: ['bate', 'machete', 'arco', 'ballesta', 'pistola'],
   chispasAmmo: [['municion', 12, 4], ['flechas', 12, 4], ['virotes', 10, 3]] as [string, number, number][],
   hierroGear: ['tablas', 'chaleco', 'casco'],
-  hierroBags: [['mochila_media', 1, 1]] as [string, number, number][],
-  hierroBagsRep4: [['mochila_grande', 1, 1]] as [string, number, number][],
+  /** v4: mochilas de Hierro (config/v4.ts HIERRO_BAGS: [id, unidades, desde rep.]). */
+  hierroBags: HIERRO_BAGS,
 };
 
 export type MissionKind =
@@ -160,6 +176,7 @@ export const NEW_ITEMS = {
   antidoto: { immuneSec: 30 },
   estimulante: { sec: 25, tiles: 8 },
   granada: { throwTiles: 5, fuseSec: 1.0, radiusTiles: 2.2, dmg: 45, noise: 12, selfMult: 0.5 },
+  /** v3: casillas extra de mochila (v4: sustituido por BAGS en config/v4.ts; se deja como referencia histórica). */
   mochila: { mochila_media: 4, mochila_grande: 8 } as Record<string, number>,
 };
 

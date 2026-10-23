@@ -46,7 +46,7 @@ export const LINGER = {
   /** Lo que sale del cono sigue visible este tiempo (s) y se va apagando. */
   sec: 0.6,
   /** Cada cuánto se guarda una «foto» del polígono de visión (s). */
-  sampleSec: 0.06,
+  sampleSec: 0.12, // v3.2: antes 0.06 (la mitad de fotos; cada una es un polígono más en las 3 máscaras de niebla)
   /** Silueta fantasma (última posición vista, quieta): color y opacidad inicial. */
   ghostTint: 0xb8c4dc,
   ghostAlpha: 0.5,

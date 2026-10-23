@@ -67,6 +67,7 @@ export const JUICE = {
   dmgNumSec: 0.6,
   critColor: '#ffd27a',
   /** Topes de rendimiento: manchas de suelo y cadáveres que se quedan en la raid (los más viejos se reciclan). */
+  /** v3.2: sustituido por PERF.maxStains (config/v32.ts, 60). */
   maxStains: 160,
   maxCorpses: 45,
 };

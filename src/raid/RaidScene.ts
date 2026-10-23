@@ -11,21 +11,30 @@ import { EnemyType, V3_TYPES } from '../data/enemies';
 import { ENEMY_V3, MATERIAL_LOOT, MUTATION_IDS, MUTATIONS, NEW_ITEMS, WAVE_V3 } from '../config/v3';
 import { rarityAtLeast, RARITIES } from '../data/rarity';
 import {
-  backpackAdd, backpackSlots, canPocket, consume, countOf, def, ItemInst, itemLabel, itemValue, makeItem, slotOf,
+  backpackAdd, backpackSlots, canPocket, loadNoiseTiles, quickSlots, useTimeMult, consume, countOf, def, ItemInst, itemLabel, itemValue, makeItem, slotOf,
   speedMult, totalProtection, totalWeight, weaponStats,
 } from '../game/inventory';
-import { rollContainer, rollEliteDrops, rollItem, rollMaterial, seeded } from '../game/loot';
-import type { ContainerSnap, ExitState, RaidSnapshot, Settings } from '../save/types';
+import { rollContainer, rollEliteDrops, rollItem, rollLair, rollMaterial, seeded } from '../game/loot';
+import { mapDef, SNOW } from '../config/v4';
+import { SNOW_ENEMIES } from '../config/v42';
+import { AttrId, XP, XP_UI } from '../config/levels';
+import { attrK, killXp, xpToNext } from '../game/levels';
+import { RARITY_ORDER } from '../data/rarity';
+import type { ContainerSnap, ExitState, RaidSnapshot, SaveData, Settings } from '../save/types';
 import { AimStick } from './aim';
 import { Enemy, EnemyManager, hasDetected, isUnaware, RaidCtx } from './enemies';
-import { chooseExits, EXIT_NAMES, ExtractionManager } from './extraction';
+import { chooseExits, EXIT_NAMES, ExtractionManager, ExtractionStatus, helipadExit } from './extraction';
+const HELI_CARD = 'tarjeta_helipuerto';
+/** v4: tintes del «vestido» nevado (paredes, coches, suelos interiores). */
+const SNOW_TINT = { wall: 0xdfe9f2, car: 0xcfe0ee, floor: 0xd6e6f2 };
 import { FlowField } from './flow';
 import { Fx } from './fx';
 import { Hud } from './hud';
 import { Joystick } from './Joystick';
-import { Door, generateMap, lineClear, MapData, pointInWalls, rayHit, Rect, setWallIndex, WallIndex, zoneAt } from './map';
+import { Door, generateMap, lineClear, MapData, pointInWalls, rayHit, Rect, regionAt, setWallIndex, snowAt, WallIndex, zoneAt } from './map';
 import { Proj, Projectiles, isPhysical } from './projectiles';
 import { BOWS, DAMAGE, ELITE, LINGER, PLAYER_ART, TRAPERO } from '../config/v31';
+import { PERF } from '../config/v32';
 import { rollDamage } from '../game/damage';
 import { Rig } from './rig';
 import { Vision } from './vision';
@@ -47,12 +56,15 @@ export interface RaidHost {
   /** v3.1 (Trapero): chapas del refugio y gastarlas (se guarda con la incursión). */
   bankChapas(): number;
   spendBankChapas(n: number): boolean;
+  /** v4.0: guardado (nivel y atributos, que se aplican al momento) y abrir el panel de atributos. */
+  saveData?(): SaveData;
+  openAttributes?(): void;
 }
 
 export interface RaidInit { snap: RaidSnapshot; settings: Settings; fresh: boolean; host: RaidHost; debug: boolean }
 
 interface ContainerObj { snap: ContainerSnap; sprite: Phaser.GameObjects.Image | Phaser.GameObjects.Ellipse; lock?: Phaser.GameObjects.Text; glow?: Phaser.GameObjects.Arc }
-interface DoorObj { d: Door; img: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle; body: Phaser.GameObjects.Zone; open: boolean }
+interface DoorObj { d: Door; img: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle; body: Phaser.GameObjects.Zone; open: boolean; locked?: boolean }
 
 /** Escena de UI sin zoom, encima del mundo. */
 export class RaidUIScene extends Phaser.Scene {
@@ -67,6 +79,7 @@ function vibrate(ms: number | number[]) { try { if (!NO_VIBRATE) navigator.vibra
 export function newRaidSnapshot(seed: number, loadout: RaidSnapshot['loadout'], valueIn: number): RaidSnapshot {
   const map = generateMap(seed);
   const exits = chooseExits(seeded(seed ^ 0x5bd1e995), map);
+  const heli = helipadExit(map); if (heli) exits.push(heli);
   const sp = map.spawns[Math.floor(seeded(seed ^ 0x2545f491)() * map.spawns.length)] ?? map.spawn;
   return {
     id: 'raid-' + Date.now().toString(36), seed, startedAt: new Date().toISOString(), elapsed: 0, valueIn, kills: 0,
@@ -83,6 +96,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   fresh = false;
   debug = false;
   map!: MapData;
+  /** v4: definición del mapa (dificultad, rarezas, XP). */
+  get mapDef() { return mapDef(this.map?.defId); }
   /** Paredes que bloquean AHORA (fijas + puertas cerradas). Se sustituye al abrir una puerta. */
   walls: Rect[] = [];
   wallsVersion = 0;
@@ -126,7 +141,12 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   private warned13 = false;
   private nextContainerId = 1;
   private lastMove = new Phaser.Math.Vector2();
-  private fpsT = 0;
+  /** v3.2: fps reales por ventanas de 0,5 s y mínimo entre los minutos PERF.fpsMinFrom y fpsMinTo (QA y contador). */
+  fpsNow = 0;
+  fpsMin1215 = Infinity;
+  private fpsFrames = 0;
+  private fpsWin = 0;
+  private fpsWarm = 0;
   private abilityIds: (AbilityId | null)[] = [null, null, null];
   private glanceT = 0;
   // ---- prueba v2: estados e indicadores junto al jugador ----
@@ -167,6 +187,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   private clavarArmed = false;
   /** Dirección del cono de visión (sigue a `facing` con el giro limitado). */
   viewFacing = -Math.PI / 2;
+  /** QA v3.2: flechas del suelo retiradas por el tope. */
+  arrowsCulled = 0;
   private groundArrows: { x: number; y: number; qty: number; def: string; img: Phaser.GameObjects.Image; glow: Phaser.GameObjects.Arc | null }[] = [];
   private kick = new Phaser.Math.Vector2();
   private behind: { ang: number; k: number }[] = [];
@@ -184,6 +206,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   /** QA v3. */
   v3s = { mats: 0, trunks: 0, muestras: 0, grenades: 0, grenadeHits: 0, mutated: 0, screamsSpawned: 0 };
   v31s = { eliteKills: 0, eliteDrops: 0, traperoSold: 0, traperoBought: 0 };
+  /** v4.2: diagnóstico de la Zona Helada (QA). */
+  v42s = { packs: 0, bossKills: 0, spawned: { congelado: 0, lobo: 0, escarcha: 0, matriarca: 0 } };
 
   constructor() { super('Raid'); }
 
@@ -192,13 +216,14 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.paused = false; this.ended = false; this.containers = []; this.doors = []; this.hud = null; this.joy = null; this.aim = null;
     this.loot = { c: null, t: 0, done: new Set(), ring: null, pause: 0 };
     this.warned13 = d.snap.elapsed >= DIFFICULTY.fogWarningSeconds;
-    this.attackT = 0; this.autosaveT = 0; this.idleT = 0; this.scanT = 0; this.god = false; this.markG = null; this.markImgs = new Map(); this.markTxt = new Map(); this.hitTimes = []; this.miniHpUntil = -1; this.acidStackT = 0; this.statusAcc = { bleed: 0, poison: 0 }; this.statusDealt = { bleed: 0, poison: 0 }; this.applying = null; this.healStats = { done: 0, cancelHit: 0, cancelRelease: 0 }; this.noiseRing = null; this.conesGfx = null; this.debris = []; this.execTarget = null; this.ringR = 0; this.stepT = 0; this.noAmmoWarned = false;
+    this.attackT = 0; this.autosaveT = 0; this.idleT = 0; this.scanT = 0; this.god = false; this.markG = null; this.markImgs = new Map(); this.markTxt = new Map(); this.hitTimes = []; this.miniHpUntil = -1; this.acidStackT = 0; this.statusAcc = { bleed: 0, poison: 0 }; this.statusDealt = { bleed: 0, poison: 0 }; this.applying = null; this.healStats = { done: 0, cancelHit: 0, cancelRelease: 0 }; this.noiseRing = null; this.conesGfx = null; this.debris = []; this.execTarget = null; this.ringR = 0; this.stepT = 0; this.noAmmoWarned = false; this.fpsMin1215 = Infinity; this.fpsFrames = 0; this.fpsWin = 0; this.fpsWarm = 0; this.fpsNow = 0; this.peekTxt = new Map(); this.lvlWarned = 0; this.chill = { k: 0, t: 0 }; this.chillTinted = false;
     this.swapT = 0; this.glanceT = 0; this.steadyT = 0; this.hitStopT = 0; this.vel.set(0, 0); this.kick.set(0, 0);
-    this.stuck = new Map(); this.clavarArmed = false; this.groundArrows = []; this.pendingMelee = []; this.behind = [];
+    this.stuck = new Map(); this.clavarArmed = false; this.groundArrows = []; this.arrowsCulled = 0; this.pendingMelee = []; this.behind = [];
     this.sewers = []; this.sewerImgs = []; this.grenades = []; this.estimGfx = null; this.radioDot = null;
     this.warnedMut = d.snap.elapsed >= MUTATIONS.fromMinute * 60;
     this.v3s = { mats: 0, trunks: 0, muestras: 0, grenades: 0, grenadeHits: 0, mutated: 0, screamsSpawned: 0 };
     this.v31s = { eliteKills: 0, eliteDrops: 0, traperoSold: 0, traperoBought: 0 };
+    this.v42s = { packs: 0, bossKills: 0, spawned: { congelado: 0, lobo: 0, escarcha: 0, matriarca: 0 } };
     this.stats = { shots: 0, swaps: 0, attacksDuringSwap: 0, behindWarn: 0, behindVibes: 0, hitStops: 0, crits: 0, critsTaken: 0, doorsOpened: 0, arrowsRecovered: 0, impactNoises: 0, clavarShots: 0, lootPaused: 0, iosKick: 0, backstabs: 0, executes: 0, debrisSteps: 0, autoSkippedUnaware: 0 };
   }
 
@@ -213,6 +238,19 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   playerMelee() { return weaponStats(this.snap.loadout.arma).melee; }
   pfacing() { return this.facing; }
   vibrate(ms: number) { vibrate(ms); }
+  // ---------- v4.2 Zona Helada ----------
+  /** Ralentización por frío (Escarcha, aliento y charcos de la Matriarca): se queda la más fuerte mientras dure. */
+  chill = { k: 0, t: 0 };
+  slowPlayer(k: number, sec: number) {
+    if (this.god && !this.chillInGod) return;
+    if (k >= this.chill.k || this.chill.t <= 0) this.chill.k = k;
+    this.chill.t = Math.max(this.chill.t, sec);
+  }
+  /** QA: aplicar la ralentización también en modo dios. */
+  chillInGod = false;
+  private chillTinted = false;
+  summon(type: EnemyType, x: number, y: number) { return this.enemies.list.length < DIFFICULTY.maxAlive + 12 ? this.spawnAt(type, x, y, undefined, false) : null; }
+  toast(msg: string, sec = 2) { this.hud?.toast(msg, sec); }
   /** Chillón: atrae a todo en 12 casillas, horda cercana y +60 % de aparición en la zona 2 min. */
   onScream(e: Enemy) {
     const C = ENEMY_V3.chillon, s = this.snap;
@@ -259,8 +297,9 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const wallGroup = this.physics.add.staticGroup();
     for (const r of this.map.walls) wallGroup.add(this.add.zone(r.x + r.w / 2, r.y + r.h / 2, r.w, r.h));
     const doorGroup = this.physics.add.staticGroup();
+    const locked = new Set(this.map.lockedDoors);
     for (const d of this.map.doors) {
-      const open = s.doorsOpen!.includes(d.id);
+      const open = !locked.has(d.id) && s.doorsOpen!.includes(d.id);
       const body = this.add.zone(d.x + d.w / 2, d.y + d.h / 2, d.w, d.h);
       doorGroup.add(body);
       body.setData('door', d.id);
@@ -268,6 +307,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
         ? this.add.image(d.horiz ? d.x : d.x + d.w / 2, d.horiz ? d.y + d.h / 2 : d.y, 'puerta').setOrigin(0, 0.5).setDisplaySize(d.horiz ? d.w : d.h, TILE * 0.42).setRotation(d.horiz ? 0 : Math.PI / 2).setDepth(6)
         : this.add.rectangle(d.x, d.y, d.w, d.h, COLORS.oxido).setOrigin(0).setDepth(6);
       const o: DoorObj = { d, img, body, open: false };
+      // v4: puerta cerrada con candado (según la variación del mapa) = pared; no se abre
+      if (locked.has(d.id)) { o.locked = true; img.setAlpha(0.9); if (this.textures.exists('v4/candado')) this.add.image(d.x + d.w / 2, d.y + d.h / 2, 'v4/candado').setDisplaySize(TILE * 0.6, TILE * 0.6).setDepth(6.7); }
       this.doors.push(o);
       if (open) this.openDoor(o, false, true);
     }
@@ -282,7 +323,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.playerRadius = 44 * 0.3;
     this.rig = new Rig(this, p.x, p.y, { base: PLAYER_ART.version === 'v3' && this.textures.exists('jugador3_torso') ? 'jugador3' : 'jugador', size: 44, depth: 10, weapon: s.loadout.arma?.def ?? null, v1Size: 44 });
     this.physics.add.collider(this.player, wallGroup);
-    const doorHit = (_a: unknown, z: unknown) => { const id = (z as Phaser.GameObjects.Zone).getData('door') as number; const o = this.doors.find(x => x.d.id === id); if (o && !o.open) this.openDoor(o, _a === this.player); };
+    const doorHit = (_a: unknown, z: unknown) => { const id = (z as Phaser.GameObjects.Zone).getData('door') as number; const o = this.doors.find(x => x.d.id === id); if (o && !o.open && !o.locked) this.openDoor(o, _a === this.player); };
     this.physics.add.collider(this.player, doorGroup, doorHit as Phaser.Types.Physics.Arcade.ArcadePhysicsCallback);
 
     this.enemies = new EnemyManager(this);
@@ -308,13 +349,16 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.setupStealth();
     this.setupTrapero();
 
-    for (const i of this.host.seenExits(this.map.id)) this.seen.add(i);
+    // v4: el helipuerto (índice 3) cambia de sitio según la franja nevada → no se guarda como «vista»
+    for (const i of this.host.seenExits(this.map.id)) if (i < 3) this.seen.add(i);
     this.applyRadio();
     this.extraction = new ExtractionManager(s.exits, this.map, {
       scene: this, px: () => this.player.x, py: () => this.player.y, elapsed: () => s.elapsed,
       noise: (x, y, r) => this.noise(x, y, r),
       hasFlare: () => countOf(this.snap.loadout.mochila, 'bengala') + this.pocketCount('bengala') > 0,
       useFlare: () => this.useFlare(),
+      hasCard: () => this.hasItem(HELI_CARD),
+      useCard: () => { const lo = this.snap.loadout; if (consume(lo.mochila, HELI_CARD, 1) > 0 || this.pocketTake(HELI_CARD)) { this.host.refreshInventory(); return true; } return false; },
       payCandidate: () => { const it = this.payItem(); return it ? `${itemLabel(it)} (${RARITIES[it.rarity].nombre})` : null; },
       pay: () => this.pay(),
       onExtract: (e) => this.finish('extraido', { exit: e }),
@@ -369,6 +413,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     s.player.x = sp.x; s.player.y = sp.y;
     s.enemies = []; s.containers = []; s.acid = []; s.doorsOpen = []; s.arrows = [];
     s.exits = chooseExits(seeded(s.seed ^ 0x5bd1e995), this.map);
+    const heli = helipadExit(this.map); if (heli) s.exits.push(heli);
     s.repopulate = false;
   }
 
@@ -402,14 +447,17 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     ui.input.keyboard!.on('keydown-R', () => this.swapWeapon());
     hud.abilities.forEach((b, i) => b.onTap = () => this.useAbility(i));
     hud.quick.onTap = () => this.useQuick();
+    hud.quick2.onTap = () => this.useQuick(2);
+    hud.quick2.setShown(false);
     hud.swap.onTap = () => { if (this.execTarget) this.execute(); else this.swapWeapon(); };
     hud.pauseBtn.onTap = () => this.setPaused(true, 'usuario');
     hud.bagBtn.onTap = () => this.toggleInventory();
+    hud.lvlBtn.onTap = () => this.host.openAttributes?.();
     hud.pauseBtn.label.setText('');
     const pg = ui.add.graphics().setScrollFactor(0).setDepth(2005);
     const drawPause = () => { pg.clear().fillStyle(0xe8e2d0, 1); const b = hud.pauseBtn.bg; pg.fillRect(b.x - 7, b.y - 8, 5, 16).fillRect(b.x + 2, b.y - 8, 5, 16); };
     drawPause();
-    hud.fps.setVisible(this.debug);
+    hud.fps.setVisible(this.debug || PERF.showFps);
     const relayout = () => { drawPause(); this.aim?.place(hud.aimRest.x, hud.aimRest.y); };
     this.scale.on('resize', relayout);
     this.events.once('shutdown', () => this.scale.off('resize', relayout));
@@ -463,10 +511,12 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     }
     const border = this.add.graphics().setDepth(6);
     border.lineStyle(10, COLORS.contorno, 1).strokeRect(0, 0, WORLD, WORLD);
+    this.drawSnow();
     // suelos interiores (baldosa) y tinte por zona (alto = riesgo alto)
     for (const f of this.map.floors) {
       const o = this.textures.exists('suelo_baldosa') ? this.add.tileSprite(f.x, f.y, f.w, f.h, 'suelo_baldosa').setOrigin(0).setTileScale(0.5).setDepth(1)
         : this.add.rectangle(f.x, f.y, f.w, f.h, COLORS.suelo[2], 0.7).setOrigin(0).setDepth(1);
+      if (this.snowy(f.x + f.w / 2, f.y + f.h / 2) && o instanceof Phaser.GameObjects.TileSprite) o.setTint(SNOW_TINT.floor);
       this.cullables.push({ o, r: f });
     }
     const zg = this.add.graphics().setDepth(1.2);
@@ -474,12 +524,12 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       if (z.kind !== 'alto') continue;
       zg.fillStyle(COLORS.mutacion, 0.07).fillRect(z.rect.x, z.rect.y, z.rect.w, z.rect.h);
       zg.lineStyle(3, COLORS.mutacion, 0.3).strokeRect(z.rect.x - 4, z.rect.y - 4, z.rect.w + 8, z.rect.h + 8);
-      this.add.text(z.rect.x + z.rect.w / 2, z.rect.y - 10, z.name.toUpperCase(), { fontFamily: 'sans-serif', fontStyle: 'bold', fontSize: '16px', color: '#ff3cc8', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5, 1).setDepth(6.5).setAlpha(0.85);
+      this.add.text(z.rect.x + z.rect.w / 2, z.rect.y - 10, this.zoneName(z).toUpperCase(), { fontFamily: 'sans-serif', fontStyle: 'bold', fontSize: '16px', color: '#ff3cc8', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5, 1).setDepth(6.5).setAlpha(0.85);
     }
     for (const z of this.map.zones) {
       if (z.kind !== 'tienda' && z.kind !== 'casa') continue;
       if (z.name === 'Casa') continue;
-      this.add.text(z.rect.x + z.rect.w / 2, z.rect.y - 10, z.name.toUpperCase(), { fontFamily: 'sans-serif', fontStyle: 'bold', fontSize: '14px', color: '#e8e2d0', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5, 1).setDepth(6.5).setAlpha(0.7);
+      this.add.text(z.rect.x + z.rect.w / 2, z.rect.y - 10, this.zoneName(z).toUpperCase(), { fontFamily: 'sans-serif', fontStyle: 'bold', fontSize: '14px', color: '#e8e2d0', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5, 1).setDepth(6.5).setAlpha(0.7);
     }
     // paredes (muro en mosaico + contorno) y coches
     const carSet = new Set(this.map.cars.map(c => `${c.x},${c.y}`));
@@ -488,6 +538,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       if (carSet.has(`${r.x},${r.y}`)) continue;
       const o = this.textures.exists('muro') ? this.add.tileSprite(r.x, r.y, r.w, r.h, 'muro').setOrigin(0).setTileScale(0.5).setDepth(6)
         : this.add.rectangle(r.x, r.y, r.w, r.h, COLORS.suelo[1]).setOrigin(0).setDepth(6);
+      if (this.snowy(r.x + r.w / 2, r.y + r.h / 2) && o instanceof Phaser.GameObjects.TileSprite) o.setTint(SNOW_TINT.wall);
       this.cullables.push({ o, r });
       outline.lineStyle(3, COLORS.contorno, 1).strokeRect(r.x, r.y, r.w, r.h);
     }
@@ -495,12 +546,50 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       const horiz = c.w > c.h;
       const o = this.textures.exists('coche') ? this.add.image(c.x + c.w / 2, c.y + c.h / 2, 'coche').setDisplaySize(horiz ? c.h : c.w, horiz ? c.w : c.h).setRotation(c.rot).setDepth(6)
         : this.add.rectangle(c.x, c.y, c.w, c.h, COLORS.oxido).setOrigin(0).setDepth(6);
+      if (this.snowy(c.x + c.w / 2, c.y + c.h / 2) && o instanceof Phaser.GameObjects.Image) o.setTint(SNOW_TINT.car);
       this.cullables.push({ o, r: c });
     }
     // carteles de evacuación (la flecha del arte apunta a la derecha)
     for (const sg of this.map.signs) {
       if (this.textures.exists('cartel_evacuacion')) this.add.image(sg.x, sg.y, 'cartel_evacuacion').setDisplaySize(T * 0.9, T * 0.9).setRotation(sg.ang).setDepth(6.6);
       this.add.text(sg.x, sg.y + T * 0.55, this.map.exitLocNames[sg.exit] ?? 'Salida', { fontFamily: 'sans-serif', fontStyle: 'bold', fontSize: '11px', color: '#4cd964', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5, 0).setDepth(6.6);
+    }
+  }
+
+  /** v4: ¿punto dentro de la Zona Helada (pasada la frontera)? */
+  snowy(x: number, y: number) { return snowAt(this.map, x, y) > 0.5; }
+  /** v4: nombre visible de una zona (en la nieve, el «nevado»: Cabañas, Radar militar…). */
+  zoneName(z: { name: string; rect: Rect }) { return this.snowy(z.rect.x + z.rect.w / 2, z.rect.y + z.rect.h / 2) ? SNOW.snowNames[z.name] ?? z.name : z.name; }
+
+  /** v4 §4: suelo nevado sobre la franja de esta incursión; la frontera (SNOW.edgeTiles) se difumina en 3 bandas. */
+  private drawSnow() {
+    const sn = this.map.snow; if (!sn || !this.textures.exists('v4/suelo_nieve')) return;
+    const g = this.map.regions.find(r => r.id === sn.region)!;
+    const E = SNOW.edgeTiles * TILE, B = 3, bw = E / B;
+    const foreign = (x: number, y: number) => { const r = regionAt(this.map, x, y); return !!r && r !== g; };
+    const tile = (x: number, y: number, w: number, h: number, a: number) => {
+      if (w <= 0 || h <= 0) return;
+      const o = this.add.tileSprite(x, y, w, h, 'v4/suelo_nieve').setOrigin(0).setTileScale(0.75).setTilePosition(x / 0.75, y / 0.75).setDepth(0.6).setAlpha(a);
+      this.cullables.push({ o, r: { x, y, w, h } });
+    };
+    for (const r of g.rects) {
+      // lados que tocan otra franja (no el borde del mapa ni otro rectángulo de la misma franja)
+      const L = foreign(r.x - 4, r.y + r.h / 2), R = foreign(r.x + r.w + 4, r.y + r.h / 2);
+      const U = foreign(r.x + r.w / 2, r.y - 4), D = foreign(r.x + r.w / 2, r.y + r.h + 4);
+      const x0 = r.x + (L ? E : 0), x1 = r.x + r.w - (R ? E : 0), y0 = r.y + (U ? E : 0), y1 = r.y + r.h - (D ? E : 0);
+      tile(x0, y0, x1 - x0, y1 - y0, 1);
+      for (let k = 0; k < B; k++) {
+        const a = (k + 0.5) / B;
+        if (L) tile(r.x + k * bw, y0, bw, y1 - y0, a);
+        if (R) tile(r.x + r.w - (k + 1) * bw, y0, bw, y1 - y0, a);
+        if (U) tile(x0, r.y + k * bw, x1 - x0, bw, a);
+        if (D) tile(x0, r.y + r.h - (k + 1) * bw, x1 - x0, bw, a);
+      }
+    }
+    // la guarida: placas de hielo
+    if (this.textures.exists('v4/placa_hielo')) {
+      const rng = seeded(this.snap.seed ^ 0x1ce);
+      for (let i = 0; i < 6; i++) this.add.image(sn.lair.x + (0.2 + rng() * 0.6) * sn.lair.w, sn.lair.y + (0.2 + rng() * 0.6) * sn.lair.h, 'v4/placa_hielo').setDisplaySize(TILE * 2, TILE * 1.33).setDepth(0.7).setAlpha(0.85).setRotation(rng() * Math.PI);
     }
   }
 
@@ -569,8 +658,10 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     for (let i = 0; i < DIFFICULTY.initialHinchados; i++) { const c = farPoint(minD); this.spawnAt('hinchado', c.x, c.y); }
     // una Abominación por zona de riesgo alto (comisaría, hospital, almacén militar), con su caja de élite y guardias
     for (const el of this.map.eliteBoxes) {
-      const ab = this.spawnAt('abominacion', el.x, el.y - TILE * 2);
+      // v4.2: en la guarida de la Zona Helada vive La Matriarca (el resto de zonas altas, una Abominación)
+      const ab = this.spawnAt(el.lair ? 'matriarca' : 'abominacion', el.x, el.y - TILE * 2, undefined, el.lair ? false : undefined);
       ab.gx = el.x; ab.gy = el.y;
+      if (el.lair) ab.lair = true;
       const z = zoneAt(this.map, el.x, el.y).rect;
       for (let i = 0; i < DIFFICULTY.eliteGuards; i++) {
         for (let k = 0; k < 10; k++) {
@@ -579,12 +670,12 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
           this.spawnAt('errante', x, y); break;
         }
       }
-      this.snap.containers.push({ id: this.nextContainerId++, x: el.x, y: el.y, kind: 'elite', items: rollContainer(rng, 'elite', 1), opened: false });
+      this.snap.containers.push({ id: this.nextContainerId++, x: el.x, y: el.y, kind: 'elite', items: this.luck(el.lair ? rollLair(rng) : rollContainer(rng, 'elite', 1), rng), opened: false });
     }
     // botín: calles poco, tiendas/casas medio, zonas altas mucho (bonus por zona)
     for (const c of this.map.containers) {
       if (pointInWalls(this.walls, c.x, c.y, 10)) continue;
-      this.snap.containers.push({ id: this.nextContainerId++, x: c.x, y: c.y, kind: c.kind, items: rollContainer(rng, c.kind, c.bonus), opened: false });
+      this.snap.containers.push({ id: this.nextContainerId++, x: c.x, y: c.y, kind: c.kind, items: this.luck(rollContainer(rng, c.kind, c.bonus, snowAt(this.map, c.x, c.y) > 0.5), rng), opened: false });
     }
     this.addMaterials();
     // v3.1 §9.4: el Trapero (50 %), con su propio generador
@@ -731,7 +822,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const s = this.snap, lv = s.radio ?? 0;
     this.radioNews = [];
     if (lv >= 2) {
-      const hidden = s.exits.find(e => !this.seen.has(e.loc));
+      const hidden = s.exits.find(e => !this.seen.has(e.loc) && e.type !== 'helipuerto');
       const ex = hidden ?? s.exits[0];
       if (ex && this.fresh) { this.seen.add(ex.loc); this.host.markExitSeen(this.map.id, ex.loc); }
       if (ex) this.radioNews.push(`📻 Radio: salida activa en ${this.extraction?.locName(ex.loc) ?? this.map.exitLocNames[ex.loc]}`);
@@ -745,10 +836,29 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   }
 
   /** `elite`: true = fuerza élite (depuración), false = nunca (depuración), undefined = tirada normal. */
-  spawnAt(type: EnemyType, x: number, y: number, group?: number, elite?: boolean) {
+  spawnAt(type: EnemyType, x: number, y: number, group?: number, elite?: boolean, pack = false): Enemy {
     x = Phaser.Math.Clamp(x, TILE, WORLD - TILE); y = Phaser.Math.Clamp(y, TILE, WORLD - TILE);
+    // v4.2: en la Zona Helada salen las versiones de la nieve (Congelado, Lobo mutado en manada de 3, Escarcha)
+    const icy = SNOW_ENEMIES.enabled ? SNOW_ENEMIES.swap[type] : undefined;
+    if (icy && snowAt(this.map, x, y) > 0.5) {
+      if (icy === 'lobo' && !pack) {
+        const lead = this.spawnAt('lobo', x, y, group, elite, true);
+        const sides = [-1, 1];
+        lead.flankSide = 0;
+        for (let i = 1; i < SNOW_ENEMIES.wolfPack; i++) {
+          const o = this.spawnAt('lobo', x + (Math.random() - 0.5) * TILE * 2, y + (Math.random() - 0.5) * TILE * 2, group, false, true);
+          o.flankSide = sides[(i - 1) % 2]; o.state = lead.state; o.goal = lead.goal; o.susPhase = lead.susPhase; o.meter = lead.meter;
+        }
+        this.v42s.packs++;
+        return lead;
+      }
+      type = icy;
+    }
     if (type !== 'reptante' && pointInWalls(this.walls, x, y, 20)) { y += TILE * 1.5; }
-    const e = this.enemies.spawn(type, x, y, scaling(this.minute()).stats, type === 'enjambre' ? { group: group ?? this.newGroup() } : undefined);
+    // v4: dificultad del mapa (×1 en El Arrabal) y ×1,3 dentro de la Zona Helada
+    const mult = scaling(this.minute()).stats * this.mapDef.dificultad * (snowAt(this.map, x, y) > 0.5 ? SNOW.enemyMult : 1);
+    const e = this.enemies.spawn(type, x, y, mult, type === 'enjambre' ? { group: group ?? this.newGroup() } : undefined);
+    if (type in this.v42s.spawned) this.v42s.spawned[type as 'congelado']++;
     if (type === 'reptante' && !this.sewers.some(q => Math.hypot(q.x - x, q.y - y) < 4)) this.addSewerImg(x, y);
     // mutaciones desde el minuto 10
     const m = this.minute();
@@ -862,11 +972,75 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
 
   addAcid(x: number, y: number, r = TILE * 1.4) { this.snap.acid.push({ x, y, t: 4 }); void r; }
 
+  /** v4.0 Carroñero: etiquetas con el contenido de las cajas sin abrir a ≤ peekTiles casillas. */
+  private peekTxt = new Map<number, Phaser.GameObjects.Text>();
+  peekShown() { return [...this.peekTxt.entries()].filter(([, t]) => t.visible).map(([id, t]) => ({ id, text: t.text })); }
+  private updatePeek() {
+    const k = this.att('carronero', 'peekTiles') * TILE;
+    const seen = new Set<number>();
+    if (k > 0) for (const c of this.containers) {
+      const sn = c.snap;
+      if (sn.opened || !sn.items.length || sn.kind === 'cadaver') continue;
+      if (Math.hypot(sn.x - this.player.x, sn.y - this.player.y) > k + TILE * 0.5) continue;
+      seen.add(sn.id);
+      let t = this.peekTxt.get(sn.id);
+      const txt = sn.items.slice(0, 3).map(it => ITEMS[it.def]?.nombre ?? it.def).join('\n') + (sn.items.length > 3 ? `\n+${sn.items.length - 3}` : '');
+      if (!t) { t = this.add.text(sn.x, sn.y - TILE * 0.6, '', { fontFamily: 'system-ui, sans-serif', fontSize: '10px', color: '#ffe7a0', stroke: '#000', strokeThickness: 3, align: 'center' }).setOrigin(0.5, 1).setDepth(900); this.peekTxt.set(sn.id, t); }
+      if (t.text !== txt) t.setText(txt);
+      t.setVisible(true);
+    }
+    for (const [id, t] of this.peekTxt) if (!seen.has(id)) { if (!this.containers.some(c => c.snap.id === id && !c.snap.opened)) { t.destroy(); this.peekTxt.delete(id); } else t.setVisible(false); }
+  }
+  /** v4.0: al juntar experiencia para subir de nivel (se asegura al extraer): destello dorado y aviso, una vez por nivel. */
+  private lvlWarned = 0;
+  private checkLevelPending() {
+    const pr = this.host?.saveData?.()?.prog; if (!pr) return;
+    let lv = pr.level, xp = pr.xp + (this.snap.xp ?? 0);
+    while (xp >= xpToNext(lv)) { xp -= xpToNext(lv); lv++; }
+    if (lv > pr.level && lv > this.lvlWarned) {
+      const first = this.lvlWarned === 0 && (this.snap.elapsed < 1);
+      this.lvlWarned = lv;
+      if (first) return; // al retomar una incursión ya avisada no se repite
+      const f = this.add.circle(this.player.x, this.player.y, TILE * 0.6, 0xffc94a, 0.55).setDepth(950).setBlendMode(Phaser.BlendModes.ADD);
+      this.tweens.add({ targets: f, scale: 3, alpha: 0, duration: 650, onComplete: () => f.destroy() });
+      this.hud?.toast(`¡Nivel ${lv}! (se asegura al extraer)`);
+    }
+  }
+
+  /** v4.0: efecto de un atributo (0 sin puntos). */
+  att(a: AttrId, key: string) { return attrK(this.host?.saveData?.(), a, key); }
+  /** v4.0: Medicina (+10 % de efecto por nivel de Enfermería por encima del 1). */
+  private medK(key: string) { const d = this.host?.saveData?.(); return this.att('medicina', key) * (1 + 0.1 * Math.max(0, (d?.refugio.levels.enfermeria ?? 1) - 1)); }
+  /** v4.0: velocidad con la carga (Fuerza: peso que no ralentiza) y la Agilidad. */
+  spd(lo = this.snap.loadout) { return speedMult(lo, this.att('fuerza', 'weight')) * (1 + this.att('agilidad', 'speed')); }
+  /** v4.0: experiencia de la incursión (sin asegurar hasta extraer), con el multiplicador del mapa. */
+  gainXp(n: number, by: 'kills' | 'cajas' | 'mision' | 'extraer') {
+    if (n <= 0) return;
+    const v = n * this.mapDef.xpMult;
+    this.snap.xp = (this.snap.xp ?? 0) + v;
+    const b = (this.snap.xpBy ??= {}); b[by] = (b[by] ?? 0) + v;
+  }
+  /** v4.0: Suerte (+botín, +rareza) y Carroñero (+chapas) sobre lo que sale en un contenedor. Sin puntos no toca el rng. */
+  private luck(items: ItemInst[], rng: () => number) {
+    const up = this.att('suerte', 'rarityUp'), more = this.att('suerte', 'loot'), ch = this.att('carronero', 'chapas');
+    if (more > 0 && items.length && rng() < more) items.push(rollItem(rng, 0));
+    for (const it of items) {
+      if (up > 0 && ITEMS[it.def].rolls && rng() < up) { const i = RARITY_ORDER.indexOf(it.rarity); if (i >= 0 && i < RARITY_ORDER.length - 1) it.rarity = RARITY_ORDER[i + 1]; }
+      if (ch > 0 && it.def === 'chapas') it.qty = Math.round(it.qty * (1 + ch));
+    }
+    return items;
+  }
+
+  /** Depuración: clearEnemies no muestra avisos. */
+  quietKills = false;
+
   onEnemyDeath(e: Enemy) {
     this.snap.kills++;
+    this.gainXp(killXp(e.def.type, !!e.elite, e.def.type === 'matriarca'), 'kills');
+    if (e.def.type === 'matriarca') { this.v42s.bossKills++; if (!this.quietKills) this.hud?.toast('Has abatido a La Matriarca', 2.5); }
     const items: ItemInst[] = [];
     if (e.elite) { const drops = rollEliteDrops(Math.random); items.push(...drops); this.v31s.eliteKills++; this.v31s.eliteDrops += drops.length; }
-    else if (Math.random() < e.def.dropChance) items.push(rollItem(Math.random, 0));
+    else if (Math.random() < e.def.dropChance * (1 + this.att('suerte', 'loot'))) items.push(rollItem(Math.random, 0));
     // v3: muestras mutadas (Hinchado 50 %, Abominación 2-3, mutado 35 %)
     const M = MATERIAL_LOOT.muestra;
     let muestras = 0;
@@ -922,7 +1096,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       const v = near && this.visible(c.snap.x, c.snap.y, 16);
       if (c.sprite.visible !== v) { c.sprite.setVisible(v); c.lock?.setVisible(v); c.glow?.setVisible(v && c.snap.items.length > 0); }
     }
-    for (const a of this.groundArrows) { const v = this.visible(a.x, a.y, 8); a.img.setVisible(v); a.glow?.setVisible(v); }
+    const ga = 0.115 + 0.045 * Math.cos(this.time.now / 900 * Math.PI);
+    for (const a of this.groundArrows) { const v = this.visible(a.x, a.y, 8); a.img.setVisible(v); if (a.glow) { a.glow.setVisible(v); if (v) a.glow.setAlpha(ga); } }
     for (const d of this.debris) d.img.setVisible(Math.abs(d.x - this.player.x) < 700 && Math.abs(d.y - this.player.y) < 700 && this.visible(d.x, d.y, 6));
   }
 
@@ -954,8 +1129,10 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       img = this.add.image(x, y, key).setDepth(4.5).setRotation(rot);
       if (key === 'proyectil_flecha') img.setDisplaySize(8, 30); else img.setDisplaySize(TILE * 0.6, TILE * 0.6);
     }
-    if (glow) this.tweens.add({ targets: glow, alpha: 0.07, duration: 900, yoyo: true, repeat: -1 });
+    // v3.2: sin tween infinito por virote; el brillo late en updateVisibility con una sola fase compartida
     this.groundArrows.push({ x, y, qty, def: id, img, glow });
+    // v3.2: tope de flechas en el suelo (las más viejas desaparecen)
+    while (this.groundArrows.length > PERF.maxGroundArrows) { const o = this.groundArrows.shift()!; o.img.destroy(); o.glow?.destroy(); this.arrowsCulled++; }
     if (save) this.syncArrows();
   }
 
@@ -1039,7 +1216,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   }
 
   /** v3.1 §9.2: variación de daño + crítico del jugador (sustituye el crítico de la v2). */
-  private rollCrit(dmg: number) { return rollDamage(dmg, 'player'); }
+  /** v4.0: Fuerza (+daño cuerpo a cuerpo) y Pulso (+crítico a distancia). */
+  private rollCrit(dmg: number) { const melee = this.playerMelee(); return rollDamage(dmg * (melee ? 1 + this.att('fuerza', 'melee') : 1), 'player', Math.random, melee ? 0 : this.att('pulso', 'crit')); }
 
   /** Puñalada / Ejecutar / disparo apuntado a un desprevenido: ×2,5 (STEALTH.backstabMult), siempre crítico. */
   private backstabDmg(base: number) { const c = DAMAGE.player; return (DAMAGE.backstabRolls ? base * (c.minFrac + (c.maxFrac - c.minFrac) * Math.random()) : base) * STEALTH.backstabMult; }
@@ -1053,6 +1231,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const roll = rolls ? rollDamage(n, 'enemy') : { dmg: n, crit: false };
     let dmg = roll.dmg;
     if (react) dmg *= (1 - totalProtection(this.snap.loadout)) * (p.aguantar > 0 ? 0.4 : 1);
+    dmg *= 1 - this.att('resistencia', 'dmgTaken');
     // v3: el Reptante te agarra → el resto te hace la mitad; adrenalina → -30 %
     dmg *= this.enemies?.v3.dmgMult(cause) ?? 1;
     if ((this.snap.fx?.adren ?? 0) > 0) dmg *= NEW_ITEMS.adrenalina.dmgTakenMult;
@@ -1161,7 +1340,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       return false;
     }
     if (ws.mag && lo.arma && (lo.arma.mag ?? 0) <= 0) {
-      if (countOf(lo.mochila, 'municion') > 0) p.reload = ws.reloadSec ?? 1.5;
+      if (countOf(lo.mochila, 'municion') > 0) p.reload = (ws.reloadSec ?? 1.5) * (1 - this.att('pulso', 'reload'));
       else if (!this.noAmmoWarned) { this.noAmmoWarned = true; this.hud?.toast('¡Sin munición!'); }
       return false;
     }
@@ -1199,7 +1378,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       this.rig.recoil(4);
       this.kick.set(-Math.cos(ang) * AIM.cameraKickPx, -Math.sin(ang) * AIM.cameraKickPx);
     }
-    if (ws.noise > 0) this.noise(this.player.x, this.player.y, ws.noise);
+    if (ws.noise > 0) this.noise(this.player.x, this.player.y, ws.noise * (1 - this.att('sigilo', 'noise')));
     this.host.refreshInventory();
   }
 
@@ -1217,7 +1396,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   }
 
   /** Desviación actual del disparo (grados): empieza en 9° y se estabiliza a 1,2° tras 0,4 s quieto. */
-  spreadDeg() { const k = Phaser.Math.Clamp(this.steadyT / AIM.steadySec, 0, 1); return AIM.spreadStartDeg + (AIM.spreadMinDeg - AIM.spreadStartDeg) * k; }
+  spreadDeg() { const k = Phaser.Math.Clamp(this.steadyT / (AIM.steadySec * (1 - this.att('pulso', 'aim'))), 0, 1); return AIM.spreadStartDeg + (AIM.spreadMinDeg - AIM.spreadStartDeg) * k; }
 
   /** Combate por fotograma: apuntado twin-stick (a distancia), automático (cuerpo a cuerpo o sin tocar el joystick). */
   private combat(dt: number) {
@@ -1234,7 +1413,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
         this.rig.aiming = true;
         if (Math.abs(Phaser.Math.Angle.Wrap(aim.angle - this.steadyRef)) > Phaser.Math.DegToRad(AIM.steadyToleranceDeg)) { this.steadyRef = aim.angle; this.steadyT = 0; }
         else this.steadyT += dt;
-        const k = Phaser.Math.Clamp(this.steadyT / AIM.steadySec, 0, 1);
+        const k = Phaser.Math.Clamp(this.steadyT / (AIM.steadySec * (1 - this.att('pulso', 'aim'))), 0, 1);
         const sp = Phaser.Math.DegToRad(this.spreadDeg());
         const jit = (Math.random() - 0.5) * sp * (1 - k * 0.7);
         const a = aim.angle + jit;
@@ -1275,7 +1454,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const { dmg, crit } = this.rollCrit(ws.dmg);
     const w = this.weaponId();
     this.pendingMelee.push({ t: 0.12, e: t, dmg, crit, weapon: w, range: range * 1.25, heavy: (STAGGER.weapon[w]?.[0] ?? 0) > 250 });
-    if (ws.noise > 0) this.noise(this.player.x, this.player.y, ws.noise);
+    if (ws.noise > 0) this.noise(this.player.x, this.player.y, ws.noise * (1 - this.att('sigilo', 'noise')));
   }
 
   private updatePendingMelee(dt: number) {
@@ -1295,7 +1474,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       this.tweens.add({ targets: arc, alpha: 0, duration: 160, onComplete: () => arc.destroy() });
       this.dealDamage(e, m.dmg, ang, m.weapon, m.crit, m.heavy ? JUICE.hitStopHeavyMs : JUICE.hitStopMs);
       // golpe que conecta: ruido medio
-      this.noise(this.player.x, this.player.y, STEALTH.meleeHitNoise);
+      this.noise(this.player.x, this.player.y, STEALTH.meleeHitNoise * (1 - this.att('sigilo', 'noise')));
     }
   }
 
@@ -1308,7 +1487,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const ap = this.applying;
     if (ap) k = Phaser.Math.Clamp(ap.t / ap.total, 0, 1);
     else if (this.swapT > 0) k = 1 - this.swapT / SWAP.sec;
-    else if (p.reload > 0) { const total = weaponStats(this.snap.loadout.arma).reloadSec ?? 1.5; k = Phaser.Math.Clamp(1 - p.reload / total, 0, 1); }
+    else if (p.reload > 0) { const total = (weaponStats(this.snap.loadout.arma).reloadSec ?? 1.5) * (1 - this.att('pulso', 'reload')); k = Phaser.Math.Clamp(1 - p.reload / total, 0, 1); }
     if (k < 0) return;
     const x = this.player.x, y = this.player.y - 34, r = ap ? 10 : 7; // curación: anillo verde algo mayor
     g.fillStyle(COLORS.contorno, 0.6).fillCircle(x, y, r + 2);
@@ -1417,10 +1596,16 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     if (ok) p.cds[id] = ABILITIES[id].cooldown;
   }
   // ---------- Consumibles ----------
-  useQuick() {
+  useQuick(slot: 1 | 2 = 1) {
+    if (slot === 2 && quickSlots(this.snap.loadout) < 2) return;
+    this.useConsumable(this.quickItem(slot), true);
+  }
+  /** Consumible de cada botón rápido: el 1.º el preferido (o el otro si no tienes); el 2.º (v4, mochila), el otro. */
+  quickItem(slot: 1 | 2): string {
     const pref = this.settings.rapido;
     const other = pref === 'vendaje' ? 'botiquin' : 'vendaje';
-    this.useConsumable(this.hasItem(pref) ? pref : other, true);
+    const first = this.hasItem(pref) ? pref : other;
+    return slot === 1 ? first : first === pref ? other : pref;
   }
 
   private hasItem(id: string) { return countOf(this.snap.loadout.mochila, id) > 0 || this.pocketCount(id) > 0; }
@@ -1456,7 +1641,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const h = ITEMS[id]?.heal;
     if (!h) return false;
     if (!this.hasItem(id)) { this.hud?.toast(`No tienes ${ITEMS[id].nombre.toLowerCase()}`, 1); return false; }
-    const total = PRUEBA_V2.applySec[id] ?? 0;
+    const total = (PRUEBA_V2.applySec[id] ?? 0) * useTimeMult(this.snap.loadout) * (1 - this.medK('time')); // v4: mochila táctica −15 %; v4.0: Medicina
     if (total <= 0) return this.finishConsumable(id);
     this.applying = { id, t: 0, total, hold, pointerId: hold ? this.tapPointer : null };
     this.pendingMelee = [];
@@ -1471,11 +1656,12 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     if (consume(lo.mochila, id, 1) === 0 && !this.pocketTake(id)) { this.hud?.toast(`No tienes ${ITEMS[id].nombre.toLowerCase()}`, 1); return false; }
     this.healStats.done++;
     if (this.snap.track) this.snap.track.heals++;
-    p.healLeft = h.amount; p.healRate = h.amount / h.seconds;
+    const amt = h.amount * (1 + this.medK('heal'));
+    p.healLeft = amt; p.healRate = amt / h.seconds;
     const cured: string[] = [];
     if (S.curaSangrado.includes(id) && p.bleed?.length) { p.bleed = []; cured.push('sangrado'); }
     if (S.curaVeneno.includes(id) && p.poison?.length) { p.poison = []; cured.push('veneno'); }
-    this.hud?.toast(`${ITEMS[id].nombre}: +${h.amount}${cured.length ? ' · fuera ' + cured.join(' y ') : ''}`, 1.2);
+    this.hud?.toast(`${ITEMS[id].nombre}: +${Math.round(amt)}${cured.length ? ' · fuera ' + cured.join(' y ') : ''}`, 1.2);
     this.host.refreshInventory();
     return true;
   }
@@ -1539,7 +1725,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const slot = slotOf(f.it); if (!slot) return;
     const lo = this.snap.loadout;
     const prev = lo[slot] ?? null;
-    if (slot === 'espalda' && lo.mochila.length - 1 + (prev ? 1 : 0) > backpackSlots({ ...lo, espalda: f.it })) { this.hud?.toast('No cabe todo en esa mochila'); return; }
+    if (slot === 'espalda' && lo.mochila.length - 1 + (prev && !prev.free ? 1 : 0) > backpackSlots({ ...lo, espalda: f.it })) { this.hud?.toast('No cabe todo en esa mochila'); return; }
     lo.mochila.splice(lo.mochila.indexOf(f.it), 1);
     lo[slot] = f.it;
     if (slot === 'arma' && prev && !prev.free) {
@@ -1558,8 +1744,9 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const lo = this.snap.loadout; const it = lo[slot]; if (!it) return;
     if (slot === 'espalda') {
       // la mochila puesta pasa a ocupar una casilla de la mochila base: tiene que caber todo
-      if (lo.mochila.length + 1 > backpackSlots({ ...lo, espalda: null })) { this.hud?.toast('Vacía la mochila antes de quitártela'); return; }
-      lo.espalda = null; lo.mochila.push(it); this.host.refreshInventory(); return;
+      // v4: sin mochila quedan los bolsillos (6); la escolar gratuita se descarta al quitarla
+      if (lo.mochila.length + (it.free ? 0 : 1) > backpackSlots({ ...lo, espalda: null })) { this.hud?.toast('Vacía la mochila antes de quitártela'); return; }
+      lo.espalda = null; if (!it.free) lo.mochila.push(it); this.host.refreshInventory(); return;
     }
     if (it.free) { lo[slot] = null; }
     else { if (backpackAdd(lo, it)) { this.hud?.toast('Mochila llena'); return; } lo[slot] = null; }
@@ -1720,7 +1907,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     if (!L.ring) L.ring = this.add.graphics().setDepth(12);
     L.ring.clear();
     if (!can || !c) return;
-    const need = c.snap.kind === 'cerrada' && !c.snap.opened ? LOCKED_CRATE_SEC : LOOT_RING_SEC;
+    const need = (c.snap.kind === 'cerrada' && !c.snap.opened ? LOCKED_CRATE_SEC : LOOT_RING_SEC) / (1 + this.att('agilidad', 'loot'));
     if (L.t === 0 && L.pause <= 0 && c.snap.kind === 'cerrada' && !c.snap.opened) { this.noise(c.snap.x, c.snap.y, STEALTH.crateNoise); this.hud?.toast('La caja cerrada cruje… hace ruido', 1.5); }
     const paused = L.pause > 0;
     if (paused) L.pause -= dt; else L.t += dt;
@@ -1729,6 +1916,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     L.ring.lineStyle(5, paused ? 0xff3b30 : COLORS.hueso, 1).beginPath().arc(c.snap.x, c.snap.y, 30, -Math.PI / 2, -Math.PI / 2 + Math.max(0.001, k) * Math.PI * 2).strokePath();
     if (L.t >= need) {
       L.t = 0; L.done.add(c.snap.id);
+      if (!c.snap.opened && c.snap.kind !== 'cadaver') this.gainXp(XP.container, 'cajas');
       c.snap.opened = true;
       const got: string[] = []; let full = false;
       const min = this.settings.rarezaMin;
@@ -1759,21 +1947,31 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.map.exitLocs.forEach((_, i) => {
       if (this.seen.has(i) || !this.exitVisibleNow(i)) return;
       this.seen.add(i);
-      this.host.markExitSeen(this.map.id, i);
+      if (i < 3) this.host.markExitSeen(this.map.id, i);
       const ex = this.snap.exits.find(e => e.loc === i);
       this.hud?.toast(`Salida descubierta: ${this.extraction.locName(i)}${ex ? ` (${EXIT_NAMES[ex.type]})` : ' · cerrada en esta raid'}`, 2.5);
     });
   }
   seenExitList() { return [...this.seen].sort(); }
+  private inSnow = false;
+  /** QA: último estado de la extracción. */
+  lastExt: ExtractionStatus | null = null;
+  /** v4: aviso al entrar en la Zona Helada. */
+  private checkSnowEnter() {
+    const now = this.snowy(this.player.x, this.player.y);
+    if (now && !this.inSnow) this.hud?.toast('❄ Zona Helada: enemigos más duros, mejor botín', 2.5);
+    this.inSnow = now;
+  }
 
   // ---------- Estados (veneno / sangrado) e indicadores ----------
   /** Añade cargas (máx. 5 por tipo; si está lleno se renueva la más gastada). Cada carga lleva su temporizador. */
+  detectSlow() { return this.att('sigilo', 'suspicion'); }
   addStatus(kind: 'bleed' | 'poison', stacks: number) {
     if (this.ended || this.god || stacks <= 0) return;
     if (kind === 'poison' && (this.snap.fx?.antidoto ?? 0) > 0) return;
     const S = PRUEBA_V2.status, p = this.snap.player;
     const arr = (kind === 'bleed' ? (p.bleed ??= []) : (p.poison ??= []));
-    const dur = kind === 'bleed' ? S.bleedSec : S.poisonSec;
+    const dur = (kind === 'bleed' ? S.bleedSec : S.poisonSec) * (1 - this.att('resistencia', 'dot'));
     for (let i = 0; i < stacks; i++) {
       if (arr.length < S.maxStacks) arr.push(dur);
       else { let m = 0; for (let k = 1; k < arr.length; k++) if (arr[k] < arr[m]) m = k; arr[m] = dur; }
@@ -1851,6 +2049,15 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       g.fillStyle(0x14110f, 0.9).fillRoundedRect(bx - 1, by - 1, bw + 2, bh + 2, 3);
       g.fillStyle(this.miniFlashT > 0 ? 0xffffff : k < P.miniHpLowPct ? 0xff3b30 : 0x4cd964, 1).fillRoundedRect(bx, by, Math.max(1, bw * k), bh, 2);
     }
+    // v4.0: barra de experiencia dorada (36×2) bajo el personaje; la mini barra de vida va encima. Lo no asegurado, más claro.
+    { const pr = this.host?.saveData?.()?.prog;
+      if (pr) {
+        const need = xpToNext(pr.level), U = XP_UI, xw = U.barW, xx = x - xw / 2, xy = by + bh + 3;
+        const kb = Phaser.Math.Clamp(pr.xp / need, 0, 1), kp = Phaser.Math.Clamp((pr.xp + (this.snap.xp ?? 0)) / need, 0, 1);
+        g.fillStyle(U.back, 0.85).fillRect(xx - 1, xy - 1, xw + 2, U.barH + 2);
+        if (kp > kb) g.fillStyle(U.pendingColor, U.pendingAlpha).fillRect(xx, xy, xw * kp, U.barH);
+        g.fillStyle(U.color, 1).fillRect(xx, xy, Math.max(0.5, xw * kb), U.barH);
+      } }
     // estados con número de cargas, al lado de la barra
     const st = [
       { key: 'estado_sangrado', n: p.bleed?.length ?? 0 },
@@ -1908,12 +2115,13 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     }
   }
 
-  /** Radio de ruido del paso actual (casillas): sigilo 1, andar 3, correr 6; chaleco militar +1. */
+  /** Radio de ruido del paso actual (casillas): sigilo 1, andar 3, correr 6; chaleco militar +1; carga +1/+2 (v4). */
   footNoise() {
     const sp = this.vel.length();
     if (this.moveTier === 'quieto' || sp < 12) return 0;
     const base = this.moveTier === 'sigilo' ? STEALTH.sigiloNoise : this.moveTier === 'andar' ? STEALTH.andarNoise : STEALTH.correrNoise;
-    return base + (this.snap.loadout.torso?.def === 'chaleco' ? STEALTH.heavyArmorNoise : 0);
+    // v4 §1: ir cargado hace ruido (>12 de peso +1 casilla, >20 +2)
+    return (base + (this.snap.loadout.torso?.def === 'chaleco' ? STEALTH.heavyArmorNoise : 0) + loadNoiseTiles(this.snap.loadout)) * (1 - this.att('sigilo', 'noise'));
   }
 
   private updateStealth(dt: number) {
@@ -2011,7 +2219,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const aiming = !!this.aim?.aiming && ranged;
     const grabbed = !!this.enemies.v3.grab;
     if (grabbed) { this.enemies.v3.wiggle(v.x, v.y); v.set(0, 0); }
-    const max = PLAYER_SPEED_TILES * TILE * speedMult(lo) * (aiming ? MOVE.aimSpeedMult : 1) * (this.applying ? PRUEBA_V2.applyMoveMult : 1) * ((this.snap.fx?.adren ?? 0) > 0 ? NEW_ITEMS.adrenalina.speedMult : 1);
+    const chilled = this.chill.t > 0 ? 1 - this.chill.k : 1;
+    const max = PLAYER_SPEED_TILES * TILE * this.spd(lo) * chilled * (aiming ? MOVE.aimSpeedMult : 1) * (this.applying ? PRUEBA_V2.applyMoveMult : 1) * ((this.snap.fx?.adren ?? 0) > 0 ? NEW_ITEMS.adrenalina.speedMult : 1);
     const wk = 1 + MOVE.weightTimePct * totalWeight(lo);
     // sigilo: tres pasos según cuánto empujas el joystick (teclado = correr)
     const mag = Math.min(1, v.length());
@@ -2090,7 +2299,19 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   // ---------- Bucle ----------
   update(_t: number, dtMs: number) {
     if (!this.hud || this.ended) return;
-    if (this.debug) { this.fpsT -= dtMs; if (this.fpsT <= 0) { this.fpsT = 500; this.hud.fps.setText(`${Math.round(this.game.loop.actualFps)} fps · ${this.enemies.list.length} enemigos · guardados ${this.snap.saves}`); } }
+    // v3.2: contador de fps (también fuera de ?debug si PERF.showFps) con el mínimo entre los minutos 12 y 15
+    this.fpsFrames++;
+    { const nowMs = this.game.loop.now, win = nowMs - this.fpsWin;
+      if (win >= 500) {
+        const cur = this.fpsFrames * 1000 / win; this.fpsFrames = 0; this.fpsWin = nowMs; this.fpsNow = cur;
+        const m = this.snap.elapsed / 60;
+        // el primer medio segundo tras empezar/reanudar no cuenta (carga)
+        if (m >= PERF.fpsMinFrom && m < PERF.fpsMinTo && win < 2000 && this.fpsWarm++ >= 1) this.fpsMin1215 = Math.min(this.fpsMin1215, cur);
+        if (this.debug || PERF.showFps) {
+          const mn = Number.isFinite(this.fpsMin1215) ? String(Math.round(this.fpsMin1215)) : '—';
+          this.hud.fps.setText(`${Math.round(cur)} fps · mín ${PERF.fpsMinFrom}-${PERF.fpsMinTo}: ${mn}` + (this.debug ? ` · ${this.enemies.list.length} enemigos · guardados ${this.snap.saves}` : ''));
+        }
+      } }
     if (this.paused) return;
     // hit-stop: el mundo se congela unos ms (la UI sigue)
     if (this.hitStopT > 0) {
@@ -2121,9 +2342,9 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.rig.sneaking = this.moveTier === 'sigilo';
     this.rig.update(dt, this.player.x, this.player.y, this.facing, Math.hypot(body.velocity.x, body.velocity.y) / Math.max(1, max), true);
     this.visT -= dt;
-    if (this.visT <= 0) { this.visT = 0.15; this.updateVisibility(); this.cullWorld(); this.updateTrapero(); }
+    if (this.visT <= 0) { this.visT = 0.15; this.updateVisibility(); this.cullWorld(); this.updateTrapero(); this.updatePeek(); this.checkLevelPending(); }
     this.exitCheckT -= dt;
-    if (this.exitCheckT <= 0) { this.exitCheckT = 0.25; this.checkExitsSeen(); }
+    if (this.exitCheckT <= 0) { this.exitCheckT = 0.25; this.checkExitsSeen(); this.checkSnowEnter(); }
 
     // dificultad: oleadas y Corredor de castigo por estar quieto
     s.spawnTimer += dt * scaling(minute).spawn * this.localSpawnMult();
@@ -2189,6 +2410,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.acidStackT -= dt;
     if (inAcid && this.acidStackT <= 0) { this.acidStackT = PRUEBA_V2.status.acidStackEverySec; this.addStatus('poison', 1); }
     this.updateStatus(dt);
+    if (this.chill.t > 0) { this.chill.t -= dt; if (this.chill.t <= 0) this.chill.k = 0; }
+    { const c = this.chill.t > 0; if (c !== this.chillTinted) { this.chillTinted = c; this.rig?.setTint(c ? 0xbfe6ff : null); } }
     if (this.ended) return;
 
     // niebla tóxica
@@ -2206,6 +2429,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
 
     // extracción
     const st = this.extraction.update(dt);
+    this.lastExt = st;
     if (this.ended) return;
     if (st.exit) this.hud.setBar(st.text, st.progress > 0 || st.exit.unlocked ? st.progress : null, st.hitPaused ? 0xff3b30 : 0x4cd964);
     else if (this.loot.pause > 0) this.hud.setBar('¡Te golpean! Looteo pausado', null, 0xff3b30);
@@ -2241,19 +2465,23 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.refreshAbilities();
     const ws = weaponStats(lo.arma);
     this.hud.setHp(p.hp, PLAYER_MAX_HP, totalProtection(lo));
+    { const pr = this.host?.saveData?.()?.prog; if (pr) this.hud.setLevel(pr.level, pr.free, s.elapsed); }
     const remain = Math.max(0, DIFFICULTY.raidSeconds - s.elapsed);
     this.hud.timer.setText(remain > 0 ? `${Math.floor(remain / 60)}:${String(Math.floor(remain % 60)).padStart(2, '0')}` : 'NIEBLA').setColor(remain < 120 ? '#ff3cc8' : '#e8e2d0');
     const ammo = ws.mag && lo.arma ? `  ·  ${p.reload > 0 ? 'recargando' : lo.arma.mag ?? 0}/${countOf(lo.mochila, 'municion')}` : this.isBow() ? `  ·  ${this.bowAmmo()} ${this.arrowsLeft()}${this.clavarArmed ? ' · Clavar' : ''}` : '';
-    const sm = speedMult(lo);
+    const sm = this.spd(lo);
     this.hud.info.setText(`${lo.arma ? def(lo.arma).nombre : 'Puños'}${ammo}  ·  min ${Math.floor(minute)}${sm < 0.999 ? `  ·  vel ${Math.round(sm * 100)}%` : ''}${p.healLeft > 0 ? '  ·  curando' : ''}`);
     this.abilityIds.forEach((id, i) => {
       const b = this.hud!.abilities[i];
       if (!id) b.set({ icon: null, label: '', cd: 0, maxCd: 0, enabled: false });
       else b.set({ icon: ABILITIES[id].icon, label: ABILITIES[id].nombre, cd: p.cds[id] ?? 0, maxCd: ABILITIES[id].cooldown, enabled: this.swapT <= 0 && (id !== 'rafaga' || (lo.arma?.mag ?? 0) > 0) });
     });
-    const qid = this.hasItem(this.settings.rapido) ? this.settings.rapido : this.settings.rapido === 'vendaje' ? 'botiquin' : 'vendaje';
+    const qid = this.quickItem(1);
     const qn = countOf(lo.mochila, qid) + this.pocketCount(qid);
     this.hud.quick.set({ icon: ITEMS[qid].icon, label: ITEMS[qid].nombre, cd: p.healLeft > 0 ? p.healLeft : 0, maxCd: ITEMS[qid].heal!.amount, enabled: qn > 0, badge: String(qn) });
+    const q2 = quickSlots(lo) >= 2;
+    this.hud.quick2.setShown(q2);
+    if (q2) { const id2 = this.quickItem(2), n2 = countOf(lo.mochila, id2) + this.pocketCount(id2); this.hud.quick2.set({ icon: ITEMS[id2].icon, label: ITEMS[id2].nombre, cd: p.healLeft > 0 ? p.healLeft : 0, maxCd: ITEMS[id2].heal!.amount, enabled: n2 > 0, badge: String(n2) }); }
     const rv = lo.reserva ?? null;
     if (this.execTarget) this.hud.swap.set({ icon: 'ui_ejecutar', label: 'Ejecutar', cd: 0, maxCd: 0, enabled: this.attackT <= 0 });
     else this.hud.swap.set({ icon: rv ? ITEMS[rv.def].icon ?? null : null, label: rv ? 'Cambiar' : '', cd: this.swapT, maxCd: SWAP.sec, enabled: !!rv, badge: rv ? '⇄' : undefined });
@@ -2289,7 +2517,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   /** QA: tiempos de inercia esperados con el peso actual. */
   inertia() {
     const lo = this.snap.loadout, w = totalWeight(lo), k = 1 + MOVE.weightTimePct * w;
-    return { weight: w, accelSec: MOVE.accelSec * k, decelSec: MOVE.decelSec * k, max: PLAYER_SPEED_TILES * TILE * speedMult(lo) };
+    return { weight: w, accelSec: MOVE.accelSec * k, decelSec: MOVE.decelSec * k, max: PLAYER_SPEED_TILES * TILE * this.spd(lo) };
   }
   /** QA: punto (px) sin paredes en `r` casillas a la redonda, buscando en espiral desde el jugador. */
   openSpot(r = 5) {

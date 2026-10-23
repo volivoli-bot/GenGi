@@ -1,13 +1,15 @@
 import Phaser from 'phaser';
 import { TILE, WORLD } from '../config/constants';
 import { DIFFICULTY } from '../config/difficulty';
-import { ATTACKS, BODY_TEX, ENEMIES, EnemyDef, EnemyType } from '../data/enemies';
+import { aiOf, ATTACKS, BODY_TEX, ENEMIES, EnemyDef, EnemyType } from '../data/enemies';
+import { CONGELADO, LOBO, MATRIARCA } from '../config/v42';
+import { V4Boss } from './enemies4';
 import { MUTATIONS, MutationId } from '../config/v3';
 import { V3Behaviors } from './enemies3';
 import { ENEMY_V3 } from '../config/v3';
 const ENEMY_V3_TRACK = ENEMY_V3.enjambre.trackTiles;
 /** Los v3 ya multiplican su velocidad por la mutación Veloz en enemies3.ts. */
-const V3_SPEEDK: Record<string, 1> = { escupidor: 1, chillon: 1, acechador: 1, bruto: 1, reptante: 1, enjambre: 1 };
+const V3_SPEEDK: Record<string, 1> = { escupidor: 1, chillon: 1, acechador: 1, bruto: 1, reptante: 1, enjambre: 1, escarcha: 1 };
 import type { EnemySnap } from '../save/types';
 import { AI, PRUEBA_V2, STAGGER, STEALTH } from '../config/v2';
 import type { Fx } from './fx';
@@ -15,6 +17,15 @@ import type { FlowField } from './flow';
 import { lineClear, Rect } from './map';
 import { Rig } from './rig';
 import { ELITE, LINGER } from '../config/v31';
+import { PERF } from '../config/v32';
+
+// v4.2: los enemigos de la nieve heredan las tablas por tipo (oído, vista, tambaleo, velocidad) de su comportamiento base
+for (const t of Object.keys(ENEMIES) as EnemyType[]) {
+  const a = t === 'matriarca' ? 'abominacion' : aiOf(t);
+  if (a === t) continue;
+  for (const tab of [AI.speedMult, STEALTH.hearing, STEALTH.sightTiles, STEALTH.minHearTiles, STAGGER.weight] as Record<string, number>[]) if (tab[a] !== undefined && tab[t] === undefined) tab[t] = tab[a];
+}
+(STAGGER.weight as Record<string, number>).matriarca = MATRIARCA.staggerWeight;
 
 export interface RaidCtx {
   world: Phaser.Scene;
@@ -27,6 +38,8 @@ export interface RaidCtx {
   damagePlayer(n: number, cause: string): void;
   /** Estados acumulables en el jugador (veneno / sangrado). */
   addStatus(kind: 'bleed' | 'poison', stacks: number): void;
+  /** v4.0 (Sigilo): cuánto más lento se llena el «?» (0-0,3+). */
+  detectSlow?(): number;
   addAcid(x: number, y: number, r?: number): void;
   onEnemyDeath(e: Enemy): void;
   /** ¿El punto está dentro de la vista de cámara, con un margen interior (px de mundo)? */
@@ -46,6 +59,12 @@ export interface RaidCtx {
   /** Empieza / acaba un agarre del Reptante. */
   onGrab?(on: boolean): void;
   vibrate?(ms: number): void;
+  // ---- v4.2 ----
+  /** Ralentiza al jugador (fracción 0-1) durante `sec` s (se queda el más fuerte). */
+  slowPlayer?(k: number, sec: number): void;
+  /** Hace aparecer un enemigo (llamada de la Matriarca). */
+  summon?(type: EnemyType, x: number, y: number): Enemy | null;
+  toast?(msg: string, sec?: number): void;
 }
 
 export interface HitOpts { ang?: number; weapon?: string; crit?: boolean; silent?: boolean; backstab?: boolean }
@@ -129,12 +148,21 @@ export class Enemy {
   flankPhase = Math.random() * 10;
   /** Último arma que le golpeó (misiones "mata con arma a distancia"). */
   lastWeapon?: string;
+  /** v4.2: caparazón de hielo del Congelado (el primer golpe solo lo rompe). */
+  ice = false;
+  /** v4.2: comportamiento base (Congelado → Errante, Lobo → Corredor, Escarcha → Escupidor). */
+  get ai(): EnemyType { return this.def.ai ?? this.def.type; }
   constructor(public sprite: Phaser.Physics.Arcade.Image, type: EnemyType, hp: number, dmg: number) {
     this.def = ENEMIES[type];
     this.hp = this.maxHp = hp; this.dmg = dmg;
-    this.flankSide = type === 'errante' ? [-1, 0, 1][Math.floor(Math.random() * 3)] : type === 'corredor' ? (Math.random() < 0.5 ? -1 : 1) : 0;
+    const ai = aiOf(type);
+    this.flankSide = ai === 'errante' ? [-1, 0, 1][Math.floor(Math.random() * 3)] : ai === 'corredor' ? (Math.random() < 0.5 ? -1 : 1) : 0;
   }
-  tint(c: number | null) { if (c !== this.tintC) { this.tintC = c; this.rig?.setTint(c); } }
+  /** v4: tinte base (guarida helada); `tint(null)` vuelve a él. */
+  baseTint: number | null = null;
+  /** v4: guardián de la guarida de la Matriarca. */
+  lair = false;
+  tint(c: number | null) { c ??= this.baseTint; if (c !== this.tintC) { this.tintC = c; this.rig?.setTint(c); } }
   get x() { return this.sprite.x; }
   get y() { return this.sprite.y; }
   get body() { return this.sprite.body as Phaser.Physics.Arcade.Body; }
@@ -157,24 +185,26 @@ export class EnemyManager {
   canTelegraph(e: Enemy) { return this.c.onScreen(e.x, e.y, this.teleMargin(e)) && this.c.visible(e.x, e.y, e.def.size * 0.3); }
   /** v3: comportamientos de los enemigos nuevos. */
   v3: V3Behaviors;
+  v4: V4Boss;
   countTele(e: Enemy) { if (this.c.onScreen(e.x, e.y, 0)) this.teleStats.on++; else this.teleStats.off++; }
   constructor(private c: RaidCtx) {
     this.group = c.world.physics.add.group();
     this.v3 = new V3Behaviors(this, c);
+    this.v4 = new V4Boss(this, c);
   }
 
   spawn(type: EnemyType, x: number, y: number, statMult = 1, extra?: Partial<EnemySnap>): Enemy {
     const d = ENEMIES[type];
-    const s = this.c.world.physics.add.image(x, y, BODY_TEX[type] ?? type).setDisplaySize(d.size, d.size).setDepth(type === 'abominacion' ? 9 : 8).setVisible(false);
+    const s = this.c.world.physics.add.image(x, y, BODY_TEX[type] ?? type).setDisplaySize(d.size, d.size).setDepth(type === 'abominacion' || type === 'matriarca' ? 9 : 8).setVisible(false);
     this.group.add(s);
     const body = s.body as Phaser.Physics.Arcade.Body;
     const texW = s.width; // tamaño de textura
     const r = texW * 0.32;
     body.setCircle(r, texW / 2 - r, texW / 2 - r).setCollideWorldBounds(true);
-    if (type === 'abominacion') body.setMass(20);
+    if (type === 'abominacion' || type === 'matriarca') body.setMass(type === 'matriarca' ? 40 : 20);
     if (type === 'bruto' || type === 'reptante') body.setMass(type === 'bruto' ? 6 : 10);
     const e = new Enemy(s, type, Math.round(d.hp * statMult), d.dmg * statMult * PRUEBA_V2.enemyDmgMult);
-    e.rig = new Rig(this.c.world, x, y, { base: type, size: d.size, depth: type === 'abominacion' ? 9 : 8 });
+    e.rig = new Rig(this.c.world, x, y, { base: type, size: d.size, depth: type === 'abominacion' || type === 'matriarca' ? 9 : 8 });
     if (extra) {
       if (extra.hp !== undefined) e.hp = extra.hp;
       if (extra.maxHp !== undefined) e.maxHp = extra.maxHp;
@@ -183,6 +213,7 @@ export class EnemyManager {
       if (extra.group !== undefined) e.group = extra.group;
       if (extra.mut) this.mutate(e, extra.mut as MutationId, true);
       if (extra.elite) { e.elite = true; e.rig.setElite(ELITE.scale); }
+      if (extra.lair) { e.lair = true; if (type !== 'matriarca') { e.baseTint = 0x9fd8ff; e.tint(null); } }
       if (extra.swell !== undefined) { this.startSwell(e, true); e.t = extra.swell; }
     }
     if (type === 'reptante') { e.gx ??= x; e.gy ??= y; e.submerged = true; e.sub = 'under'; e.cd = 1; body.enable = false; e.rig.setVisible(false); }
@@ -192,6 +223,8 @@ export class EnemyManager {
     if (type === 'abominacion') {
       e.hpBar = this.c.world.add.rectangle(x, y - 60, 80, 7, 0xff3cc8).setDepth(30).setOrigin(0, 0.5);
     }
+    if (type === 'matriarca') e.hpBar = this.c.world.add.rectangle(x, y - 100, MATRIARCA.barW, 9, 0x6ad8ff).setDepth(30).setOrigin(0, 0.5);
+    if (type === 'congelado' && !(extra && extra.ice === false)) { e.ice = true; e.baseTint = CONGELADO.tint; e.tint(null); }
     this.list.push(e);
     return e;
   }
@@ -221,6 +254,11 @@ export class EnemyManager {
   stealthStats = { heard: 0, suspects: 0, alerts: 0, silentKills: 0, backstabs: 0 };
   /** QA v3.1: fotogramas mostrados como silueta fantasma. */
   ghostFrames = 0;
+  /** QA v3.2: siluetas fantasma este fotograma y máximo visto. */
+  ghostsNow = 0;
+  ghostsMax = 0;
+  private ghostScratch: Enemy[] = [];
+  private listScratch: Enemy[] = [];
 
   /**
    * Ruido (sigilo): lo oyen aunque estén de espaldas si están dentro del radio (a través de paredes, a la mitad).
@@ -294,7 +332,7 @@ export class EnemyManager {
       else {
         // 0,4 s justo fuera del radio instantáneo → 1,2 s en el límite de la vista
         const k = Phaser.Math.Clamp((dist - STEALTH.instantTiles * TILE) / (range - STEALTH.instantTiles * TILE), 0, 1);
-        e.meter += acc / (STEALTH.detectNearSec + (STEALTH.detectFarSec - STEALTH.detectNearSec) * k);
+        e.meter += acc * (1 - (this.c.detectSlow?.() ?? 0)) / (STEALTH.detectNearSec + (STEALTH.detectFarSec - STEALTH.detectNearSec) * k);
       }
       if (e.meter >= 1) this.becomeAlert(e);
       return;
@@ -343,6 +381,9 @@ export class EnemyManager {
     const ang = o.ang ?? Math.atan2(e.y - this.c.py(), e.x - this.c.px());
     // Bruto: frente blindado (×0,3 desde su arco frontal)
     n *= this.v3.armorMult(e, ang);
+    // v4.2: caparazón del Congelado y espalda de la Matriarca
+    if (e.ice) { n *= CONGELADO.shellMult; e.ice = false; e.baseTint = null; e.tint(null); this.v4.shatter(e); }
+    if (e.def.type === 'matriarca') n *= this.v4.backMult(e, ang);
     e.hp -= n;
     e.lastHitAt = this.c.elapsed();
     if (o.weapon) e.lastWeapon = o.weapon;
@@ -361,6 +402,7 @@ export class EnemyManager {
       if (e.state !== 'swell') e.stagger = Math.max(e.stagger, Math.min(STAGGER.impulseSec + st, 0.6));
       if (st >= STAGGER.interruptSec && (e.state === 'windup' || e.state === 'attack') && e.def.type !== 'abominacion') { e.state = 'recover'; e.t = 0.4; this.clearTele(e); }
     }
+    if (e.def.type === 'matriarca') e.stagger = 0; // resistente al tambaleo
     const wasUnaware = isUnaware(e);
     if (o.backstab && wasUnaware) this.stealthStats.backstabs++;
     if (e.hp <= 0) {
@@ -396,6 +438,7 @@ export class EnemyManager {
     this.clearTele(e);
     e.icon?.destroy(); e.hpBar?.destroy();
     this.destroyMarks(e);
+    if (e.def.type === 'matriarca') this.v4.onDeath(e);
     this.c.onEnemyDeath(e);
     const s = e.sprite;
     s.disableBody(true, true);
@@ -438,7 +481,9 @@ export class EnemyManager {
     const px = this.c.px(), py = this.c.py();
     const now = this.c.elapsed();
     const melee = this.c.playerMelee();
-    for (const e of [...this.list]) {
+    const ghosts = this.ghostScratch; ghosts.length = 0;
+    const list = this.listScratch; list.length = 0; for (const e of this.list) list.push(e);
+    for (const e of list) {
       if (e.dead) continue;
       const b = e.body;
       const dx = px - e.x, dy = py - e.y;
@@ -458,7 +503,8 @@ export class EnemyManager {
       else {
         // v3.1 §9.3: recién salido del cono → silueta fantasma QUIETA donde lo viste (no se mueve ni muestra ataques), si ese sitio ya no se ve
         const age = now - e.seenAt, rc = e.rig.c;
-        if (LINGER.sec > 0 && age < LINGER.sec && !e.submerged && !this.c.visible(rc.x, rc.y, e.def.size * 0.4)) { e.rig.setGhost(LINGER.ghostAlpha * (1 - age / LINGER.sec)); this.ghostFrames++; }
+        // v3.2: como mucho PERF.maxGhosts a la vez (se eligen los más recientes tras el bucle)
+        if (LINGER.sec > 0 && age < LINGER.sec && !e.submerged && !this.c.visible(rc.x, rc.y, e.def.size * 0.4)) { ghosts.push(e); }
         else { e.rig.setGhost(0); e.rig.update(dt, e.x, e.y, e.facing, spd / Math.max(1, sp), false); }
       }
       if (e.stagger > 0) {
@@ -472,7 +518,7 @@ export class EnemyManager {
       if (e.checkAcc >= STEALTH.checkSec) { const acc = e.checkAcc; e.checkAcc = 0; this.perceive(e, acc, dist, px, py); }
       this.updateMarks(e, vis, dt);
       if (e.icon) { e.icon.setPosition(e.x, e.y - 38).setVisible(vis && melee && dist < TILE * 3.2 && e.state !== 'swell'); }
-      if (e.hpBar) { e.hpBar.setPosition(e.x - 40, e.y - 58).setVisible(vis).width = 80 * Math.max(0, e.hp / e.maxHp); }
+      if (e.hpBar) { const bw = e.def.type === 'matriarca' ? MATRIARCA.barW : 80; e.hpBar.setPosition(e.x - bw / 2, e.y - (e.def.type === 'matriarca' ? 100 : 58)).setVisible(vis).width = bw * Math.max(0, e.hp / e.maxHp); }
 
       switch (e.state) {
         case 'swell': {
@@ -484,6 +530,7 @@ export class EnemyManager {
         }
       }
       if (isV3 && this.v3.update(e, dt, dist, px, py)) continue;
+      if (e.def.type === 'matriarca' && this.v4.update(e, dt, dist, px, py)) continue;
       switch (e.state) {
         case 'windup': this.updateWindup(e, dt, dist); continue;
         case 'attack': this.updateAttack(e, dt, px, py); continue;
@@ -522,7 +569,7 @@ export class EnemyManager {
           continue;
         }
         if (e.sees) e.t = 0;
-        const trig = e.def.type === 'errante' ? ATTACKS.errante.triggerTiles : e.def.type === 'corredor' ? ATTACKS.corredor.triggerTiles : 0;
+        const trig = e.ai === 'errante' ? ATTACKS.errante.triggerTiles : e.ai === 'corredor' ? ATTACKS.corredor.triggerTiles : 0;
         // fuera de pantalla puede acercarse, pero no empezar el ataque
         if (trig && dist < trig * TILE && e.sees && this.canTelegraph(e)) { this.startWindup(e, px, py); continue; }
         this.chaseMove(e, px, py, sp, dist);
@@ -574,14 +621,24 @@ export class EnemyManager {
       b.setVelocity(e.wander.x, e.wander.y);
       if (isV3 && spd > 12) e.facing = Phaser.Math.Angle.RotateTo(e.facing, Math.atan2(b.velocity.y, b.velocity.x), dt * (e.def.type === 'bruto' ? 1.8 : 9));
     }
+    // v3.2: siluetas fantasma con tope (las más recientes); el resto se oculta como cualquier enemigo en la niebla
+    if (ghosts.length > PERF.maxGhosts) ghosts.sort((a, b) => b.seenAt - a.seenAt);
+    let ng = 0;
+    for (const e of ghosts) {
+      if (e.dead) continue;
+      if (ng < PERF.maxGhosts) { ng++; e.rig.setGhost(LINGER.ghostAlpha * (1 - (now - e.seenAt) / LINGER.sec)); this.ghostFrames++; }
+      else { e.rig.setGhost(0); e.rig.update(dt, e.x, e.y, e.facing, 0, false); }
+    }
+    this.ghostsNow = ng; if (ng > this.ghostsMax) this.ghostsMax = ng;
     this.v3.updateGlobal(dt);
+    this.v4.updateGlobal(dt);
   }
 
   /** Grupo: al detectarte avisa a los que están cerca (casillas AI.alertTiles). */
   private alert(src: Enemy) {
     const r = AI.alertTiles * TILE;
     for (const o of this.list) {
-      if (o === src || o.dead || o.def.type === 'abominacion' || o.def.type === 'reptante' || o.state === 'swell') continue;
+      if (o === src || o.dead || o.def.type === 'abominacion' || o.def.type === 'matriarca' || o.def.type === 'reptante' || o.state === 'swell') continue;
       if (o.state !== 'idle' && o.state !== 'investigate') continue;
       if (Math.hypot(o.x - src.x, o.y - src.y) > r) continue;
       o.state = 'chase'; o.t = -1; o.meter = 1; o.markT = STEALTH.alertMarkSec; o.goal = null;
@@ -592,9 +649,10 @@ export class EnemyManager {
   chaseMove(e: Enemy, px: number, py: number, sp: number, dist: number) {
     if (e.sees) {
       let ax = px - e.x, ay = py - e.y;
-      if (e.flankSide && dist > AI.flankUntilTiles * TILE) {
-        const k = Phaser.Math.Clamp((dist - AI.flankUntilTiles * TILE) / (TILE * 4), 0, 1);
-        const a = Math.atan2(ay, ax) + e.flankSide * Phaser.Math.DegToRad(AI.flankDeg) * k;
+      const wolf = e.def.type === 'lobo', fu = wolf ? LOBO.flankUntilTiles : AI.flankUntilTiles;
+      if (e.flankSide && dist > fu * TILE) {
+        const k = Phaser.Math.Clamp((dist - fu * TILE) / (TILE * 4), 0, 1);
+        const a = Math.atan2(ay, ax) + e.flankSide * Phaser.Math.DegToRad(wolf ? LOBO.flankDeg : AI.flankDeg) * k;
         const tx = e.x + Math.cos(a) * dist, ty = e.y + Math.sin(a) * dist;
         if (lineClear(this.c.walls, e.x, e.y, (e.x + tx) / 2, (e.y + ty) / 2)) { ax = tx - e.x; ay = ty - e.y; }
       }
@@ -643,11 +701,11 @@ export class EnemyManager {
     const sc = this.c.world;
     // Corredor: apunta a donde vas a estar (previsión), sin pasarse de su carga
     let tx = px, ty = py;
-    if (e.def.type === 'corredor') { tx += this.c.pvx() * AI.corredorLeadSec; ty += this.c.pvy() * AI.corredorLeadSec; }
+    if (e.ai === 'corredor') { tx += this.c.pvx() * AI.corredorLeadSec; ty += this.c.pvy() * AI.corredorLeadSec; }
     e.dir.set(tx - e.x, ty - e.y).normalize();
     e.facing = Math.atan2(e.dir.y, e.dir.x);
-    if (e.def.type === 'errante') { e.t = ATTACKS.errante.windup; e.tint(0xff3b30); }
-    if (e.def.type === 'corredor') {
+    if (e.ai === 'errante') { e.t = ATTACKS.errante.windup; e.tint(0xff3b30); }
+    if (e.ai === 'corredor') {
       e.t = ATTACKS.corredor.windup;
       e.tint(0xff3b30); e.rig.crouch = 1;
       const L = ATTACKS.corredor.chargeTiles * TILE;
@@ -670,7 +728,7 @@ export class EnemyManager {
 
   private updateWindup(e: Enemy, _dt: number, _dist: number) {
     const b = e.body;
-    if (e.def.type === 'errante') {
+    if (e.ai === 'errante') {
       b.setVelocity(-e.dir.x * 25, -e.dir.y * 25); // se echa hacia atrás
       const flash = Math.floor(e.t * 10) % 2 === 0;
       e.tint(flash ? 0xff3b30 : 0xffaaaa); e.rig.crouch = 0.6;
@@ -689,9 +747,9 @@ export class EnemyManager {
       return;
     }
     e.state = 'attack';
-    const A = e.def.type === 'errante' ? ATTACKS.errante : ATTACKS.corredor;
-    const tilesLen = e.def.type === 'errante' ? ATTACKS.errante.lungeTiles : ATTACKS.corredor.chargeTiles;
-    const dur = e.def.type === 'errante' ? ATTACKS.errante.lungeSec : ATTACKS.corredor.chargeSec;
+    const A = e.ai === 'errante' ? ATTACKS.errante : ATTACKS.corredor;
+    const tilesLen = e.ai === 'errante' ? ATTACKS.errante.lungeTiles : ATTACKS.corredor.chargeTiles;
+    const dur = e.ai === 'errante' ? ATTACKS.errante.lungeSec : ATTACKS.corredor.chargeSec;
     e.t = dur;
     const v = (tilesLen * TILE) / dur;
     b.setVelocity(e.dir.x * v, e.dir.y * v);
@@ -703,12 +761,12 @@ export class EnemyManager {
     if (!e.hitDone && d < this.c.playerRadius + e.def.size * 0.35) {
       e.hitDone = true;
       this.c.damagePlayer(e.dmg, e.def.nombre);
-      if (Math.random() < PRUEBA_V2.status.bleedChance) this.c.addStatus('bleed', 1);
+      if (Math.random() < (e.def.type === 'lobo' ? LOBO.bleedChance : PRUEBA_V2.status.bleedChance)) this.c.addStatus('bleed', 1);
     }
     if (e.t <= 0 || !e.body.blocked.none) {
       this.clearTele(e);
       e.state = 'recover';
-      e.t = e.def.type === 'errante' ? ATTACKS.errante.recover : ATTACKS.corredor.recover;
+      e.t = e.ai === 'errante' ? ATTACKS.errante.recover : ATTACKS.corredor.recover;
       e.body.setVelocity(0, 0);
     }
   }
@@ -742,7 +800,7 @@ export class EnemyManager {
     return this.list.filter(e => !e.dead).map(e => ({
       type: e.def.type, x: Math.round(e.x), y: Math.round(e.y), hp: e.hp, maxHp: e.maxHp, dmg: e.dmg,
       gx: e.gx, gy: e.gy, swell: e.state === 'swell' ? Math.max(0, e.t) : undefined, bleed: e.bleed || undefined,
-      mut: e.mut, group: e.group, elite: e.elite || undefined,
+      mut: e.mut, group: e.group, elite: e.elite || undefined, lair: e.lair || undefined, ice: e.def.type === 'congelado' ? e.ice : undefined,
     }));
   }
 

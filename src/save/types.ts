@@ -1,3 +1,4 @@
+import type { AttrId } from '../config/levels';
 import type { AbilityId } from '../data/items';
 import type { EnemyType } from '../data/enemies';
 import type { Rarity } from '../data/rarity';
@@ -6,7 +7,7 @@ import type { ContainerKind } from '../game/loot';
 import type { MutationId, StationId, VendorId } from '../config/v3';
 
 /** Versión actual del formato de guardado. Súbela y añade una migración en migrations.ts al cambiar el formato. */
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 6;
 
 export type TargetPriority = 'cercano' | 'debil' | 'peligroso';
 
@@ -40,7 +41,7 @@ export interface RaidLogEntry {
   exitType: string | null;
 }
 
-export type ExitType = 'pie' | 'generador' | 'bengala' | 'pago';
+export type ExitType = 'pie' | 'generador' | 'bengala' | 'pago' | 'helipuerto';
 
 export interface ExitState {
   loc: number;
@@ -76,6 +77,10 @@ export interface EnemySnap {
   sewer?: number;
   /** v3.1: élite (vida/daño ya multiplicados en hp/dmg). */
   elite?: boolean;
+  /** v4: guardián helado de la guarida. */
+  lair?: boolean;
+  /** v4.2: el Congelado conserva el caparazón. */
+  ice?: boolean;
 }
 
 export interface ContainerSnap { id: number; x: number; y: number; kind: ContainerKind; items: ItemInst[]; opened: boolean }
@@ -123,6 +128,9 @@ export interface RaidSnapshot {
   fx?: { adren?: number; antidoto?: number; estim?: number; grabImm?: number };
   /** v3: siguiente id de grupo de enjambre. */
   nextGroup?: number;
+  /** v4.0: experiencia de la incursión aún no asegurada (se suma al extraer) y su desglose. */
+  xp?: number;
+  xpBy?: Partial<Record<'kills' | 'cajas' | 'mision' | 'extraer', number>>;
 }
 
 export interface RaidTrack {
@@ -169,4 +177,27 @@ export interface SaveData {
   refugio: Refugio;
   /** v3: los tres vendedores (reputación, stock, misiones). */
   vendors: Record<VendorId, VendorState>;
+  /** v4.0: nivel, experiencia asegurada y atributos. */
+  prog: Progress;
+  /** v4.0 (anti-retroceso): id de la partida (no cambia nunca) y contador de guardados (solo sube). */
+  profileId: string;
+  rev: number;
+}
+
+/** v4.0 §2: progreso del personaje. `xp` = experiencia asegurada hacia el siguiente nivel. */
+export interface Progress {
+  level: number;
+  xp: number;
+  /** Experiencia total asegurada (estadística). */
+  total: number;
+  /** Puntos de atributo sin asignar. */
+  free: number;
+  attrs: Record<AttrId, number>;
+  /** Gimnasio: tope extra por atributo (+5 por mejora). */
+  gym: Partial<Record<AttrId, number>>;
+  /** Pizarra 2: stats.raids de la última vez que se quitó un punto barato. */
+  cheapRespecAt: number;
+  /** Pizarra 3: cambios completos gratis ya usados. */
+  freeResets?: number;
+  lastLevelUp: number;
 }

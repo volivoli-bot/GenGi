@@ -10,10 +10,11 @@ export const DMG_LOG: Record<DmgSide, { base: number; dmg: number; crit: boolean
  * v3.1 §9.2: daño directo = base × U[minFrac, maxFrac], y crítico ×critMult con critChance.
  * Nunca se llama para daño por segundo (sangrado, veneno, ácido, niebla, agarre del Reptante).
  */
-export function rollDamage(base: number, side: DmgSide, rng: () => number = Math.random): DmgRoll {
+/** `critBonus` (v4.0, Pulso): probabilidad de crítico extra. */
+export function rollDamage(base: number, side: DmgSide, rng: () => number = Math.random, critBonus = 0): DmgRoll {
   const c = DAMAGE[side];
   let dmg = base * (c.minFrac + (c.maxFrac - c.minFrac) * rng());
-  const crit = rng() < c.critChance;
+  const crit = rng() < c.critChance + critBonus;
   if (crit) dmg *= c.critMult;
   const log = DMG_LOG[side]; log.push({ base, dmg, crit }); if (log.length > 4000) log.shift();
   return { dmg, crit };

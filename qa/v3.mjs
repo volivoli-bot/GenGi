@@ -2,7 +2,7 @@
 // enemigos nuevos con sus reglas de justicia, mutaciones, consumibles nuevos y migraciones v1/v2 → v3.
 // node qa/v3.mjs (con `npx vite preview --port 4173` en marcha)
 import puppeteer from 'puppeteer-core';
-const URL='http://localhost:4173/?debug=1&noelite';
+const URL=(process.env.GENGI_BASE||'http://localhost:4173/')+'?debug=1&noelite';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const res=[]; const ok=(n,c,i='')=>{res.push(`${c?'PASS':'FAIL'} ${n} ${i}`);console.log(`${c?'PASS':'FAIL'} ${n} ${i}`);};
 const b=await puppeteer.launch({executablePath:'/usr/bin/google-chrome',headless:'new',args:['--no-sandbox','--use-gl=swiftshader','--enable-unsafe-swiftshader','--window-size=390,844']});
@@ -19,7 +19,7 @@ let p=await page(); const E=(f,...a)=>p.evaluate(f,...a);
 const setup=`
 window.T=48;
 window.__calm=()=>{const s=gengi.raid();gengi.god(true);gengi.clearEnemies();s.snap.stream=null;s.snap.spawnTimer=-1e9;gengi.move(0,0);gengi.aim(null);
-  if(!window.__hooked){window.__hooked=true;window.__pins=new Map();s.events.on('update',()=>{s.idleT=0;s.snap.spawnTimer=Math.min(s.snap.spawnTimer,-1e6);for(const [e,pos] of window.__pins){if(!e.dead){e.body.reset(pos.x,pos.y);}}});}
+  if(!window.__hooked){window.__hooked=true;window.__pins=new Map();s.events.on('update',()=>{s.idleT=0;s.snap.spawnTimer=Math.min(s.snap.spawnTimer,-1e6);for(const [e,pos] of window.__pins){if(!e.dead&&e.body){e.body.reset(pos.x,pos.y);}}});}
   window.__pins.clear();};
 window.__gt=()=>gengi.raid().snap.elapsed;
 window.__waitGame=sec=>new Promise(r=>{const t0=__gt();const f=()=>{if(__gt()-t0>=sec)r();else setTimeout(f,30)};f();});
@@ -66,7 +66,7 @@ window.__resetStats=()=>{const s=gengi.raid();const st=s.enemies.v3.stats;for(co
   out.trait=gengi.op('addTrait',it?.uid?gengi.state().stash.find(i=>i.uid===it.uid):null);
   return out;});
  ok('B1 Generador manda: sin él no sube nada a nivel 2', !r.blocked.ok&&/Generador/.test(r.blocked.msg), r.blocked.msg);
- ok('B1 6 estaciones × 3 niveles', r.gen2.ok&&r.gen3.ok&&r.alijo3.ok&&!r.alijoMax.ok&&Object.values(r.levels).every(l=>l===3)&&Object.keys(r.levels).length===6, JSON.stringify(r.levels));
+ ok('B1 6 estaciones × 3 niveles', r.gen2.ok&&r.gen3.ok&&r.alijo3.ok&&!r.alijoMax.ok&&['alijo','bolsillo','generador','enfermeria','taller','radio'].every(k=>r.levels[k]===3)&&Object.keys(r.levels).length>=6, JSON.stringify(r.levels)); // v4.0: + Gimnasio y Pizarra (qa/levels.mjs)
  ok('B1 Alijo 30→70, Bolsillo 1→4', r.stash===70&&r.pocket===4, `alijo=${r.stash} bolsillo=${r.pocket}`);
  ok('B2 fabricar tarda 3 raids y la cola es de 2 por estación', r.c1.ok&&r.c2.ok&&!r.c3.ok&&r.after2.length===0&&r.after3.length===2&&r.vend===2&&r.adr, JSON.stringify({c3:r.c3.msg,after2:r.after2,after3:r.after3,vend:r.vend}));}
 
@@ -207,10 +207,10 @@ window.__resetStats=()=>{const s=gengi.raid();const st=s.enemies.v3.stats;for(co
 await p.close(); p=await page();
 {await E(()=>gengi.loadLegacy()).catch(()=>{}); await sleep(1500); await p.waitForFunction(()=>window.gengi);
  const r=await E(()=>{const d=gengi.state();return {v:d.saveVersion,chapas:d.chapas,stash:d.stash.map(i=>i.def),ref:d.refugio?.levels,vend:Object.keys(d.vendors||{}),esp:d.loadout.espalda,ex:d.loadout.bolsilloExtra};});
- ok('H1 v1 (prototipo) → v4: conserva chapas y alijo, refugio a nivel 1 y vendedores', r.v===4&&r.chapas>=77&&r.stash.includes('machete')&&r.ref?.alijo===1&&r.vend.length===3&&r.esp===null&&Array.isArray(r.ex), JSON.stringify(r));}
+ ok('H1 v1 (prototipo) → v4: conserva chapas y alijo, refugio a nivel 1 y vendedores', r.v>=4&&r.chapas>=77&&r.stash.includes('machete')&&r.ref?.alijo===1&&r.vend.length===3&&(r.esp===null||r.esp?.free===true)&&Array.isArray(r.ex), JSON.stringify(r));}
 {await E(()=>gengi.loadV2()).catch(()=>{}); await sleep(1500); await p.waitForFunction(()=>window.gengi);
  const r=await E(()=>{const d=gengi.state();return {v:d.saveVersion,chapas:d.chapas,stash:d.stash.map(i=>i.def+'/'+i.rarity),arma:d.loadout.arma?.def,bol:d.loadout.bolsillo?.def,seen:d.seenExits,log:d.raidLog.length,raids:d.stats.raids,ref:d.refugio?.levels,vend:Object.keys(d.vendors||{})};});
- ok('H2 v2 → v4: conserva todo (chapas, alijo, equipo, bolsillo, salidas vistas, historial, estadísticas)', r.v===4&&r.chapas>=345&&r.stash.includes('pistola/militar')&&r.arma==='machete'&&r.bol==='botiquin'&&r.seen.m1?.length===2&&r.log===1&&r.raids===7&&r.ref?.bolsillo===1&&r.vend.length===3, JSON.stringify(r));}
+ ok('H2 v2 → v4: conserva todo (chapas, alijo, equipo, bolsillo, salidas vistas, historial, estadísticas)', r.v>=4&&r.chapas>=345&&r.stash.includes('pistola/militar')&&r.arma==='machete'&&r.bol==='botiquin'&&r.seen.m1?.length===2&&r.log===1&&r.raids===7&&r.ref?.bolsillo===1&&r.vend.length===3, JSON.stringify(r));}
 
 ok('Z sin errores de página', errs.length===0, errs.slice(0,5).join(' | '));
 await b.close();

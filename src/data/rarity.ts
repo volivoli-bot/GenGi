@@ -1,5 +1,5 @@
 /** Sistema de rarezas: 5 tiers (palette.json), la v1 solo suelta 3. */
-export type Rarity = 'chatarra' | 'comun' | 'reforzado' | 'militar' | 'anomalia';
+export type Rarity = 'chatarra' | 'comun' | 'reforzado' | 'militar' | 'anomalia' | 'reliquia';
 
 export interface RarityDef {
   id: Rarity;
@@ -24,9 +24,13 @@ export const RARITIES: Record<Rarity, RarityDef> = {
   reforzado: { id: 'reforzado', nombre: 'Reforzado', letra: 'R', tier: 2, color: '#4cd964', mult: 1.2, rasgos: 1, alien: false, valor: 2.5, peso: 30 },
   militar: { id: 'militar', nombre: 'Militar', letra: 'M', tier: 3, color: '#3c8cff', mult: 1.45, rasgos: 2, alien: false, valor: 6, peso: 10 },
   anomalia: { id: 'anomalia', nombre: 'Anomalía', letra: 'A', tier: 4, color: '#b44cff', mult: 1.8, rasgos: 2, alien: true, valor: 15, peso: 0 },
+  /** v4 (§5): rareza final de los mapas 3 y 4, con 1 efecto único por objeto. No cae en el mapa 1. */
+  reliquia: { id: 'reliquia', nombre: 'Reliquia', letra: 'L', tier: 5, color: '#e8c547', mult: 2.1, rasgos: 3, alien: true, valor: 40, peso: 0 },
 };
 
 export const RARITY_ORDER: Rarity[] = ['chatarra', 'comun', 'reforzado', 'militar', 'anomalia'];
+/** v4: con la Reliquia (los ajustes del refugio siguen usando RARITY_ORDER hasta que exista el mapa 3). */
+export const RARITY_ORDER_ALL: Rarity[] = [...RARITY_ORDER, 'reliquia'];
 /** Rarezas que pueden caer en la v1 (activar las demás aquí cuando toque). */
 export const V1_DROP_RARITIES: Rarity[] = ['comun', 'reforzado', 'militar'];
 

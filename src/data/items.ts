@@ -1,7 +1,8 @@
 import { TILE } from '../config/constants';
+import type { Rarity } from './rarity';
 
 export type Slot = 'arma' | 'torso' | 'cabeza' | 'espalda';
-export type ItemKind = 'arma' | 'armadura' | 'consumible' | 'municion' | 'bengala' | 'chapas' | 'material' | 'mochila' | 'granada';
+export type ItemKind = 'arma' | 'armadura' | 'consumible' | 'municion' | 'bengala' | 'chapas' | 'material' | 'mochila' | 'granada' | 'llave';
 export type AbilityId = 'golpe' | 'torbellino' | 'perforante' | 'rafaga' | 'aguantar' | 'escanear' | 'clavar';
 
 export interface WeaponStats {
@@ -32,6 +33,8 @@ export interface ItemDef {
   heal?: { amount: number; seconds: number };
   /** v3: consumible con efecto especial (adrenalina, antídoto, estimulante). */
   effect?: 'adrenalina' | 'antidoto' | 'estimulante';
+  /** v4: rareza fija del objeto (mochilas: la rareza va con el modelo, no se tira). */
+  fixedRarity?: Rarity;
   desc: string;
 }
 
@@ -77,8 +80,14 @@ export const ITEMS: Record<string, ItemDef> = {
     effect: 'estimulante', desc: '25 s: ves a los enemigos a 8 casillas, incluso tras muros.' },
   granada: { id: 'granada', nombre: 'Granada', kind: 'granada', icon: null, weight: 0.5, value: 80, small: true, rolls: false, maxStack: 3,
     desc: 'Se lanza 5 casillas hacia donde miras. Explota en 1 s (45 de daño). MUCHO ruido.' },
-  mochila_media: { id: 'mochila_media', nombre: 'Mochila mediana', kind: 'mochila', slot: 'espalda', icon: null, weight: 1, value: 120, small: false, rolls: false, maxStack: 1, desc: '+4 casillas de mochila.' },
-  mochila_grande: { id: 'mochila_grande', nombre: 'Mochila grande', kind: 'mochila', slot: 'espalda', icon: null, weight: 2, value: 300, small: false, rolls: false, maxStack: 1, desc: '+8 casillas de mochila.' },
+  // v4 §1: mochilas (casillas, peso propio y extras en config/v4.ts BAGS). Ids media/grande de la v3 = senderismo/táctica.
+  rinonera: { id: 'rinonera', nombre: 'Riñonera', kind: 'mochila', slot: 'espalda', icon: 'v4/mochila_rinonera', weight: 0.5, value: 30, small: false, rolls: false, fixedRarity: 'chatarra', maxStack: 1, desc: '8 casillas.' },
+  mochila_escolar: { id: 'mochila_escolar', nombre: 'Mochila escolar', kind: 'mochila', slot: 'espalda', icon: 'v4/mochila_escolar', weight: 1, value: 55, small: false, rolls: false, fixedRarity: 'comun', maxStack: 1, desc: '12 casillas.' },
+  mochila_media: { id: 'mochila_media', nombre: 'Mochila de senderismo', kind: 'mochila', slot: 'espalda', icon: 'v4/mochila_senderismo', weight: 1.5, value: 120, small: false, rolls: false, fixedRarity: 'reforzado', maxStack: 1, desc: '16 casillas y +1 consumible rápido.' },
+  mochila_grande: { id: 'mochila_grande', nombre: 'Mochila táctica', kind: 'mochila', slot: 'espalda', icon: 'v4/mochila_tactica', weight: 2, value: 300, small: false, rolls: false, fixedRarity: 'militar', maxStack: 1, desc: '20 casillas, +1 consumible rápido y consumibles un 15 % más rápidos.' },
+  mochila_anomala: { id: 'mochila_anomala', nombre: 'Mochila anómala', kind: 'mochila', slot: 'espalda', icon: 'v4/mochila_anomala', weight: 1, value: 1000, small: false, rolls: false, fixedRarity: 'anomalia', maxStack: 1, desc: '26 casillas. Lo que lleva pesa un 20 % menos.' },
+  // v4 §4: llave del helipuerto del radar (la suelta la Matriarca). Pequeña: cabe en el bolsillo seguro.
+  tarjeta_helipuerto: { id: 'tarjeta_helipuerto', nombre: 'Tarjeta del helipuerto', kind: 'llave', icon: 'v4/tarjeta_helipuerto', weight: 0.1, value: 60, small: true, rolls: false, maxStack: 1, desc: 'Abre el Helipuerto del radar (Zona Helada): el helicóptero tarda 30 s y hace muchísimo ruido.' },
   chapas: { id: 'chapas', nombre: 'Chapas', kind: 'chapas', icon: 'chapa', weight: 0, value: 1, small: true, rolls: false, maxStack: 999, desc: 'Moneda. Se ingresa al extraer.' },
 };
 

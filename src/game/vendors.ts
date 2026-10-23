@@ -1,3 +1,4 @@
+import { bankXp, missionXpFor } from './levels';
 import { MISSION_OFFERS, MISSIONS, MissionDef, VENDORS, VendorId, VENDOR_IDS } from '../config/v3';
 import { ITEMS, TraitId } from '../data/items';
 import type { Rarity } from '../data/rarity';
@@ -55,7 +56,7 @@ export function genStock(d: SaveData, v: VendorId, lv: number): StockEntry[] {
   }
   if (v === 'hierro') {
     gear(VENDORS.hierroGear);
-    for (const [id, q, n] of [...VENDORS.hierroBags, ...(lv >= 4 ? VENDORS.hierroBagsRep4 : [])]) out.push({ id, rarity: 'comun', qty: q, left: n });
+    for (const [id, n, minRep] of VENDORS.hierroBags) if (lv >= minRep) out.push({ id, rarity: ITEMS[id].fixedRarity ?? 'comun', qty: 1, left: n });
   }
   return out;
 }
@@ -147,7 +148,10 @@ function reward(d: SaveData, m: MissionDef): string {
   s.offers = s.offers.filter(o => o !== m.id);
   s.missionsDone = (s.missionsDone ?? 0) + 1;
   const up = gainXp(d, m.vendor, m.xp, 'mision');
-  return `Misión de ${VENDORS.defs[m.vendor].nombre} cumplida: +${m.chapas} chapas${m.item ? ` + ${ITEMS[m.item[0]].nombre}` : ''}` + (up ? `. ${up}` : '');
+  // v4.0: experiencia de personaje (asegurada en el acto)
+  const reps = MISSIONS.map(x => x.xp), cx = missionXpFor(m.xp, Math.min(...reps), Math.max(...reps));
+  const lv = bankXp(d, cx);
+  return `Misión de ${VENDORS.defs[m.vendor].nombre} cumplida: +${m.chapas} chapas${m.item ? ` + ${ITEMS[m.item[0]].nombre}` : ''} · +${cx} exp` + (lv ? ` · ¡nivel ${d.prog.level}!` : '') + (up ? `. ${up}` : '');
 }
 
 export function deliverMission(d: SaveData, v: VendorId): R {

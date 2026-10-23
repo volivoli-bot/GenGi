@@ -304,3 +304,123 @@ Números en `PRUEBA_V2.applySec` (vendaje 1,5 s, botiquín 2,5 s) y `PRUEBA_V2.a
 - El cuerpo del jugador sigue girando al instante; solo la mirada (cono) tiene el tope de 540°/s.
 - Ruta material → vales → objeto → revender: ≈0,28 × valor frente a 0,216 × valor vendiendo el material a un vendedor. Mejor cambio, pero no es un bucle: necesita materiales nuevos en cada incursión.
 - Rendimiento (stress.mjs en la caja con renderizado por software, 390x844): novato quieto 26 → 19 fps con 65-90 enemigos (v3: 28 → 19); minuto 12 con ~100 enemigos 16 → 10 fps (v3: 18 → 16). El sprite nuevo no es la causa: con el jugador anterior sale casi igual (16 → 12). Parece ruido de la caja (carga ≈7), pero conviene medirlo en un móvil real.
+
+### Implementación v3.2 (pase de rendimiento; números en `src/config/v32.ts`)
+- **Recortes de Basu**:
+  - Como mucho 30 flechas/virotes en el suelo. Al pasar de 30 desaparece la más vieja, como si se hubiera roto.
+  - El aura de élite es un único sprite teñido de dorado (#ffd86a) que late en el bucle de la escena. Ya no lleva tween infinito ni partículas.
+  - Como mucho 8 siluetas fantasma a la vez; las más viejas se apagan antes.
+- **Manchas de sangre** (Dott): como mucho 60. La más vieja se desvanece en 0,5 s y su objeto se reutiliza; como mucho 12 desvaneciéndose a la vez (antes 160 manchas sin reciclar).
+- **Números de daño**: se sacan de una reserva de objetos de texto en vez de crearse y destruirse.
+- **Niebla**:
+  - El polígono de visión se recalcula a ≈30 Hz, salvo si te mueves más de 10 px o giras más de 0,15 rad.
+  - La memoria de visión guarda fotos simplificadas (1 de cada 2 puntos), y solo si la mirada se ha movido.
+  - Las fotos se funden en un único polígono por capa, con 120 sectores de 3°.
+- **Contador de fps** siempre visible (también sin `?debug`), con el mínimo entre los minutos 12 y 15: «15 fps · mín 12-15: 13».
+- **Service worker**: la lista de precarga se genera sola en cada build (plugin `gengi-sw` de `vite.config.ts`, con todo `dist/` salvo `sw.js` y los `.map`). Así ningún arte nuevo se queda fuera del modo sin conexión.
+
+### QA v3.2
+- Nuevo `qa/v32.mjs`, con 13 comprobaciones:
+  - topes de flechas, fantasmas y manchas, aura sin tween y reserva de números;
+  - contador de fps;
+  - la precarga del SW cubre todo `dist/`;
+  - prueba sin conexión: tras la primera carga, el juego arranca offline y carga todo el arte.
+- Nuevo `qa/perf12.mjs`: minuto 12 con Math.random sembrado (semilla 1234), comparable entre versiones.
+- Todas las suites en verde: qa, offscreen, fog, v2, sigilo, prueba, v3, v31 (48/48) y v32 (13/13).
+- Arreglos del arnés:
+  - en v3/v31/v32, el «pin» de enemigos ya no toca cuerpos destruidos;
+  - la D6 de v31 reintenta hasta 4 veces, porque fallaba por tiempos.
+- Capturas: `qa/shots_v3_2.mjs` → `shots/v3_2-memoria-fantasmas.png` y `shots/v3_2-contador-fps.png`.
+
+### Rendimiento v3 → v3.1 → v3.2 (minuto 12, misma semilla, 3 pasadas intercaladas, caja con renderizado por software)
+
+| Prueba | v3 | v3.1 | v3.2 |
+|---|---|---|---|
+| Normal: fps reales (media) | 13,5 / 14,0 / 17,7 (15,1) | 11,7 / 11,3 / 12,7 (11,9) | 12,7 / 12,3 / 16,6 (13,9) |
+| Normal: mínimo | 14 / 14 / 17 | 10 / 11 / 12 | 13 / 12 / 17 |
+| Estrés (arco + élites): fps reales (media) | 14,0 / 13,0 / 13,0 (13,3) | 13,0 / 13,9 / 16,7 (14,5) | 13,9 / 16,6 / 17,8 (16,1) |
+
+- La v3.2 recupera casi toda la caída de la v3.1 (+17 % en normal). Con arco y élites, que es donde actúan los recortes, es la más rápida de las tres.
+- La caja tiene ±15 % de ruido entre pasadas (la 3.ª salió más rápida en las tres versiones). Hay que confirmarlo en un móvil real.
+
+### Implementación v4.0 (diseño de Basu, `diseno-v4.md` §1-§5; números en `src/config/v4.ts` y `src/config/levels.ts`)
+- **Mochilas y peso** (§1):
+  - Riñonera 8 casillas, Escolar 12 (gratuita, como el bate), Senderismo 16 (+1 rápido), Táctica 20 (+1 rápido, curas −15 %), Anómala 26 (lo de dentro pesa un 20 % menos). Sin mochila, 6 bolsillos.
+  - El botín pesa por tamaño: pequeño 0,3, mediano 1, grande 2. Armas, armaduras, mochilas y munición usan su peso propio.
+  - Con la carga sube el ruido al andar: +1 casilla por encima de 12 de peso, +2 por encima de 20.
+  - Mochilas en cajas, en la tienda de Hierro y en el Taller (4 recetas).
+- **Mapas por datos** (§5): 4 mapas (El Arrabal, Vía Muerta, El Cráter, La Colmena), con rango de nivel, dificultad, rarezas, multiplicador de experiencia y ganchos de variación por incursión. Solo El Arrabal tiene generador; los otros tres se ven en la Mesa de Mapas como «sin construir».
+- **El Arrabal por piezas** (§4):
+  - Rejilla 4×4 de distritos de 19×19 casillas hechos a mano, con el mismo conector de calle en los 4 bordes. Aún no se barajan.
+  - 3 franjas nevadas fijas: Norte, Oeste y Este. Cada incursión elige una al azar, con su guarida de la Matriarca y su Helipuerto.
+  - Distancias medidas (60 semillas × 4 inicios, en casillas):
+
+| Franja | Inicio → nieve (mín/media/máx) | Inicio → helipuerto por camino | Guarida → salida (mín) |
+|---|---|---|---|
+| Norte | 25 / 25 / 25 | 78 / 96,5 / 115 | 15,6 |
+| Oeste | 25 / 26,5 / 28,2 | 95,5 / 104,4 / 112 | 26,4 |
+| Este | 25 / 26,4 / 27,7 | 97 / 105,6 / 112,5 | 28,4 |
+
+  - Con la variación «al máximo» (QA): 0 salidas cortadas y 0 guaridas bloqueadas. Unas 6 cajas por incursión quedan detrás de puertas cerradas con llave (es a propósito).
+- **Importar sin retroceso**:
+  - El guardado (v6) lleva `profileId` y `rev`, y la marca más alta de cada partida se guarda aparte (`gengi.marcas`), también al borrar la partida.
+  - Se rechaza importar una copia más vieja de la misma partida. Se aceptan una copia más nueva (cambio de móvil) y una partida distinta.
+- **Niveles y experiencia** (§2, números de Basu):
+  - Experiencia por muerte según el tipo (élite ×3, Matriarca 400), 2 por caja abierta la primera vez, y misiones de 60 a 150 según la reputación.
+  - Al extraer: 40 + 8 por minuto. El Helipuerto da ×1,5 y además 2 objetos Militares al alijo.
+  - Coste de cada nivel: 60 + 30·n hasta el 9; desde el 10, el anterior ×1,1.
+  - Lo ganado en la incursión no se asegura hasta extraer. En la incursión se ve más claro en la barra (36×2 bajo el personaje), y al cruzar un nivel aparece el aviso «¡Nivel N! (se asegura al extraer)».
+  - Muerte: se pierde la experiencia de la incursión y un 25 % del progreso ya ganado hacia el siguiente nivel; nunca se baja de nivel. Se configura en `XP_DEATH`, con los modos 'raid', 'raid+progreso' y 'nada'.
+- **Atributos** (§3):
+  - 3 puntos por nivel en 8 atributos lineales, que llegan a su efecto máximo con 50 puntos: Agilidad, Resistencia, Sigilo, Suerte, Fuerza, Pulso, Medicina y Carroñero.
+  - Todos están conectados en la incursión: velocidad, saqueo, daño recibido, duración de los estados, ruido, «?», botín y subida de rareza, cuerpo a cuerpo, peso, apuntado, crítico, recarga, curas, chapas y ver el botín de las cajas a 3 casillas sin abrirlas.
+  - Con 0 puntos no cambian nada, así que las pruebas con semilla siguen igual.
+  - Quitar un punto cuesta 2 de los asignados y devuelve 1.
+- **Estaciones nuevas**:
+  - **Pizarra**: panel de atributos. Nivel 2: quitar un punto sale 1 → 1 una vez cada 3 incursiones. Nivel 3: un reinicio completo gratis cada 10 niveles.
+  - **Gimnasio**: +5 al tope de un atributo por nivel (50 → 65). Pide nivel de personaje 12, 20 y 30.
+  - Algunas mejoras de estación ahora piden nivel de personaje («Requiere nivel de personaje N»).
+- **Interfaz**:
+  - Chip «Nv N +F» con mini barra en la cabecera del refugio.
+  - En la incursión, botón dorado «+3» que late junto al HUD (arte `ui_subir_nivel`). Abre la hoja lateral de atributos sin pausar; dentro de la incursión no tiene Gimnasio ni reinicio.
+  - Iconos de los atributos sacados de `gengi-art/v4/`.
+
+**Simulación de progreso** (incursión buena en el mapa 1 ≈ 530 de experiencia; normal ≈ 300):
+
+| Nivel | Experiencia total | Incursiones buenas | Incursiones normales | Con mapas 2 (×2,5 desde el 8) y 3 (×6 desde el 18)* |
+|---|---|---|---|---|
+| 5 | 540 | 1,0 | 1,8 | 1,0 |
+| 10 | 1890 | 3,6 | 6,3 | 2,9 |
+| 15 | 4105 | 7,7 | 13,7 | 4,5 |
+| 20 | 7674 | 14,5 | 25,6 | 6,5 |
+| 25 | 13422 | 25,3 | 44,7 | 8,3 |
+
+\*Hipotético (los mapas 2 y 3 aún no se pueden jugar): con el ×6 del mapa 3 se pasa del 18 al 25 en menos de 2 incursiones, así que Dott debería revisar ese multiplicador antes de abrirlo.
+
+### QA v4.0
+- `qa/v4.mjs`: 51/51. Cubre mochilas y peso, ruido por carga, mapas por datos, las 3 franjas, distancias, variación «al máximo», migraciones 4 → 5 → 6 y la raid activa del mapa viejo.
+- `qa/levels.mjs`: 36/36. Cubre curva, experiencia por muerte, caja, extracción, Helipuerto, penalización por muerte, atributos y sus efectos, Pizarra, Gimnasio, interfaz, misiones e importación sin retroceso.
+- Suites anteriores contra la build v4: qa, offscreen, fog, v2, sigilo, prueba, v3, v31 y v32. Solo se ajustaron las comprobaciones que daban por hecho la versión de guardado o las 6 estaciones de la v3.
+- Capturas: `shots/v4_0-panel-atributos.png`, `shots/v4_0-barra-xp-mas3.png` y `shots/v4_0-pizarra-refugio.png`.
+- **Pendiente**:
+  - Las rarezas por mapa no están conectadas (solo se juega el mapa 1).
+  - Falta la ventaja especial cada 10 niveles (Segundo aliento) y los cambios v4 de la Radio 2/3.
+  - Gimnasio y Pizarra usan de icono `atributo_fuerza` y `ui_subir_nivel`, porque Basu no dibujó icono de estación.
+
+### Implementación v4.2 (Zona Helada, primer bloque)
+- **Enemigos de la nieve** (`config/v42.ts`, `SNOW_ENEMIES`; se activan solo en la franja de nieve y reutilizan la IA base):
+  - Errante → **Congelado** (32 de vida): caparazón de hielo; el primer golpe hace ×0,5 y lo rompe. El caparazón se guarda en la partida.
+  - Corredor → manada de 3 **Lobos mutados** que rodean por los dos lados; su mordisco sangra el 50 % de las veces.
+  - Escupidor → **Escarcha**: bola de hielo que ralentiza un 40 % durante 2 s, sin veneno.
+- **La Matriarca** (jefa de la guarida; sustituye a la abominación de la guarida, 2.000 de vida ×1,3 en nieve, arte de Basu con 2 brazos animados):
+  - Se activa si te ve, la alertan o entras a 3,5 casillas con línea de visión, dentro de 9 casillas de la arena. Si te alejas más de 15, vuelve a casa.
+  - Pisotón (anillo, 1 s, 3 casillas), 3 lanzas de hielo (aviso de 0,8 s; las paredes y columnas cortan la lanza), aliento helado (cono de 60° durante 2 s que deja 4 charcos que ralentizan 6 s).
+  - Llamada al 60 % y al 30 %: 4 Congelados y 2 Lobos.
+  - Fase 2 (< 40 %): más rápida, encadena pisotón y lanzas, y caen carámbanos con sombra 1 s antes.
+  - Por la espalda recibe ×2 y no se tambalea. Al morir da 400 de experiencia y el botín de la guarida sigue en su caja.
+  - Regla de oro respetada: ningún aviso empieza fuera de pantalla.
+- **Pendiente de §4**: huellas en la nieve, nieve que amortigua y placas de hielo que crujen, inercia al resbalar en el hielo, Ventisca, búnker y remonte, y columnas propias de la arena (de momento cubren las paredes del distrito de la guarida).
+
+### QA v4.2
+- `qa/v42.mjs`: 16/16. Cubre la guarida, los cambios de la nieve, el caparazón, la sangría, la ralentización, los 4 ataques, la llamada, la fase 2, la espalda, la IA natural, la muerte y su botín, y restaurar a media pelea.
+- Todas las suites anteriores se ejecutan contra la build v4.2 (`runv42all.sh`).

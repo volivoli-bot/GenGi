@@ -3,11 +3,12 @@ import { TILE } from '../config/constants';
 import { ENEMY_V3, MUTATIONS } from '../config/v3';
 import { PRUEBA_V2, STEALTH } from '../config/v2';
 import { V3_TYPES } from '../data/enemies';
+import { ESCARCHA } from '../config/v42';
 import { Enemy, EnemyManager, isUnaware, RaidCtx } from './enemies';
 import { lineClear, rayHit } from './map';
 
 /** Bola de ácido del Escupidor: lenta, siempre visible (por encima de la niebla). */
-interface AcidBall { x: number; y: number; vx: number; vy: number; left: number; dmg: number; img: Phaser.GameObjects.Image }
+interface AcidBall { x: number; y: number; vx: number; vy: number; left: number; dmg: number; img: Phaser.GameObjects.Image; ice?: boolean }
 
 const V3 = new Set<string>(V3_TYPES);
 const wrap = Phaser.Math.Angle.Wrap;
@@ -19,6 +20,8 @@ const wrap = Phaser.Math.Angle.Wrap;
  */
 export class V3Behaviors {
   balls: AcidBall[] = [];
+  /** v4.2: impactos de hielo de la Escarcha (QA). */
+  iceHits = 0;
   /** Agarre del Reptante en curso. */
   grab: { e: Enemy; t: number; lastDir: number | null; tick: number } | null = null;
   /** Inmunidad a agarres restante (s). */
@@ -42,7 +45,7 @@ export class V3Behaviors {
   };
   constructor(private m: EnemyManager, private c: RaidCtx) {}
 
-  handles(e: Enemy) { return V3.has(e.def.type); }
+  handles(e: Enemy) { return V3.has(e.ai); }
 
   // ------------------------------------------------------------------ visibilidad
   /**
@@ -74,7 +77,7 @@ export class V3Behaviors {
   // ------------------------------------------------------------------ por enemigo
   /** Devuelve true si se ha encargado del enemigo este fotograma. */
   update(e: Enemy, dt: number, dist: number, px: number, py: number): boolean {
-    switch (e.def.type) {
+    switch (e.ai) {
       case 'escupidor': return this.escupidor(e, dt, dist, px, py);
       case 'chillon': return this.chillon(e, dt, dist, px, py);
       case 'acechador': return this.acechador(e, dt, dist, px, py);
@@ -129,7 +132,7 @@ export class V3Behaviors {
     if (e.cd <= 0 && e.sees && dist <= E.spitRangeTiles * TILE && this.m.canTelegraph(e) && lineClear(this.c.walls, e.x, e.y, px, py)) {
       this.m.countTele(e);
       e.state = 'windup'; e.t = E.windupSec; e.body.setVelocity(0, 0);
-      e.tint(0xc6ff3c);
+      e.tint(e.def.type === 'escarcha' ? 0x9fe6ff : 0xc6ff3c);
     }
     return true;
   }
@@ -140,8 +143,11 @@ export class V3Behaviors {
     this.stats.spits++;
     const v = E.spitTilesPerSec * TILE;
     const x = e.x + Math.cos(ang) * e.def.size * 0.4, y = e.y + Math.sin(ang) * e.def.size * 0.4;
-    const img = this.c.world.add.image(x, y, 'proyectil_acido').setDisplaySize(24, 24).setDepth(15).setRotation(ang + Math.PI / 2);
-    this.balls.push({ x, y, vx: Math.cos(ang) * v, vy: Math.sin(ang) * v, left: E.spitRangeTiles * TILE * 1.25, dmg: e.dmg, img });
+    // v4.2: la Escarcha escupe hielo (ralentiza, sin veneno)
+    const ice = e.def.type === 'escarcha';
+    const key = ice && this.c.world.textures.exists('v4/proyectil_hielo') ? 'v4/proyectil_hielo' : 'proyectil_acido';
+    const img = this.c.world.add.image(x, y, key).setDisplaySize(24, 24).setDepth(15).setRotation(ang + Math.PI / 2);
+    this.balls.push({ x, y, vx: Math.cos(ang) * v, vy: Math.sin(ang) * v, left: E.spitRangeTiles * TILE * 1.25, dmg: ice ? ESCARCHA.dmg : e.dmg, img, ice });
   }
 
   private updateBalls(dt: number) {
@@ -155,11 +161,11 @@ export class V3Behaviors {
       let done = t < 1 || b.left <= 0;
       if (!done && Math.hypot(px - b.x, py - b.y) < this.c.playerRadius + E.hitRadiusPx) {
         done = true; this.stats.ballHits++;
-        this.c.damagePlayer(b.dmg, 'Ácido de Escupidor');
-        this.c.addStatus('poison', E.poisonStacks);
+        if (b.ice) { this.c.damagePlayer(b.dmg, 'Hielo de Escarcha'); this.c.slowPlayer?.(ESCARCHA.slow, ESCARCHA.slowSec); this.iceHits++; }
+        else { this.c.damagePlayer(b.dmg, 'Ácido de Escupidor'); this.c.addStatus('poison', E.poisonStacks); }
       }
       if (done) {
-        const fx = this.c.world.add.circle(b.x, b.y, 14, 0xb6ff3c, 0.6).setDepth(15);
+        const fx = this.c.world.add.circle(b.x, b.y, 14, b.ice ? 0xbfeaff : 0xb6ff3c, 0.6).setDepth(15);
         this.c.world.tweens.add({ targets: fx, alpha: 0, scale: 1.8, duration: 220, onComplete: () => fx.destroy() });
         b.img.destroy(); this.balls.splice(i, 1);
       }

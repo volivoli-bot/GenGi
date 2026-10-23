@@ -36,7 +36,10 @@ export function upgradeBlock(d: SaveData, s: StationId): string | null {
   const lv = stationLevel(d, s);
   const next = STATIONS[s].levels[lv];
   if (!next) return 'Nivel máximo';
-  if (s !== 'generador' && stationLevel(d, 'generador') < lv + 1) return `Requiere Generador nivel ${lv + 1}`;
+  if (next.minLevel && (d.prog?.level ?? 1) < next.minLevel) return `Requiere nivel de personaje ${next.minLevel}`;
+  // v4.0: el Gimnasio tiene 4 niveles; el Generador solo llega al 3
+  const gen = Math.min(lv + 1, STATIONS.generador.levels.length);
+  if (s !== 'generador' && stationLevel(d, 'generador') < gen) return `Requiere Generador nivel ${gen}`;
   if (!canAfford(d, next.cost!)) return 'Faltan materiales';
   return null;
 }

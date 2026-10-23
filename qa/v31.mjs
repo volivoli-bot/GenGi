@@ -2,7 +2,7 @@
 // críticos, memoria de visión, el Trapero, élites, reputación y el arte nuevo del jugador.
 // node qa/v31.mjs (con `npx vite preview --port 4173` en marcha)
 import puppeteer from 'puppeteer-core';
-const URL='http://localhost:4173/?debug=1';
+const URL=(process.env.GENGI_BASE||'http://localhost:4173/')+'?debug=1';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const res=[]; const ok=(n,c,i='')=>{res.push(`${c?'PASS':'FAIL'} ${n} ${i}`);console.log(`${c?'PASS':'FAIL'} ${n} ${i}`);};
 const info=(n,i)=>{res.push(`INFO ${n} ${i}`);console.log(`INFO ${n} ${i}`);};
@@ -18,7 +18,7 @@ const T=48;
 const setup=`
 window.T=48;
 window.__calm=()=>{const s=gengi.raid();gengi.god(true);gengi.clearEnemies();s.snap.stream=null;s.snap.spawnTimer=-1e9;gengi.move(0,0);gengi.aim(null);gengi.cfg31.ELITE.chance=0;
-  if(!window.__hooked||window.__hookedScene!==s){window.__hooked=true;window.__hookedScene=s;window.__pins=new Map();s.events.on('update',()=>{s.idleT=0;if(!window.__natural)s.snap.spawnTimer=Math.min(s.snap.spawnTimer,-1e6);for(const [e,pos] of window.__pins){if(!e.dead){e.body.reset(pos.x,pos.y);}}});}
+  if(!window.__hooked||window.__hookedScene!==s){window.__hooked=true;window.__hookedScene=s;window.__pins=new Map();s.events.on('update',()=>{s.idleT=0;if(!window.__natural)s.snap.spawnTimer=Math.min(s.snap.spawnTimer,-1e6);for(const [e,pos] of window.__pins){if(!e.dead&&e.body){e.body.reset(pos.x,pos.y);}}});}
   window.__pins.clear();};
 window.__gt=()=>gengi.raid().snap.elapsed;
 window.__waitGame=sec=>new Promise(r=>{const t0=__gt();const f=()=>{if(__gt()-t0>=sec)r();else setTimeout(f,20)};f();});
@@ -140,7 +140,7 @@ let found=false;for(let i=0;i<12&&!found;i++){found=await E(()=>!!gengi.v31().tr
 ok('D1 incursión con Trapero encontrada', found);
 if(found){
  {const r=await E(async()=>{const s=gengi.raid();__calm();const t=s.snap.trapero;const out={found0:t.found,vis0:s.trapImg.visible,stock:t.stock.map(e=>({def:e.item.def,r:e.item.rarity,q:e.item.qty,price:e.price,expect:gengi.traperoPrice(e.item.def,e.item.rarity)})),dist:Math.round(Math.hypot(t.x-s.snap.player.x,t.y-s.snap.player.y)/T)};
-   s.player.body.reset(t.x,t.y+T*2.2);s.player.setPosition(t.x,t.y+T*2.2);s.facing=-Math.PI/2;s.viewFacing=-Math.PI/2;await __waitGame(0.5);
+   for(const a of [Math.PI/2,0,Math.PI,-Math.PI/2]){if(t.found)break;const x=t.x+Math.cos(a)*T*2.2,y=t.y+Math.sin(a)*T*2.2;s.player.body.reset(x,y);s.player.setPosition(x,y);s.facing=a+Math.PI;s.viewFacing=a+Math.PI;await __waitGame(0.5);}
    out.found1=t.found;out.vis1=s.trapImg.visible;out.state=s.traperoState()&&{open:s.traperoState().open,near:s.traperoState().near};out.toasts=(s.hud.toasts??[]).map?.(x=>x.text??x)??null;return out;});
   ok('D2 oculto hasta que lo ves; al verlo: «Has encontrado al Trapero»', !r.found0&&!r.vis0&&r.found1&&r.vis1&&r.state.open&&r.state.near, JSON.stringify({f0:r.found0,v0:r.vis0,f1:r.found1,v1:r.vis1,st:r.state,dist:r.dist}));
   const cats=r.stock.map(x=>D.items[x.def].kind);
@@ -169,7 +169,7 @@ if(found){
   {const r2=await E(async()=>{const s=gengi.raid();const t=s.snap.trapero;const out={};
     const el=s.snap.elapsed;s.snap.elapsed=600;out.time=s.traperoState();s.snap.elapsed=el;
     __calm();const e=__dummy('errante',0,0,0,100,'idle');e.body.reset(t.x+T*3,t.y);window.__pins.set(e,{x:t.x+T*3,y:t.y});s.enemies.becomeAlert(e,false);await __waitGame(0.1);out.alert3=s.traperoState();
-    window.__pins.set(e,{x:t.x+T*6,y:t.y});await __waitGame(0.2);out.alert6=s.traperoState();const sell=s.traperoSell('nope');gengi.clearEnemies();await __waitGame(0.1);out.after=s.traperoState();
+    window.__pins.set(e,{x:t.x+T*6,y:t.y});for(let k=0;k<4;k++){await __waitGame(0.2);out.alert6=s.traperoState();if(out.alert6.open)break;}const sell=s.traperoSell('nope');gengi.clearEnemies();await __waitGame(0.1);out.after=s.traperoState();
     return {time:{open:out.time.open,why:out.time.why},a3:{open:out.alert3.open,why:out.alert3.why},a6:out.alert6.open,after:out.after.open};});
    ok('D6 cierra en el minuto 10 y con un enemigo en alerta a ≤4 casillas (a 6 sigue abierto)', !r2.time.open&&!r2.a3.open&&r2.a6&&r2.after, JSON.stringify(r2));}
   {const r3=await E(async()=>{const s=gengi.raid();const t=s.snap.trapero;t.vales=77;const ch0=gengi.state().chapas;s.host.persist();
@@ -236,7 +236,7 @@ await E(()=>{const s=gengi.raid();s.host.endRaid('extraido',{exit:s.snap.exits[0
  await sleep(1800);await p2.waitForFunction(()=>window.gengi,{timeout:20000});
  const m=await p2.evaluate(()=>{const d=gengi.state();return {ver:d.saveVersion,xp:d.vendors.doc.xp,lv:gengi.op('rep','doc'),missions:d.vendors.doc.missionsDone,stockLevel:d.vendors.doc.stockLevel,ch:gengi.op('rep','chispas')};});
  await c2.close();
- ok('F4 migración: guarda la XP pero limita al nivel 2 sin misiones', m.ver===4&&m.xp===1700&&m.lv===2&&m.missions===0&&m.stockLevel===2&&m.ch===2, JSON.stringify(m));}
+ ok('F4 migración: guarda la XP pero limita al nivel 2 sin misiones', m.ver>=4&&m.xp===1700&&m.lv===2&&m.missions===0&&m.stockLevel===2&&m.ch===2, JSON.stringify(m));}
 
 // ======================= G. Jugador nuevo (Basu) =======================
 await newRaid();

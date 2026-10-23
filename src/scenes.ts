@@ -11,6 +11,15 @@ export const ART_V3_UI: [string, number, number][] = [['ui_sospecha', 32, 40], [
   ['hab_aguantar', 32, 32], ['hab_escanear', 32, 32], ['estado_sangrado', 32, 32], ['estado_veneno', 32, 32], ['barra_vida', 40, 8]];
 
 /** Arte v3 de Basu para la raid (enemigos nuevos, auras de mutación, efectos y alcantarilla). */
+/** v4 (Basu, gengi-art/v4): arte del mundo ya en uso (helipuerto, candado, nieve, cabaña) y objetos nuevos. Clave 'v4/<nombre>'. */
+export const ART_V4: [string, number, number][] = [['helipuerto', 192, 192], ['candado', 48, 48], ['suelo_nieve', 64, 64], ['suelo_transicion_nieve', 64, 64],
+  ['huella', 16, 24], ['placa_hielo', 96, 64], ['cabana', 160, 128], ['tarjeta_helipuerto', 64, 64],
+  ['mochila_rinonera', 64, 64], ['mochila_escolar', 64, 64], ['mochila_senderismo', 64, 64], ['mochila_tactica', 64, 64], ['mochila_anomala', 64, 64],
+  // v4.0 niveles
+  ['ui_subir_nivel', 64, 64],
+  // v4.2 Zona Helada
+  ['congelado', 64, 64], ['lobo_mutado', 64, 64], ['escarcha', 64, 64], ['matriarca_cuerpo', 256, 256], ['matriarca_brazo', 64, 160],
+  ['proyectil_hielo', 32, 32], ['pico_hielo', 48, 64], ['aviso_onda', 128, 128], ['aviso_lanza_hielo', 32, 256], ['caramb_sombra', 64, 64]];
 export const ART_V3: [string, number, number][] = [['escupidor_cuerpo', 64, 64], ['escupidor_saco', 32, 32], ['proyectil_acido', 32, 32],
   ['chillon_cuerpo', 64, 64], ['chillon_boca', 32, 32], ['fx_onda_grito', 128, 128], ['acechador_cuerpo', 64, 64],
   ['bruto_cuerpo', 96, 96], ['bruto_placa', 96, 40], ['reptante', 64, 64], ['alcantarilla', 64, 64], ['fx_burbujas', 64, 64],
@@ -76,6 +85,7 @@ export class BootScene extends Phaser.Scene {
     // v3 (Basu): solo la interfaz de sigilo por ahora ('?', '!', Ejecutar, anillo de ruido)
     for (const [k, w, h] of ART_V3_UI) this.load.svg(k, `art/v3/${k}.svg`, { width: w * 2, height: h * 2 });
     for (const [k, w, h] of ART_V3) this.load.svg(k, `art/v3/${k}.svg`, { width: w * 2, height: h * 2 });
+    for (const [k, w, h] of ART_V4) this.load.svg('v4/' + k, `art/v4/${k}.svg`, { width: w * 2, height: h * 2 });
   }
   create() { this.game.events.emit('gengi-ready'); }
 }

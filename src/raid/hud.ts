@@ -44,6 +44,8 @@ class RoundButton {
     }
   }
   contains(x: number, y: number) { return Math.hypot(x - this.bg.x, y - this.bg.y) <= this.r + 6; }
+  /** v4: mostrar / ocultar el botón entero. */
+  setShown(v: boolean) { if (this.bg.visible === v) return; for (const o of [this.bg, this.icon, this.cd, this.label, this.badge]) o.setVisible(v); }
 }
 
 /** HUD de la raid: vida, reloj, botones de habilidad, consumible, extracción, minimapa y flechas a las salidas. */
@@ -56,6 +58,8 @@ export class Hud {
   msg: Phaser.GameObjects.Text;
   abilities: RoundButton[];
   quick: RoundButton;
+  /** v4: segundo consumible rápido (mochila de senderismo / táctica). Oculto si la mochila no lo da. */
+  quick2: RoundButton;
   /** v2: cambio rápido al arma de reserva (encima del arco de habilidades). */
   swap: RoundButton;
   /** v2: posición en reposo del joystick de apuntar. */
@@ -64,6 +68,10 @@ export class Hud {
   vignette: Phaser.GameObjects.Graphics;
   pauseBtn: RoundButton;
   bagBtn: RoundButton;
+  /** v4.0: «+3» dorado (puntos de atributo sin gastar) y nivel. */
+  lvlBtn: RoundButton;
+  lvlText!: Phaser.GameObjects.Text;
+  lvlPlus!: Phaser.GameObjects.Text;
   actionBtn: Phaser.GameObjects.Text;
   barBg: Phaser.GameObjects.Rectangle;
   barFill: Phaser.GameObjects.Rectangle;
@@ -95,10 +103,15 @@ export class Hud {
     this.fps = t(11, '#b6ff3c').setVisible(false);
     this.abilities = [new RoundButton(sc), new RoundButton(sc), new RoundButton(sc)];
     this.quick = new RoundButton(sc);
+    this.quick2 = new RoundButton(sc);
     this.swap = new RoundButton(sc);
     this.vignette = sc.add.graphics().setScrollFactor(0).setDepth(D - 8);
     this.pauseBtn = new RoundButton(sc);
     this.bagBtn = new RoundButton(sc);
+    this.lvlBtn = new RoundButton(sc);
+    this.lvlBtn.setShown(false);
+    this.lvlText = t(12, '#ffd23c');
+    this.lvlPlus = sc.add.text(0, 0, '', { fontFamily: FONT, fontSize: '14px', fontStyle: 'bold', color: '#ffd23c', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5).setScrollFactor(0).setDepth(D + 4).setVisible(false);
     this.pauseBtn.icon.setVisible(false);
     this.pauseBtn.label.setText('');
     this.actionBtn = sc.add.text(0, 0, '', { fontFamily: FONT, fontSize: '17px', fontStyle: 'bold', color: '#14110f', backgroundColor: '#b6ff3c', padding: { x: 16, y: 10 } })
@@ -127,6 +140,9 @@ export class Hud {
     this.pauseBtn.place(R - 22, T + 22, 22);
     this.bagBtn.place(R - 74, T + 22, 22);
     this.bagBtn.icon.setTexture('caja');
+    this.lvlText.setPosition(L, T + 40);
+    this.lvlBtn.place(L + 76, T + 50, 17);
+    this.lvlPlus?.setPosition(L + 76, T + 50);
     const s = Math.min(96, Math.max(72, W * 0.22));
     this.miniRect = { x: R - s, y: T + 56, s };
     // v2 (Basu/Dott): joystick de apuntar grande (radio 70) abajo a la derecha, en el reposo del pulgar;
@@ -140,6 +156,7 @@ export class Hud {
       const a = Phaser.Math.DegToRad(deg);
       btns[i].place(cx + Math.cos(a) * HUD2.arcRadius, cy + Math.sin(a) * HUD2.arcRadius, br);
     });
+    { const a = Phaser.Math.DegToRad(HUD2.arcDeg[0] - (HUD2.arcDeg[1] - HUD2.arcDeg[0])); this.quick2.place(cx + Math.cos(a) * HUD2.arcRadius, cy + Math.sin(a) * HUD2.arcRadius, br); }
     const top = this.quick.bg, q2 = this.abilities[2].bg;
     this.swap.place((top.x + q2.x) / 2 + 4, Math.min(top.y, q2.y) - br - SWAP.buttonPx / 2 - 14, SWAP.buttonPx / 2);
     this.actionBtn.setPosition(Math.max(L + 80, W * 0.36), B - 232);
@@ -157,9 +174,27 @@ export class Hud {
     return { top: Math.round(top), height: Math.round(bottom - top), width, right: ins.right + 8 };
   }
 
+  /** v4.0: nivel y botón «+N» (brilla hasta que gastes los puntos). */
+  setLevel(level: number, free: number, t: number) {
+    this.lvlText.setText(`Nv ${level}`);
+    const on = free > 0;
+    this.lvlBtn.setShown(on);
+    if (!on) { this.lvlPlus.setVisible(false); return; }
+    const pulse = 0.5 + 0.5 * Math.sin(t * 6);
+    // el icono de Basu lleva «+3» dibujado: con otro número se pinta el texto encima del fondo
+    const art = free === 3 && this.sc.textures.exists('v4/ui_subir_nivel');
+    if (art) this.lvlBtn.icon.setTexture('v4/ui_subir_nivel').setVisible(true).setDisplaySize(this.lvlBtn.r * 2.2, this.lvlBtn.r * 2.2);
+    else this.lvlBtn.icon.setVisible(false);
+    this.lvlPlus.setVisible(!art).setText('+' + free);
+    this.lvlBtn.bg.setFillStyle(0x14110f, art ? 0.2 : 0.85).setStrokeStyle(3, 0xffd23c, 0.4 + 0.6 * pulse);
+    this.lvlBtn.badge.setText('');
+    this.lvlBtn.label.setText('');
+    this.lvlBtn.bg.setScale(1 + 0.08 * pulse);
+  }
+
   /** ¿Toca este punto algún control? (para que el joystick no lo robe) */
   hitTest(x: number, y: number) {
-    const btns = [...this.abilities, this.quick, this.swap, this.pauseBtn, this.bagBtn];
+    const btns = [...this.abilities, this.quick, ...(this.quick2.bg.visible ? [this.quick2] : []), this.swap, this.pauseBtn, this.bagBtn, ...(this.lvlBtn.bg.visible ? [this.lvlBtn] : [])];
     if (btns.some(b => b.contains(x, y))) return true;
     if (this.actionBtn.visible && this.actionBtn.getBounds().contains(x, y)) return true;
     return y < this.insets.top + 50;
@@ -168,7 +203,7 @@ export class Hud {
   /** Despacha un toque a los botones; devuelve true si lo ha consumido. */
   handleTap(x: number, y: number) {
     if (this.actionBtn.visible && this.actionBtn.getBounds().contains(x, y)) { this.onAction?.(); return true; }
-    for (const b of [...this.abilities, this.quick, this.swap, this.pauseBtn, this.bagBtn]) if (b.contains(x, y)) { b.onTap(); return true; }
+    for (const b of [...this.abilities, this.quick, ...(this.quick2.bg.visible ? [this.quick2] : []), this.swap, this.pauseBtn, this.bagBtn, ...(this.lvlBtn.bg.visible ? [this.lvlBtn] : [])]) if (b.contains(x, y)) { b.onTap(); return true; }
     return false;
   }
 

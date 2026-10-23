@@ -2,6 +2,7 @@ import { ITEMS } from '../data/items';
 import type { SaveData } from '../save/types';
 import { addToList, backpackSlots, canPocket, canSell, freeItem, ItemInst, slotOf, itemValue } from './inventory';
 import { pocketSlots, stashSlots } from './refugio';
+import { FREE_BAG } from '../config/v4';
 
 /**
  * Operaciones del refugio sobre el guardado. Cada operación localiza el objeto por uid en UN solo
@@ -42,11 +43,11 @@ function putBack(d: SaveData, f: { it: ItemInst; place: Place }) {
   else lo[f.place] = f.it;
 }
 
-/** Quitar la mochila de espalda solo si lo que llevas cabe en la mochila base. */
+/** Quitar la mochila de espalda solo si lo que llevas cabe en la que queda (v4: la escolar gratuita). */
 function bagBlock(d: SaveData, f: { place: Place }, newBag: ItemInst | null = null): string | null {
   if (f.place !== 'espalda') return null;
   const lo = d.loadout;
-  const cap = backpackSlots({ ...lo, espalda: newBag });
+  const cap = backpackSlots({ ...lo, espalda: newBag ?? freeItem(FREE_BAG) });
   return lo.mochila.length > cap ? `Vacía la mochila primero (caben ${cap})` : null;
 }
 
@@ -130,9 +131,10 @@ export function takeForSale(d: SaveData, uid: string): ItemInst | null {
 }
 export { bagBlock };
 
-/** Equipo gratis siempre: si no tienes arma o torso, se te da bate Común / ropa invendibles. */
+/** Equipo gratis siempre: si no tienes arma, torso o mochila, se te da bate Común / ropa / mochila escolar (v4) invendibles. */
 export function ensureFreeGear(d: SaveData) {
   if (d.loadout.reserva === undefined) d.loadout.reserva = null;
+  if (!d.loadout.espalda) d.loadout.espalda = freeItem(FREE_BAG);
   if (!d.loadout.arma) d.loadout.arma = freeItem('bate');
   if (!d.loadout.torso) d.loadout.torso = freeItem('ropa');
 }

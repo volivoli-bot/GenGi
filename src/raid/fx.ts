@@ -1,17 +1,25 @@
 import Phaser from 'phaser';
 import { JUICE } from '../config/v2';
 import { DAMAGE } from '../config/v31';
+import { PERF } from '../config/v32';
 
 const FONT = 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
 
 /** Efectos de impacto: números de daño, sangre, manchas de suelo (toda la raid, con tope), fogonazos, impactos. */
 export class Fx {
   private nums: Phaser.GameObjects.Text[] = [];
+  private numPools = new Map<string, Phaser.GameObjects.Text[]>();
   private stains: Phaser.GameObjects.Image[] = [];
   corpses: { destroy(): void }[] = [];
   /** QA: últimos números de daño mostrados. */
   shown: { n: number; crit: boolean; color: string; size: number; text?: string; hurt?: boolean }[] = [];
   stainCount = 0;
+  /** v3.2: manchas desvanecidas por el tope y reserva para reutilizarlas. */
+  stainsFaded = 0;
+  private stainPool: Phaser.GameObjects.Image[] = [];
+  private stainFading: Phaser.GameObjects.Image[] = [];
+  /** QA v3.2: manchas visibles (sin contar las que se están desvaneciendo). */
+  get stainsLive() { return this.stains.length; }
 
   constructor(private sc: Phaser.Scene) {}
 
@@ -23,15 +31,20 @@ export class Fx {
    * contorno #14110f de 4). `hurt` = daño recibido (rojo; crítico recibido naranja rojizo).
    */
   damageNumber(x: number, y: number, n: number, crit: boolean, hurt = false) {
-    let t = this.nums.find(o => !o.active);
     const size = crit ? Math.round(17 * DAMAGE.critSize) : 17;
     const color = hurt ? (crit ? DAMAGE.hurtCritColor : DAMAGE.hurtColor) : crit ? DAMAGE.critColor : DAMAGE.numColor;
+    // v3.2: reserva por estilo (normal/crítico/recibido…): al reutilizar solo cambia el texto (antes 4 redibujos de lienzo por número)
+    const sk = `${size}|${color}|${crit ? 4 : 3}`;
+    let pool = this.numPools.get(sk);
+    if (!pool) { pool = []; this.numPools.set(sk, pool); }
+    let t = pool.find(o => !o.active);
     if (!t) {
-      t = this.sc.add.text(0, 0, '', { fontFamily: FONT, fontStyle: '900', fontSize: '17px', color: '#fff', stroke: '#14110f', strokeThickness: 3 }).setOrigin(0.5).setDepth(31);
-      this.nums.push(t);
+      t = this.sc.add.text(0, 0, '', { fontFamily: FONT, fontStyle: '900', fontSize: `${size}px`, color, stroke: '#14110f', strokeThickness: crit ? 4 : 3 }).setOrigin(0.5).setDepth(31);
+      pool.push(t); this.nums.push(t);
     }
     const txt = String(Math.max(1, Math.round(n))) + (crit ? '!' : '');
-    t.setActive(true).setVisible(true).setAlpha(1).setText(txt).setFontSize(size).setColor(color).setStroke('#14110f', crit ? 4 : 3).setPosition(x, y - 18).setScale(1);
+    if (t.text !== txt) t.setText(txt);
+    t.setActive(true).setVisible(true).setAlpha(1).setPosition(x, y - 18).setScale(1);
     this.shown.push({ n: Math.round(n), crit, color, size, text: txt, hurt }); if (this.shown.length > 30) this.shown.shift();
     const side = (Math.random() - 0.5) * 24;
     const x0 = x, y0 = y - 18;
@@ -69,9 +82,21 @@ export class Fx {
   stain(x: number, y: number, azul: boolean, scale = 0.6) {
     const k = azul ? 'fx_mancha_suelo_azul' : 'fx_mancha_suelo_verde';
     if (!this.tex(k)) return;
-    let im: Phaser.GameObjects.Image;
-    if (this.stains.length >= JUICE.maxStains) { im = this.stains.shift()!; im.setTexture(k); }
-    else im = this.sc.add.image(0, 0, k).setDepth(2);
+    // v3.2 (Dott): tope PERF.maxStains; la más vieja se desvanece y vuelve a la reserva para reutilizarse
+    while (this.stains.length >= PERF.maxStains) {
+      const old = this.stains.shift()!;
+      this.stainsFaded++;
+      this.stainFading.push(old);
+      this.sc.tweens.add({ targets: old, alpha: 0, duration: PERF.stainFadeMs, onComplete: () => {
+        const i = this.stainFading.indexOf(old); if (i < 0) return;
+        this.stainFading.splice(i, 1); old.setVisible(false); this.stainPool.push(old);
+      } });
+    }
+    // en ráfagas (granada) no se crean objetos sin fin: si hay muchas desvaneciéndose, se recicla la más vieja ya
+    let im = this.stainPool.pop();
+    if (!im && this.stainFading.length >= PERF.maxStainsFading) { im = this.stainFading.shift()!; this.sc.tweens.killTweensOf(im); }
+    im = im ?? this.sc.add.image(0, 0, k).setDepth(2);
+    im.setTexture(k).setVisible(true);
     im.setPosition(x, y).setDisplaySize(64 * scale * 1.4, 64 * scale * 1.4).setRotation(Math.random() * 6.28).setAlpha(0.8);
     this.stains.push(im);
     this.stainCount++;

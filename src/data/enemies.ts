@@ -1,7 +1,9 @@
 import { TILE } from '../config/constants';
 
 export type EnemyType = 'errante' | 'corredor' | 'hinchado' | 'abominacion'
-  | 'escupidor' | 'chillon' | 'acechador' | 'bruto' | 'reptante' | 'enjambre';
+  | 'escupidor' | 'chillon' | 'acechador' | 'bruto' | 'reptante' | 'enjambre'
+  // v4.2 Zona Helada (diseno-v4 §4)
+  | 'congelado' | 'lobo' | 'escarcha' | 'matriarca';
 
 /** Enemigos de la v3 (comportamiento en raid/enemies3.ts). */
 export const V3_TYPES: EnemyType[] = ['escupidor', 'chillon', 'acechador', 'bruto', 'reptante', 'enjambre'];
@@ -18,6 +20,8 @@ export interface EnemyDef {
   danger: number;
   /** Probabilidad de soltar botín al morir. */
   dropChance: number;
+  /** v4.2: comportamiento que reutiliza (el Congelado ataca como el Errante, el Lobo como el Corredor…). */
+  ai?: EnemyType;
 }
 
 export const ENEMIES: Record<EnemyType, EnemyDef> = {
@@ -32,10 +36,17 @@ export const ENEMIES: Record<EnemyType, EnemyDef> = {
   bruto: { type: 'bruto', nombre: 'Bruto', hp: 160, dmg: 30, speed: 1.5, size: 72, danger: 3, dropChance: 0.3 },
   reptante: { type: 'reptante', nombre: 'Reptante', hp: 45, dmg: 4, speed: 0, size: 52, danger: 3, dropChance: 0.2 },
   enjambre: { type: 'enjambre', nombre: 'Enjambre', hp: 5, dmg: 3, speed: 3.8, size: 18, danger: 1, dropChance: 0 },
+  // v4.2 Zona Helada (§4). Los números de sus ataques están en config/v42.ts.
+  congelado: { type: 'congelado', nombre: 'Congelado', hp: 32, dmg: 7, speed: 1.5, size: 46, danger: 1, dropChance: 0.15, ai: 'errante' },
+  lobo: { type: 'lobo', nombre: 'Lobo mutado', hp: 24, dmg: 6, speed: 4.6, size: 44, danger: 2, dropChance: 0.1, ai: 'corredor' },
+  escarcha: { type: 'escarcha', nombre: 'Escarcha', hp: 26, dmg: 2, speed: 1.8, size: 44, danger: 3, dropChance: 0.15, ai: 'escupidor' },
+  matriarca: { type: 'matriarca', nombre: 'La Matriarca', hp: 2000, dmg: 30, speed: 1.6, size: 168, danger: 5, dropChance: 0 },
 };
+/** Comportamiento base de cada tipo (el propio si no reutiliza otro). */
+export const aiOf = (t: EnemyType): EnemyType => ENEMIES[t].ai ?? t;
 
 /** Textura del cuerpo físico invisible (el radio del círculo sale del ancho de la textura). */
-export const BODY_TEX: Record<string, string> = { escupidor: 'errante', chillon: 'errante', acechador: 'errante', bruto: 'errante', reptante: 'errante', enjambre: 'errante' };
+export const BODY_TEX: Record<string, string> = { escupidor: 'errante', chillon: 'errante', acechador: 'errante', bruto: 'errante', reptante: 'errante', enjambre: 'errante', congelado: 'errante', lobo: 'errante', escarcha: 'errante', matriarca: 'abominacion' };
 
 /** Telegrafiado de ataques (diseño v1). */
 export const ATTACKS = {

@@ -2,7 +2,7 @@ import { ITEMS, ItemDef, Slot, TraitId, WeaponStats } from '../data/items';
 import { RARITIES, Rarity } from '../data/rarity';
 import { BACKPACK_SLOTS, SPEED_PENALTY_MAX, SPEED_PENALTY_PER_WEIGHT } from '../config/constants';
 import { PRUEBA_V2 } from '../config/v2';
-import { NEW_ITEMS } from '../config/v3';
+import { BAGS, FREE_BAG, LOAD_NOISE, LOOT_SIZE, LOOT_SIZE_WEIGHT, NO_BAG } from '../config/v4';
 import { bestBuyback } from './prices';
 
 /** Instancia concreta de un objeto (lo que se guarda). */
@@ -42,10 +42,18 @@ export const emptyLoadout = (): Loadout => ({ arma: null, torso: null, cabeza: n
 export function pockets(l: Loadout): ItemInst[] {
   return [l.bolsillo, ...(l.bolsilloExtra ?? [])].filter((x): x is ItemInst => !!x);
 }
-/** Casillas de mochila según la mochila equipada (12 base + 4/8). */
+/** v4 §1: la mochila equipada (o «sin mochila» = bolsillos). */
+export function bagOf(l: Loadout) { return (l.espalda && BAGS[l.espalda.def]) || NO_BAG; }
+/** Casillas de mochila según la mochila equipada (sin mochila 6 · riñonera 8 · escolar 12 · senderismo 16 · táctica 20 · anómala 26). */
 export function backpackSlots(l: Loadout) {
-  return BACKPACK_SLOTS + (l.espalda ? NEW_ITEMS.mochila[l.espalda.def] ?? 0 : 0);
+  return bagOf(l).slots;
 }
+/** v4: casillas de consumible rápido (1 + la de la mochila de senderismo / táctica). */
+export function quickSlots(l: Loadout) { return 1 + bagOf(l).quickExtra; }
+/** v4: multiplicador del tiempo de aplicar consumibles (táctica: 15 % más rápido). */
+export function useTimeMult(l: Loadout) { return bagOf(l).useTimeMult; }
+/** v3: BACKPACK_SLOTS sigue siendo la mochila escolar gratuita. */
+export const FREE_BAG_SLOTS = BACKPACK_SLOTS;
 
 let counter = 0;
 export function uid() {
@@ -57,7 +65,7 @@ export function def(it: ItemInst): ItemDef { return ITEMS[it.def]; }
 
 export function makeItem(id: string, rarity: Rarity = 'comun', qty = 1, traits?: TraitId[]): ItemInst {
   const d = ITEMS[id];
-  const it: ItemInst = { uid: uid(), def: id, rarity: d.rolls ? rarity : 'comun', qty: Math.min(qty, d.maxStack) };
+  const it: ItemInst = { uid: uid(), def: id, rarity: d.fixedRarity ?? (d.rolls ? rarity : 'comun'), qty: Math.min(qty, d.maxStack) };
   if (traits && traits.length) it.traits = traits;
   if (d.weapon?.mag) it.mag = 0;
   return it;
@@ -66,14 +74,18 @@ export function makeItem(id: string, rarity: Rarity = 'comun', qty = 1, traits?:
 export function itemValue(it: ItemInst): number {
   if (it.free) return 0;
   const d = def(it);
-  return Math.round(d.value * RARITIES[it.rarity].valor * it.qty);
+  // v4: solo el equipo con rareza tirada multiplica por rareza (las mochilas tienen rareza fija y precio propio)
+  return Math.round(d.value * (d.rolls ? RARITIES[it.rarity].valor : 1) * it.qty);
 }
 export function canSell(it: ItemInst) { return !it.free && it.def !== 'chapas'; }
 /** v3: lo máximo que te paga algún vendedor (40 % del precio mínimo de su tienda, §6). */
 export function sellPrice(it: ItemInst) { return canSell(it) ? bestBuyback(it).price : 0; }
 
 export function itemWeight(it: ItemInst) {
-  return def(it).weight * it.qty * (it.traits?.includes('ligero') ? 0.7 : 1);
+  // v4 §1: el botín pesa por tamaño (pequeño 0,3 · mediano 1 · grande 2); armas, armaduras y mochilas, su peso
+  const sz = LOOT_SIZE[it.def];
+  const w = sz ? LOOT_SIZE_WEIGHT[sz] : def(it).weight;
+  return w * it.qty * (it.traits?.includes('ligero') ? 0.7 : 1);
 }
 
 export function weaponStats(it: ItemInst | null): WeaponStats & { dmgMult: number } {
@@ -98,9 +110,22 @@ export function totalProtection(l: Loadout) {
 export function allItems(l: Loadout): ItemInst[] {
   return [l.arma, l.reserva ?? null, l.torso, l.cabeza, l.espalda ?? null, l.bolsillo, ...(l.bolsilloExtra ?? []), ...l.mochila].filter((x): x is ItemInst => !!x);
 }
-export function totalWeight(l: Loadout) { return allItems(l).reduce((s, it) => s + itemWeight(it), 0); }
-export function speedMult(l: Loadout) {
-  return 1 - Math.min(SPEED_PENALTY_MAX, totalWeight(l) * SPEED_PENALTY_PER_WEIGHT);
+/** Peso total: lo de la mochila cuenta según la mochila (anómala: −20 %); lo equipado y los bolsillos, entero. */
+export function totalWeight(l: Loadout) {
+  const k = bagOf(l).contentWeightMult;
+  const inBag = l.mochila.reduce((s, it) => s + itemWeight(it), 0);
+  const rest = allItems(l).filter(it => !l.mochila.includes(it)).reduce((s, it) => s + itemWeight(it), 0);
+  return rest + inBag * k;
+}
+/** v4 §1: casillas de ruido extra al andar por ir cargado (>12 → +1, >20 → +2). */
+export function loadNoiseTiles(l: Loadout) {
+  const w = totalWeight(l);
+  for (const r of LOAD_NOISE) if (w > r.over) return r.tiles;
+  return 0;
+}
+/** `freeWeight` (v4.0, Fuerza): peso que no ralentiza. */
+export function speedMult(l: Loadout, freeWeight = 0) {
+  return 1 - Math.min(SPEED_PENALTY_MAX, Math.max(0, totalWeight(l) - freeWeight) * SPEED_PENALTY_PER_WEIGHT);
 }
 export function gearValue(l: Loadout) { return allItems(l).reduce((s, it) => s + itemValue(it), 0); }
 
@@ -144,8 +169,8 @@ export function consume(list: ItemInst[], id: string, n: number) {
 
 export function slotOf(it: ItemInst): Slot | undefined { return def(it).slot; }
 
-/** Equipo gratis siempre disponible: bate Común + ropa, invendibles. */
-export function freeItem(id: 'bate' | 'ropa'): ItemInst {
+/** Equipo gratis siempre disponible: bate Común + ropa + mochila escolar (v4), invendibles. */
+export function freeItem(id: 'bate' | 'ropa' | typeof FREE_BAG): ItemInst {
   const it = makeItem(id, 'comun');
   it.free = true;
   return it;

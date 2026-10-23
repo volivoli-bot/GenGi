@@ -65,7 +65,45 @@ export const MIGRATIONS: Record<number, (d: AnySave) => AnySave> = {
     }
     return out;
   },
+  /**
+   * 4 → 5 (v4): mochilas con casillas propias (sin mochila = 6 bolsillos; la escolar gratuita da 12) y el mapa 1 pasa a ser
+   * El Arrabal ('arrabal-v4'). Las salidas vistas 0-2 del mapa v2 siguen en el mismo sitio → se copian; el helipuerto (3) no.
+   * Quien no lleve mochila recibe la escolar gratuita (también en la raid activa: así no pierde las 12 casillas que tenía).
+   * Una raid activa del mapa anterior se repuebla en el mapa nuevo (se conservan equipo, vida y tiempo).
+   */
+  4: (d) => {
+    const out = { ...d, saveVersion: 5 };
+    const seen = { ...(out.seenExits ?? {}) };
+    if (seen['ciudad-v2'] && !seen['arrabal-v4']) seen['arrabal-v4'] = (seen['ciudad-v2'] as number[]).filter(i => i >= 0 && i <= 2);
+    out.seenExits = seen;
+    let n = 0;
+    const bag = (lo: AnySave) => lo && !lo.espalda ? { ...lo, espalda: { uid: 'free-mig5-' + (n++), def: 'mochila_escolar', rarity: 'comun', qty: 1, free: true } } : lo;
+    out.loadout = bag(out.loadout);
+    if (out.activeRaid) {
+      out.activeRaid = { ...out.activeRaid, loadout: bag(out.activeRaid.loadout) };
+      if (out.activeRaid.mapId !== 'arrabal-v4') out.activeRaid.repopulate = true;
+    }
+    return out;
+  },
+  /**
+   * 5 → 6 (v4.0): nivel 1 sin experiencia ni atributos; id de partida derivado de createdAt (así una copia exportada
+   * antes de la v4.0 se reconoce como la misma partida) y contador de guardados a 0.
+   */
+  5: (d) => {
+    const out = { ...d, saveVersion: 6 };
+    out.profileId = out.profileId ?? (out.createdAt ? profileIdFor(String(out.createdAt)) : undefined);
+    out.rev = typeof out.rev === 'number' ? out.rev : 0;
+    if (out.activeRaid) out.activeRaid = { ...out.activeRaid, xp: out.activeRaid.xp ?? 0 };
+    return out;
+  },
 };
+
+/** Id estable de una partida a partir de su fecha de creación. */
+export function profileIdFor(createdAt: string) {
+  let h = 2166136261;
+  for (let i = 0; i < createdAt.length; i++) { h ^= createdAt.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return 'p' + (h >>> 0).toString(36);
+}
 
 export function migrate(raw: AnySave): AnySave {
   let d = raw;

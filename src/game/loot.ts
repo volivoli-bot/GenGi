@@ -2,6 +2,7 @@ import { ITEMS, TRAITS, TraitId } from '../data/items';
 import { RARITIES, Rarity, V1_DROP_RARITIES } from '../data/rarity';
 import { ItemInst, makeItem } from './inventory';
 import { MATERIAL_LOOT, MaterialId } from '../config/v3';
+import { BAG_LOOT, SNOW } from '../config/v4';
 
 type Rng = () => number;
 
@@ -50,7 +51,8 @@ const TABLE: { id: string; w: number; qty?: [number, number] }[] = [
   { id: 'antidoto', w: 1.2 },
   { id: 'adrenalina', w: 0.8 },
   { id: 'estimulante', w: 0.5 },
-  { id: 'mochila_media', w: 0.6 },
+  // v4 §1: mochilas (rareza fija; no entran en las tiradas de solo equipo)
+  ...Object.entries(BAG_LOOT).map(([id, w]) => ({ id, w })),
 ];
 
 /** v3: una pila de material según el sitio (MATERIAL_LOOT.byZone). */
@@ -86,8 +88,32 @@ export function rollEliteDrops(rng: Rng): ItemInst[] {
 
 export type ContainerKind = 'caja' | 'cerrada' | 'elite' | 'cadaver';
 
-export function rollContainer(rng: Rng, kind: ContainerKind, bonus: number): ItemInst[] {
+/** Tirada con pesos explícitos por rareza (v4: botín de la nieve). */
+export function rollWeighted(rng: Rng, w: Partial<Record<Rarity, number>>): Rarity {
+  const e = Object.entries(w) as [Rarity, number][];
+  let x = rng() * e.reduce((a, [, v]) => a + v, 0);
+  for (const [r, v] of e) { x -= v; if (x <= 0) return r; }
+  return e[e.length - 1][0];
+}
+
+/** v4 §4: botín de la guarida de la Matriarca: 3 objetos (uno Militar o mejor, 15 % Anomalía) y 50 % de Tarjeta del helipuerto. */
+export function rollLair(rng: Rng): ItemInst[] {
+  const out = [rollItem(rng, 1, rng() < 0.15 ? 'anomalia' : 'militar', true)];
+  for (let i = 0; i < 2; i++) out.push(rollItem(rng, 1, rollWeighted(rng, SNOW.rarity)));
+  if (rng() < SNOW.cardChance) out.push(makeItem('tarjeta_helipuerto', 'comun', 1));
+  return out;
+}
+
+export function rollContainer(rng: Rng, kind: ContainerKind, bonus: number, snow = false): ItemInst[] {
   const out: ItemInst[] = [];
+  if (snow && kind !== 'elite') {
+    // v4: Zona Helada → rarezas propias (Común 45 / Reforzado 37 / Militar 18)
+    const n = kind === 'caja' ? 1 + Math.floor(rng() * 2) : kind === 'cerrada' ? 2 + Math.floor(rng() * 3) : 1;
+    for (let i = 0; i < n; i++) out.push(rollItem(rng, 0, rollWeighted(rng, SNOW.rarity)));
+    if (out.some(i => i.def === 'arco')) out.push(makeItem('flechas', 'comun', 6));
+    if (out.some(i => i.def === 'ballesta')) out.push(makeItem('virotes', 'comun', 5));
+    return out;
+  }
   if (kind === 'elite') {
     out.push(rollItem(rng, 1, 'militar', true));
     for (let i = 0; i < 2; i++) out.push(rollItem(rng, 1));

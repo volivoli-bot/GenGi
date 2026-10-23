@@ -18,7 +18,7 @@ export function h(tag: string, attrs: Attrs = {}, ...kids: (Node | string | null
 }
 
 /** Objetos sin arte todavía (v3: Basu no los dibujó): emoji provisional. */
-const PLACEHOLDER: Record<string, string> = { ropa: '👕', adrenalina: '💉', antidoto: '🧪', estimulante: '👁️', granada: '💣', mochila_media: '🎒', mochila_grande: '🎒' };
+const PLACEHOLDER: Record<string, string> = { ropa: '👕', adrenalina: '💉', antidoto: '🧪', estimulante: '👁️', granada: '💣' };
 
 export function itemIcon(id: string): HTMLElement {
   const d = ITEMS[id];

@@ -161,3 +161,24 @@ table.cmp td.down { color: #ff6b6b; font-weight: 800; }
 .trapero .tritem .cell, .trapero .tritem > div:first-child { width: 40px; height: 40px; flex: none; }
 .trapero .tritem.gone { opacity: .45; }
 .trapero .trmsg { color: #ffd27a; }
+/* v4.0: atributos */
+.attrs .attr-head { display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; margin-bottom: 4px; }
+.attrs .attr-free { margin-left: auto; font-weight: 700; color: #b9ab7d; }
+.attrs .attr-free.on { color: #ffc94a; text-shadow: 0 0 8px #ffc94a88; }
+.attrs .attr { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid #ffffff14; }
+.attrs .attr > img { width: 34px; height: 34px; flex: none; }
+.attrs .attr-info { flex: 1; min-width: 0; }
+.attrs .attr-bar { height: 4px; background: #0008; border-radius: 2px; margin: 3px 0; overflow: hidden; }
+.attrs .attr-bar i { display: block; height: 100%; background: #ffc94a; }
+.attrs .attr-btns { display: flex; gap: 4px; flex: none; }
+.attrs .attr-btns .btn { min-width: 34px; padding: 6px 8px; }
+.sheet.side.attr-sheet { border-left-color: #ffc94a; display: flex; flex-direction: column; }
+.sheet.side.attr-sheet .attr > img { width: 26px; height: 26px; }
+.sheet.side.attr-sheet .attr-btns .btn { min-width: 30px; padding: 4px 6px; }
+.station .attrs { margin-top: 8px; }
+.hub-head .nivel { display: flex; flex-direction: column; align-items: center; cursor: pointer; font-size: 14px; color: #ffc94a; background: #000a; border: 2px solid var(--line); border-radius: 12px; padding: 3px 10px; min-width: 64px; }
+.hub-head .nivel span { color: #ffc94a; font-weight: 800; }
+.hub-head .nivel.on { border-color: #ffc94a; box-shadow: 0 0 10px #ffc94a88; animation: gengiGlow 1.2s ease-in-out infinite alternate; }
+.hub-head .nivel i { display: block; width: 52px; height: 3px; background: #0009; margin-top: 2px; }
+.hub-head .nivel u { display: block; height: 100%; background: #ffc94a; text-decoration: none; }
+@keyframes gengiGlow { from { box-shadow: 0 0 4px #ffc94a55; } to { box-shadow: 0 0 14px #ffc94acc; } }

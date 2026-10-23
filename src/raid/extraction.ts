@@ -5,8 +5,9 @@ import {
 } from '../config/constants';
 import type { ExitState, ExitType } from '../save/types';
 import type { MapData } from './map';
+import { SNOW } from '../config/v4';
 
-export const EXIT_NAMES: Record<ExitType, string> = { pie: 'A pie', generador: 'Generador', bengala: 'Bengala', pago: 'De pago' };
+export const EXIT_NAMES: Record<ExitType, string> = { pie: 'A pie', generador: 'Generador', bengala: 'Bengala', pago: 'De pago', helipuerto: 'Helicóptero' };
 
 /**
  * Elige las 2 salidas activas de la raid entre las 3 del mapa.
@@ -34,6 +35,13 @@ export function chooseExits(rng: () => number, map: MapData): ExitState[] {
   });
 }
 
+/** v4 §4: en la variante nevada se añade el Helipuerto del radar (salida extra, solo con la Tarjeta). */
+export function helipadExit(map: MapData): ExitState | null {
+  if (!map.snow) return null;
+  const loc = map.snow.helipadLoc, p = map.exitLocs[loc];
+  return { loc, type: 'helipuerto', x: p.x, y: p.y, gen: 0, unlocked: false, flareAt: null };
+}
+
 export interface ExtractionHooks {
   scene: Phaser.Scene;
   px(): number; py(): number;
@@ -44,6 +52,9 @@ export interface ExtractionHooks {
   /** Objeto Reforzado o mejor que se entregaría (nombre) o null. */
   payCandidate(): string | null;
   pay(): boolean;
+  /** v4: Tarjeta del helipuerto. */
+  hasCard?(): boolean;
+  useCard?(): boolean;
   onExtract(exit: ExitState): void;
   toast(msg: string): void;
   /** v2: ¿se dibuja esta salida (vista alguna vez en este mapa, o a la vista ahora)? */
@@ -78,7 +89,8 @@ export class ExtractionManager {
     });
     for (const e of exits) {
       const img = sc.add.image(e.x, e.y, 'extraccion').setDisplaySize(r * 2, r * 2).setDepth(2);
-      sc.tweens.add({ targets: img, angle: 360, duration: 12000, repeat: -1 });
+      if (e.type !== 'helipuerto') sc.tweens.add({ targets: img, angle: 360, duration: 12000, repeat: -1 });
+      if (e.type === 'helipuerto') img.setTexture('v4/helipuerto').setDisplaySize(r * 2.2, r * 2.2);
       const iconK = e.type === 'generador' ? 'generador' : e.type === 'bengala' ? 'bengala' : e.type === 'pago' ? 'chapa' : null;
       const icon = iconK ? sc.add.image(e.x, e.y, iconK).setDisplaySize(TILE * 1.1, TILE * 1.1).setDepth(3) : undefined;
       const label = sc.add.text(e.x, e.y - r - 6, '', { fontFamily: 'sans-serif', fontSize: '15px', fontStyle: 'bold', color: '#4cd964', stroke: '#000', strokeThickness: 4, align: 'center' }).setOrigin(0.5, 1).setDepth(3);
@@ -88,6 +100,10 @@ export class ExtractionManager {
 
   /** Nombre del sitio de una salida (p. ej. "Túnel norte"). */
   locName(loc: number) { return this.map.exitLocNames?.[loc] ?? `Salida ${loc + 1}`; }
+
+  private heliNoiseStep = -1;
+  /** v4: segundos que faltan para que llegue el helicóptero (null = no llamado). */
+  heliLeft(e: ExitState) { return e.type === 'helipuerto' && e.flareAt !== null && !e.unlocked ? Math.max(0, e.flareAt + SNOW.heliWaitSec - this.h.elapsed()) : null; }
 
   isOpen(e: ExitState) {
     if (e.type === 'bengala') return e.unlocked && e.flareAt !== null && this.h.elapsed() < e.flareAt + FLARE_WINDOW_SEC;
@@ -107,6 +123,14 @@ export class ExtractionManager {
     const r = EXIT_RADIUS_TILES * TILE;
     const minute = this.h.elapsed() / 60;
     const shown = (loc: number) => !this.h.shown || this.h.shown(loc);
+    // v4: el helicóptero llega aunque no estés en la zona, y mientras tanto el ruido atrae a todo en 15 casillas
+    for (const e of this.exits) {
+      const left = this.heliLeft(e); if (left === null) continue;
+      // un estruendo nada más llamarlo y luego cada SNOW.heliNoiseEverySec (por tiempo de partida)
+      const step = Math.floor((this.h.elapsed() - e.flareAt!) / SNOW.heliNoiseEverySec);
+      if (step !== this.heliNoiseStep) { this.heliNoiseStep = step; this.h.noise(e.x, e.y, SNOW.heliNoiseTiles); }
+      if (left <= 0) { e.unlocked = true; this.h.toast('¡El helicóptero ha llegado al helipuerto!'); }
+    }
     for (const c of this.closedGfx) { const v = shown(c.loc); for (const o of c.objs) (o as Phaser.GameObjects.Image).setVisible(v); }
     for (const g of this.gfx) {
       const v = shown(g.exit.loc);
@@ -143,6 +167,16 @@ export class ExtractionManager {
         }
         return st;
       }
+      if (e.type === 'helipuerto') {
+        const left = this.heliLeft(e);
+        if (left !== null) { st.text = `El helicóptero llega en ${Math.ceil(left)} s… ¡aguanta!`; st.progress = 1 - left / SNOW.heliWaitSec; }
+        else if (!this.h.hasCard?.()) st.text = 'Necesitas la Tarjeta del helipuerto';
+        else {
+          st.text = 'Usa la Tarjeta para llamar al helicóptero (30 s, mucho ruido)';
+          st.action = { label: 'Usar tarjeta', run: () => { if (e.flareAt === null && this.h.useCard?.()) { e.flareAt = this.h.elapsed(); this.heliNoiseStep = -1; this.h.toast('Helicóptero en camino: 30 s'); } } };
+        }
+        return st;
+      }
       if (e.type === 'pago') {
         const c = this.h.payCandidate();
         if (!c) st.text = 'Hay que entregar un objeto Reforzado o mejor';
@@ -166,6 +200,7 @@ export class ExtractionManager {
     if (e.type === 'generador') return '\n(arranca 10 s)';
     if (e.type === 'bengala') return e.flareAt !== null ? '\n(se fue)' : minute < FLARE_OPEN_MIN ? `\n(min ${FLARE_OPEN_MIN}-${FLARE_CLOSE_MIN})` : minute >= FLARE_CLOSE_MIN ? '\n(cerrada)' : '\n(¡ahora!)';
     if (e.type === 'pago') return '\n(Reforzado+)';
+    if (e.type === 'helipuerto') { const l = this.heliLeft(e); return l !== null ? `\n(${Math.ceil(l)} s)` : '\n(Tarjeta)'; }
     return '';
   }
 }

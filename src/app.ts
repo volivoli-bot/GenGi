@@ -1,7 +1,12 @@
 import * as V31CFG from './config/v31';
+import * as V42CFG from './config/v42';
+import * as V32CFG from './config/v32';
 import { DMG_LOG, rollDamage, meanMult } from './game/damage';
 import { genTrapero, valesFor, traperoPrice } from './raid/trapero';
-import { rollEliteDrops } from './game/loot';
+import { rollEliteDrops, rollItem } from './game/loot';
+import * as V3CFG from './config/v3';
+import { basePrice, buyPrice } from './game/prices';
+import { canSell, freeItem } from './game/inventory';
 import { ENEMIES } from './data/enemies';
 import { weaponStats } from './game/inventory';
 import Phaser from 'phaser';
@@ -17,8 +22,11 @@ import { newRaidSnapshot, RaidHost, RaidScene } from './raid/RaidScene';
 import { LEGACY_SAMPLE } from './save/migrations';
 import { SaveManager } from './save/SaveManager';
 import type { ExitState, RaidLogEntry } from './save/types';
-import { chooseExits, EXIT_NAMES } from './raid/extraction';
-import { generateMap } from './raid/map';
+import { chooseExits, EXIT_NAMES, helipadExit } from './raid/extraction';
+import * as V4CFG from './config/v4';
+import { checkLayout } from './raid/layoutCheck';
+import { bagOf, backpackSlots, itemWeight, loadNoiseTiles, quickSlots, speedMult, totalWeight, useTimeMult } from './game/inventory';
+import { generateMap, snowStripFor } from './raid/map';
 import { seeded } from './game/loot';
 import { econCheck } from './game/econCheck';
 import * as V3OPS from './game/vendors';
@@ -29,12 +37,17 @@ import { toast } from './ui/dom';
 import { Hub } from './ui/hub';
 import { pauseOverlay, summaryOverlay } from './ui/overlays';
 import { RaidInventory } from './ui/raidInventory';
+import { AttrSheet } from './ui/attributes';
+import { bankXp, deathPenalty, extractXp, keepRaidXpOnDeath, prog, xpToNext } from './game/levels';
+import * as LVCFG from './config/levels';
+import * as LVOPS from './game/levels';
 
 export class App implements RaidHost {
   save = new SaveManager();
   root = document.getElementById('ui')!;
   hub: Hub;
   inv: RaidInventory;
+  attrs: AttrSheet;
   pauseEl: HTMLElement | null = null;
   debug: boolean;
 
@@ -50,6 +63,7 @@ export class App implements RaidHost {
       importSave: (f) => this.importSave(f),
     });
     this.inv = new RaidInventory(this.root, () => this.raidScene());
+    this.attrs = new AttrSheet(this.root, () => this.save.data, () => this.save.save(), () => this.raidScene()?.hud?.panelArea());
     if (this.save.lastError) toast('Guardado ilegible: se apartó una copia y se empezó de cero');
   }
 
@@ -71,13 +85,16 @@ export class App implements RaidHost {
     this.hub.show();
   }
 
+  /** QA: semilla de la próxima incursión (null = al azar). */
+  nextSeed: number | null = null;
   startRaid() {
     const d = this.save.data;
     if (d.activeRaid) return;
     ensureFreeGear(d);
     loadMagazine(d.loadout); // se entra con el cargador lleno a partir de la munición de la mochila
     const valueIn = gearValue(d.loadout);
-    const seed = (Math.random() * 2 ** 31) >>> 0;
+    const seed = this.nextSeed ?? (Math.random() * 2 ** 31) >>> 0;
+    this.nextSeed = null;
     // El equipo pasa a la raid: sale del guardado del refugio en la MISMA escritura.
     d.activeRaid = newRaidSnapshot(seed, d.loadout, valueIn);
     // v3: estaciones que afectan a la raid
@@ -101,17 +118,20 @@ export class App implements RaidHost {
   onPauseChange(paused: boolean, reason: string) {
     this.pauseEl?.remove(); this.pauseEl = null;
     if (paused) {
-      this.inv.close();
+      this.inv.close(); this.attrs.close();
       this.pauseEl = pauseOverlay(this.root, reason,
         () => this.raidScene()?.setPaused(false, 'usuario'),
         () => { const s = this.raidScene(); if (s) { s.setPaused(false, 'usuario'); s.damagePlayer(9999, 'Abandono', false); } });
     }
   }
 
-  openInventory() { const s = this.raidScene(); if (s && !s.paused && !s.ended) this.inv.open(); }
+  openInventory() { const s = this.raidScene(); if (s && !s.paused && !s.ended) { this.attrs.close(); this.inv.open(); } }
+  saveData() { return this.save.data; }
+  /** v4.0: «+3» → panel de atributos (no pausa). */
+  openAttributes() { const s = this.raidScene(); if (!s || s.paused || s.ended) return; this.inv.close(); this.attrs.toggle(); }
   closeInventory() { this.inv.close(); }
   isInventoryOpen() { return this.inv.isOpen; }
-  overUi(x: number, y: number) { return this.inv.contains(x, y); }
+  overUi(x: number, y: number) { return this.inv.contains(x, y) || this.attrs.contains(x, y); }
   refreshInventory() { this.inv.refresh(); }
   seenExits(mapId: string) { return [...(this.save.data.seenExits[mapId] ?? [])]; }
   /** v3.1: el Trapero acepta chapas del refugio (se descuentan y se guarda en el acto). */
@@ -147,12 +167,34 @@ export class App implements RaidHost {
       valueOut = gearValue(d.loadout);
       d.stats.deaths++;
     }
+    // v4.0 §2: experiencia. Solo se asegura al extraer (+ extraer, ×mapa, ×1,5 helipuerto); al morir se pierde y, según XP_DEATH, un 25 % del progreso.
+    const xpNews: string[] = [];
+    const lv0 = prog(d).level;
+    if (result === 'extraido') {
+      const heli = detail.exit?.type === 'helipuerto';
+      const mult = V4CFG.mapDef(snap.mapId).xpMult;
+      const raw = ((snap.xp ?? 0) + extractXp(snap.elapsed / 60) * mult) * (heli ? LVCFG.XP.helipadMult : 1);
+      bankXp(d, raw);
+      xpNews.push(`+${Math.round(raw)} de experiencia${heli ? ' (helipuerto ×1,5)' : ''}`);
+      if (heli) {
+        // caja de suministros Militar al alijo
+        const got: string[] = [];
+        for (let i = 0; i < LVCFG.HELI_SUPPLY.items; i++) { const it = rollItem(Math.random, 0, LVCFG.HELI_SUPPLY.rarity, true); got.push(itemLabel(it)); const left = addToList(d.stash, it, stashSlots(d)); if (left) d.overflow.push(left); }
+        xpNews.push('Suministros del helicóptero: ' + got.join(', '));
+      }
+    } else if (keepRaidXpOnDeath()) bankXp(d, snap.xp ?? 0);
+    else {
+      const lost = deathPenalty(d);
+      xpNews.push(`Experiencia de la incursión perdida (${Math.round(snap.xp ?? 0)})` + (lost ? ` y −${lost} de tu progreso de nivel` : ''));
+    }
     d.stats.raids++;
     // v3: misiones de los vendedores, fabricación terminada y renovación de stock
     const exitLoc = detail.exit ? (this.raidScene()?.map.exitLocNames[detail.exit.loc] ?? null) : null;
     const news = evalMissions(d, snap, result === 'extraido', exitLoc, lo);
     const crafted = deliverCrafts(d);
     if (crafted.length) news.push('Fabricado: ' + crafted.join(', '));
+    news.unshift(...xpNews);
+    if (prog(d).level > lv0) news.unshift(`¡Nivel ${prog(d).level}! +${(prog(d).level - lv0) * LVCFG.ATTR_RULES.pointsPerLevel} puntos de atributo (toca «+» en la incursión o la Pizarra del refugio)`);
     refreshAll(d);
     const entry: RaidLogEntry = {
       id: snap.id, startedAt: snap.startedAt, endedAt: new Date().toISOString(),
@@ -166,7 +208,7 @@ export class App implements RaidHost {
     d.activeRaid = null;
     ensureFreeGear(d);
     this.save.save(); // una sola escritura atómica: resultado + inventario + registro
-    this.inv.close();
+    this.inv.close(); this.attrs.close();
     this.pauseEl?.remove(); this.pauseEl = null;
     const el = summaryOverlay(this.root, entry, kept, news, () => { el.remove(); this.showHub(); });
   }
@@ -216,10 +258,59 @@ export class App implements RaidHost {
       exportStr: () => app.save.exportString(),
       importStr: (str: string) => { app.save.importString(str); return JSON.parse(JSON.stringify(app.save.data)); },
       /** Comprueba en n semillas que siempre hay una salida a pie o generador. */
+      /**
+       * v4 §4: comprueba las 3 variantes nevadas en n semillas (y con la variación de estrés): salidas alcanzables, la guarida
+       * no tapa ninguna salida, nada dentro de paredes / fuera del mapa, y distancias inicio→nieve / inicio→helipuerto.
+       */
+      layoutCheck: (n = 40, stress = false) => {
+        const out: Record<string, { raids: number; spawnsChecked: number; exitFail: number; lairBlock: number; lairMinTiles: number; bad: number; badSample: string[]; unreachableContainers: number; snow: number[]; heli: number[]; trapero: number }> = {};
+        for (let k = 0; k < 3; k++) {
+          const acc = { raids: 0, spawnsChecked: 0, exitFail: 0, lairBlock: 0, lairMinTiles: Infinity, bad: 0, badSample: [] as string[], unreachableContainers: 0, snow: [] as number[], heli: [] as number[], trapero: 0 };
+          for (let i = 0; i < n; i++) {
+            const seed = (i * 7919 + 17 + k * 104729) >>> 0;
+            const m = generateMap(seed, { snowStrip: k, ...(stress ? { variation: V4CFG.VARIATION_STRESS } : {}) });
+            const active = chooseExits(seeded(seed ^ 0x5bd1e995), m); const heli = helipadExit(m); if (heli) active.push(heli);
+            // todas las salidas posibles del mapa (no solo las activas) + el helipuerto
+            const all = m.exitLocs.map((p, loc) => ({ loc, type: active.find(e => e.loc === loc)?.type ?? 'pie', x: p.x, y: p.y, gen: 0, unlocked: true, flareAt: null } as ExitState));
+            acc.raids++;
+            for (const sp of m.spawns) {
+              const tr = genTrapero(seeded((seed ^ 0x74726170) >>> 0), m.walls, sp, active.map(e => ({ x: e.x, y: e.y })));
+              const extra = tr ? [{ what: 'trapero', x: tr.x, y: tr.y, pad: 12 }] : [];
+              if (tr) acc.trapero++;
+              const r = checkLayout(m, all, sp, extra);
+              acc.spawnsChecked++;
+              if (r.exits.some(e => !e.reachable)) acc.exitFail++;
+              if (r.exitsAvoidLair === false) acc.lairBlock++;
+              if (r.lairToExitTiles !== null) acc.lairMinTiles = Math.min(acc.lairMinTiles, r.lairToExitTiles);
+              acc.bad += r.bad.length; for (const b of r.bad) if (acc.badSample.length < 5) acc.badSample.push(`${b.what} ${(b.x / TILE).toFixed(1)},${(b.y / TILE).toFixed(1)} ${b.why}`);
+              acc.unreachableContainers += r.unreachableContainers;
+              if (r.spawnToSnowTiles !== null) acc.snow.push(r.spawnToSnowTiles);
+              if (r.spawnToHelipadTiles !== null) acc.heli.push(r.spawnToHelipadTiles);
+            }
+          }
+          out[V4CFG.ARRABAL.strips[k].id] = acc;
+        }
+        const stats = (a: number[]) => a.length ? { min: +Math.min(...a).toFixed(1), avg: +(a.reduce((x, y) => x + y, 0) / a.length).toFixed(1), max: +Math.max(...a).toFixed(1) } : null;
+        return Object.fromEntries(Object.entries(out).map(([id, a]) => [id, { ...a, snow: stats(a.snow), heli: stats(a.heli) }]));
+      },
+      /** v4: config y cálculos de mochilas / carga (QA). */
+      /** QA v4: la próxima incursión usa esta semilla / una semilla cuya franja nevada sea k (0 norte, 1 oeste, 2 este). */
+      seedNext: (seed: number | null) => { app.nextSeed = seed; },
+      snowSeed: (k: number, from = 1) => { for (let i = from; i < from + 5000; i++) if (snowStripFor(i) === k) return i; return null; },
+      /** QA v4: guardado de la v3.2 (versión 4) sin mochila, con salidas vistas del mapa v2 y una raid activa del mapa viejo. */
+      loadV4old: (withRaid = false) => { localStorage.setItem('gengi.save', JSON.stringify({ ...JSON.parse(JSON.stringify(app.save.data)), saveVersion: 4, seenExits: { 'ciudad-v2': [0, 2] }, loadout: { ...emptyLoadout(), arma: null, espalda: null, mochila: [makeItem('vendaje', 'comun', 2)] }, activeRaid: withRaid ? { ...newRaidSnapshot(4242, { ...emptyLoadout(), espalda: null, mochila: [makeItem('vendaje', 'comun', 1)] }, 0), mapId: 'ciudad-v2' } : null })); location.reload(); },
+      /** v4.0 niveles: configuración, operaciones puras y atajos sobre el guardado. */
+      lv: () => ({ cfg: LVCFG, ops: LVOPS, prog: () => JSON.parse(JSON.stringify(prog(app.save.data))), bank: (n: number) => { const up = bankXp(app.save.data, n); app.save.save(); if (!app.raidScene() && !app.save.data.activeRaid) app.hub.render(); return up; },
+        setAttr: (a: string, n: number) => { prog(app.save.data).attrs[a as LVCFG.AttrId] = n; app.save.save(); }, setFree: (n: number) => { prog(app.save.data).free = n; app.save.save(); },
+        setStation: (sid: string, n: number) => { (app.save.data.refugio.levels as Record<string, number>)[sid] = n; app.save.save(); if (!app.raidScene() && !app.save.data.activeRaid) app.hub.render(); },
+        data: () => app.save.data, openAttrs: () => app.openAttributes(), attrsOpen: () => app.attrs.isOpen, xpToNext }),
+      v4: () => ({ genStock: (v: string, lv: number) => V3OPS.genStock(app.save.data, v as never, lv), rollItem, seededRng: seeded, recipes: V3CFG.RECIPES, basePrice, buyPrice, canSell, freeItem, makeItem, cfg: V4CFG, bagOf, backpackSlots, totalWeight, speedMult, loadNoiseTiles, quickSlots, useTimeMult, itemWeight, mapDef: V4CFG.mapDef }),
       exitCheck: (n = 200) => { let bad = 0; const seen: Record<string, number> = {}; for (let i = 0; i < n; i++) { const m = generateMap(i * 7919 + 1); const ex = chooseExits(seeded(i + 99), m); ex.forEach(e => (seen[e.type] = (seen[e.type] ?? 0) + 1)); if (ex.length !== 2 || !ex.some(e => e.type === 'pie' || e.type === 'generador')) bad++; } return { bad, seen }; },
       raid: () => app.raidScene(),
       /** v3.1: configuración mutable (QA) y diagnóstico. */
       cfg31: V31CFG,
+      cfg42: V42CFG,
+      cfg32: V32CFG,
       dmgLog: DMG_LOG,
       /** QA v3.1: n tiradas de daño (base, lado). */
       rollDmg: (base: number, side: 'player' | 'enemy', n = 10000) => { const out: { dmg: number; crit: boolean }[] = []; for (let i = 0; i < n; i++) out.push(rollDamage(base, side)); DMG_LOG[side].length = 0; return { out, mean: meanMult(side) }; },
@@ -249,7 +340,7 @@ export class App implements RaidHost {
       exits: () => app.raidScene()?.snap.exits,
       tpExit: (i = 0) => { const s = app.raidScene(); const e = s?.snap.exits[i]; if (s && e) s.player.setPosition(e.x, e.y); },
       tpBox: () => { const s = app.raidScene(); if (!s) return; const c = s.snap.containers.filter(c => c.items.length).sort((a, b) => Math.hypot(a.x - s.player.x, a.y - s.player.y) - Math.hypot(b.x - s.player.x, b.y - s.player.y))[0]; if (c) s.player.setPosition(c.x + TILE, c.y); },
-      clearEnemies: () => { const s = app.raidScene(); if (s) for (const e of [...s.enemies.list]) s.enemies.kill(e); },
+      clearEnemies: () => { const s = app.raidScene(); if (s) { s.quietKills = true; for (const e of [...s.enemies.list]) s.enemies.kill(e); s.quietKills = false; } },
       hide: () => app.raidScene()?.background(),
       pause: () => app.raidScene()?.setPaused(true, 'usuario'),
       resume: () => app.raidScene()?.setPaused(false, 'usuario'),

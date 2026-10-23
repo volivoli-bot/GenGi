@@ -1,6 +1,9 @@
 import Phaser from 'phaser';
 import { LINGER, PLAYER_ART } from '../config/v31';
 
+/** Tinte dorado del aura de élite (v3.2). */
+const ELITE_TINT = 0xffd86a;
+
 /**
  * Muñeco por piezas (arte v2 de Basu, public/art/v2, ver animacion.json) que sigue a un cuerpo físico invisible.
  * Texturas: `${base}_${pieza}` (p. ej. errante_torso). Si falta alguna, se usa la imagen única de la v1 (`base`).
@@ -16,6 +19,11 @@ const V3_RIG: Record<string, { body: string; box: number; part?: [string, number
   bruto: { body: 'bruto_cuerpo', box: 96, part: ['bruto_placa', 80, 33, 0, -26] },
   reptante: { body: 'reptante', box: 64 },
   enjambre: { body: 'enjambre_bicho', box: 32 },
+  // v4.2 Zona Helada (arte de Basu en art/v4)
+  congelado: { body: 'v4/congelado', box: 64 },
+  lobo: { body: 'v4/lobo_mutado', box: 64 },
+  escarcha: { body: 'v4/escarcha', box: 64 },
+  matriarca: { body: 'v4/matriarca_cuerpo', box: 256 },
 };
 
 const HUMAN_PARTS = ['sombra', 'pie', 'torso', 'brazo', 'cabeza'];
@@ -120,6 +128,10 @@ export class Rig {
       this.baseScale = o.size / (R.box * 0.72);
       this.torso = img(R.body, 0.5, 0.5, R.box, R.box);
       if (R.part && tex(R.part[0])) { this.part = img(R.part[0], 0.5, 0.5, R.part[1], R.part[2]); this.part.setPosition(R.part[3], R.part[4]); this.partBase = [R.part[1], R.part[2], R.part[4]]; }
+      // v4.2: brazos de la Matriarca (pivote en el hombro, la garra hacia delante = -y)
+      if (b === 'matriarca' && tex('v4/matriarca_brazo')) {
+        for (const sx of [-1, 1]) { const a = sc.add.image(sx * 92, -10, 'v4/matriarca_brazo').setOrigin(0.5, 1).setDisplaySize(64, 160); this.c.addAt(a, 0); this.parts.push(a); this.extras.push(a); }
+      }
     } else {
       // reserva: imagen única de la v1 (mira hacia abajo → girada 180° dentro del contenedor)
       this.baseScale = 1;
@@ -137,14 +149,16 @@ export class Rig {
     this.aura.setTexture(key).setDisplaySize(d, d);
   }
 
-  /** v3.1 §9.5: élite → contorno y brillo dorado tenue con partículas (aura_elite, distinta de las mutaciones) y ×1,1 de tamaño. */
+  /**
+   * v3.1 §9.5: élite → brillo dorado tenue (aura_elite, distinta de las mutaciones) y ×1,1 de tamaño.
+   * v3.2 (Basu): un solo sprite teñido de dorado, sin tween infinito por élite; late desde update() y solo si se ve.
+   */
   private eliteAura?: Phaser.GameObjects.Image;
   setElite(scale: number) {
     if (this.eliteAura || !this.sc.textures.exists('aura_elite')) return;
     const d = (this.kind === 'humano' ? 64 * 1.7 : this.box * 1.5) * 1.12;
-    this.eliteAura = this.sc.add.image(0, 0, 'aura_elite').setDisplaySize(d, d).setAlpha(0.85);
+    this.eliteAura = this.sc.add.image(0, 0, 'aura_elite').setDisplaySize(d, d).setAlpha(0.85).setTint(ELITE_TINT);
     this.c.addAt(this.eliteAura, 0);
-    this.sc.tweens.add({ targets: this.eliteAura, alpha: 0.55, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
     this.baseScale *= scale; this.c.setScale(this.baseScale * this.pump);
   }
   get isElite() { return !!this.eliteAura; }
@@ -223,6 +237,7 @@ export class Rig {
     if (this.swingT >= 0) { this.swingT += dt; if (this.swingT > 0.35) this.swingT = -1; }
     if (this.recoilT > 0) this.recoilT -= dt;
     if (this.aura) this.aura.rotation += dt * 0.8;
+    if (this.eliteAura && !this.ghostOn) this.eliteAura.setAlpha(0.7 + 0.15 * Math.cos(this.phase * Math.PI / 0.9));
     this.layout(speed01);
   }
 
@@ -296,6 +311,11 @@ export class Rig {
         if (base === 'escupidor') this.part.setDisplaySize(w * (1 + 0.9 * k), h * (1 + 0.9 * k)).setTint(k > 0 ? 0xc6ff3c : 0xffffff);
         else if (base === 'chillon') this.part.setDisplaySize(w * (0.6 + 1.1 * k), h * (0.6 + 1.1 * k)).setY(py - 3 * k);
         else if (base === 'bruto') this.part.setY(py - 8 * this.raise).setDisplaySize(w, h * (1 - 0.25 * this.raise));
+      }
+      if (base === 'matriarca' && this.extras.length === 2) {
+        const sw = moving ? Math.sin(this.walk) * 0.18 : 0;
+        this.extras[0].setRotation(-0.35 - 0.9 * this.raise + sw + 0.5 * this.crouch);
+        this.extras[1].setRotation(0.35 + 0.9 * this.raise + sw - 0.5 * this.crouch);
       }
     } else if (this.single) {
       const wob = moving ? Math.sin(this.walk) * 0.06 : 0;

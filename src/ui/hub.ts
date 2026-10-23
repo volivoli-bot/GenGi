@@ -1,3 +1,5 @@
+import { attrPanel } from './attributes';
+import { gymSlotsLeft, prog, xpToNext } from '../game/levels';
 import { ITEMS } from '../data/items';
 import { RARITIES, RARITY_ORDER, V1_DROP_RARITIES } from '../data/rarity';
 import { equip, locate, Place, toBackpack, toPocket, toStash, ensureFreeGear, settleOverflow, cashChapas } from '../game/hubOps';
@@ -55,6 +57,9 @@ export class Hub {
     const el = h('div', { class: 'screen hub' },
       h('div', { class: 'hub-head' },
         h('div', { class: 'logo' }, 'GENGI', h('small', {}, 'REFUGIO')),
+        h('div', { class: 'nivel' + (prog(d).free > 0 ? ' on' : ''), onclick: () => { this.tab = 'refugio'; this.render(); setTimeout(() => this.root.querySelector('[data-st=pizarra]')?.scrollIntoView({ block: 'start' }), 0); } },
+          h('b', {}, `Nv ${prog(d).level}`), prog(d).free > 0 ? h('span', {}, ` +${prog(d).free}`) : null,
+          h('i', {}, h('u', { style: `width:${Math.round((prog(d).xp / xpToNext(prog(d).level)) * 100)}%` }))),
         h('div', { class: 'chapas' }, h('img', { src: 'art/chapa.svg', alt: '' }), String(d.chapas)),
       ),
       h('div', { class: 'tabs' }, ...tabs.map(([t, n]) => h('button', { class: this.tab === t ? 'on' : '', onclick: () => { this.tab = t; this.sel = null; this.scrollTop = 0; this.render(); } }, n))),
@@ -141,7 +146,7 @@ export class Hub {
         const queue = d.refugio.crafts.filter(c => RECIPES.find(r => r.id === c.recipe)?.station === sid);
         return h('div', { class: 'station', 'data-st': sid },
           h('div', { class: 'st-head' },
-            h('img', { src: `art/v3/refugio/${st.icon}.svg`, alt: '' }),
+            h('img', { src: st.icon.includes('/') ? `art/${st.icon}.svg` : `art/v3/refugio/${st.icon}.svg`, alt: '' }),
             h('div', { class: 'st-info' }, h('b', {}, st.nombre), this.stars(lv), h('div', { class: 'hint' }, st.levels[lv - 1].desc)),
           ),
           next ? h('div', { class: 'st-next' },
@@ -158,6 +163,8 @@ export class Hub {
             }),
             queue.length ? h('div', { class: 'hint' }, 'En marcha: ' + queue.map(c => `${RECIPES.find(r => r.id === c.recipe)!.nombre} (listo en ${Math.max(0, c.readyAt - d.stats.raids)} raid${c.readyAt - d.stats.raids === 1 ? '' : 's'})`).join(' · ')) : null,
           ) : null,
+          sid === 'pizarra' ? attrPanel(d, () => { this.host.save.save(); this.render(); }) : null,
+          sid === 'gimnasio' && lv >= 2 ? h('p', { class: 'hint' }, `Topes subidos: ${lv - 1 - gymSlotsLeft(d, lv)}/${lv - 1}. Elige el atributo en la Pizarra (botón «tope +5»).`) : null,
           sid === 'taller' && lv >= 3 ? h('p', { class: 'hint' }, `Rasgo extra: toca un arma o armadura Reforzado+ en Equipo (${costText(TRAIT_UPGRADE_COST)}).`) : null,
         );
       }),
