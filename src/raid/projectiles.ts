@@ -2,14 +2,17 @@ import Phaser from 'phaser';
 import { TILE } from '../config/constants';
 import { PROJECTILE } from '../config/v2';
 import { BOWS } from '../config/v31';
+import { SHOTGUN } from '../config/v4d';
 import type { Enemy } from './enemies';
 import { rayHit, Rect } from './map';
 
-export type ProjKind = 'flecha' | 'virote' | 'bala';
+export type ProjKind = 'flecha' | 'virote' | 'bala' | 'perdigon';
 /** Flecha y virote: proyectiles físicos que caen al suelo y se recuperan. */
-export const isPhysical = (k: ProjKind) => k !== 'bala';
+export const isPhysical = (k: ProjKind) => k === 'flecha' || k === 'virote';
 export interface Proj {
   kind: ProjKind; x: number; y: number; vx: number; vy: number; ang: number;
+  /** Punto de salida (v4d: caída de daño de los perdigones). */
+  ox: number; oy: number;
   travelled: number; max: number; dmg: number; crit: boolean; weapon: string;
   /** Daño base del arma (sin tirada): para la puñalada a distancia. */
   base: number;
@@ -40,12 +43,12 @@ export class Projectiles {
   constructor(private sc: Phaser.Scene, private h: ProjHooks) {}
 
   fire(kind: ProjKind, x: number, y: number, ang: number, rangePx: number, dmg: number, crit: boolean, weapon: string, aimed = false) {
-    const sp = (kind === 'flecha' ? BOWS.arrowTilesPerSec : kind === 'virote' ? BOWS.boltTilesPerSec : PROJECTILE.bulletTilesPerSec) * TILE;
-    const p: Proj = { kind, x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, ang, travelled: 0, max: rangePx, dmg, crit, weapon, base: dmg, aimed, pierce: 0, pierced: null, img: null, trail: null, dead: false };
+    const sp = (kind === 'flecha' ? BOWS.arrowTilesPerSec : kind === 'virote' ? BOWS.boltTilesPerSec : kind === 'perdigon' ? SHOTGUN.pelletTilesPerSec : PROJECTILE.bulletTilesPerSec) * TILE;
+    const p: Proj = { kind, x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, ang, ox: x, oy: y, travelled: 0, max: rangePx, dmg, crit, weapon, base: dmg, aimed, pierce: 0, pierced: null, img: null, trail: null, dead: false };
     const key = kind === 'flecha' ? 'proyectil_flecha' : kind === 'virote' ? 'proyectil_virote' : 'proyectil_bala';
     if (this.sc.textures.exists(key)) {
       p.img = this.sc.add.image(x, y, key).setRotation(ang + Math.PI / 2).setDepth(12.5);
-      if (kind === 'flecha') p.img.setDisplaySize(9, 36); else if (kind === 'virote') p.img.setDisplaySize(10, 30); else p.img.setDisplaySize(6, 30).setBlendMode(Phaser.BlendModes.ADD);
+      if (kind === 'flecha') p.img.setDisplaySize(9, 36); else if (kind === 'virote') p.img.setDisplaySize(10, 30); else if (kind === 'perdigon') p.img.setDisplaySize(4, 14).setBlendMode(Phaser.BlendModes.ADD); else p.img.setDisplaySize(6, 30).setBlendMode(Phaser.BlendModes.ADD);
     } else if (kind === 'flecha') p.img = this.sc.add.image(x, y, 'flecha').setDisplaySize(TILE * 0.8, TILE * 0.8).setRotation(ang + Math.PI / 4).setDepth(12.5);
     if (kind === 'bala') p.trail = this.sc.add.graphics().setDepth(12.4).setBlendMode(Phaser.BlendModes.ADD);
     this.list.push(p);

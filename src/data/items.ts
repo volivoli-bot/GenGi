@@ -1,9 +1,12 @@
 import { TILE } from '../config/constants';
+import { WEAPON_BUFFS } from '../config/v4d';
 import type { Rarity } from './rarity';
 
 export type Slot = 'arma' | 'torso' | 'cabeza' | 'espalda';
 export type ItemKind = 'arma' | 'armadura' | 'consumible' | 'municion' | 'bengala' | 'chapas' | 'material' | 'mochila' | 'granada' | 'llave';
-export type AbilityId = 'golpe' | 'torbellino' | 'perforante' | 'rafaga' | 'aguantar' | 'escanear' | 'clavar';
+export type AbilityId = 'golpe' | 'torbellino' | 'perforante' | 'rafaga' | 'aguantar' | 'escanear' | 'clavar'
+  // v4d §7: habilidades temporales de las armas a distancia
+  | 'ojo_halcon' | 'perforacion' | 'postas';
 
 export interface WeaponStats {
   dmg: number; aps: number; rangeTiles: number; noise: number; melee: boolean;
@@ -44,12 +47,15 @@ export const ITEMS: Record<string, ItemDef> = {
   machete: { id: 'machete', nombre: 'Machete', kind: 'arma', slot: 'arma', icon: 'machete', weight: 1.5, value: 45, small: false, rolls: true, maxStack: 1,
     weapon: { dmg: 9, aps: 2.0, rangeTiles: 1.1, noise: 0, melee: true, ability: 'torbellino' }, desc: 'Rápido. Torbellino con sangrado.' },
   arco: { id: 'arco', nombre: 'Arco', kind: 'arma', slot: 'arma', icon: 'arco', weight: 2, value: 70, small: false, rolls: true, maxStack: 1,
-    weapon: { dmg: 18, aps: 0.8, rangeTiles: 7, noise: 0, melee: false, ability: 'perforante', ammo: 'flechas' }, desc: 'Largo alcance y silencioso. Las flechas se recogen del suelo.' },
+    weapon: { dmg: 18, aps: 0.8, rangeTiles: 7, noise: 0, melee: false, ability: 'ojo_halcon', ammo: 'flechas' }, desc: 'Largo alcance y silencioso. Las flechas se recogen del suelo. Ojo de halcón: +50 % de crítico 6 s.' },
   /** v3.1 (§9.1): 24 de daño, 0,4 ataques/s finales (0,6 × 0,67 de la cadencia a distancia), alcance 8, peso 3. */
   ballesta: { id: 'ballesta', nombre: 'Ballesta', kind: 'arma', slot: 'arma', icon: 'v3/arma_ballesta', weight: 3, value: 95, small: false, rolls: true, maxStack: 1,
-    weapon: { dmg: 24, aps: 0.6, rangeTiles: 8, noise: 0, melee: false, ability: 'clavar', ammo: 'virotes' }, desc: 'Silenciosa, lenta y potente. Los virotes se recogen del suelo.' },
+    weapon: { dmg: 24, aps: 0.6, rangeTiles: 8, noise: 0, melee: false, ability: 'perforacion', ammo: 'flechas' }, desc: 'Silenciosa, lenta y potente. Usa flechas, que se recogen del suelo. Perforación: atraviesa hasta 3 enemigos 6 s.' },
   pistola: { id: 'pistola', nombre: 'Pistola', kind: 'arma', slot: 'arma', icon: 'pistola', weight: 1, value: 110, small: true, rolls: true, maxStack: 1,
-    weapon: { dmg: 12, aps: 2.0, rangeTiles: 6, noise: 10, melee: false, ability: 'rafaga', mag: 12, reloadSec: 1.5 }, desc: 'Mucho daño pero MUCHO ruido. Gasta munición.' },
+    weapon: { dmg: 12, aps: 2.0, rangeTiles: 6, noise: 10, melee: false, ability: 'rafaga', mag: 12, reloadSec: 1.5 }, desc: 'Mucho daño pero MUCHO ruido. Gasta munición. Ráfaga: dispara el doble de rápido 4 s.' },
+  /** v4d §7: escopeta. 6 perdigones × 7 en 25°, 4,5 casillas, cargador de 4 cartuchos (números en config/v4d.ts SHOTGUN). */
+  escopeta: { id: 'escopeta', nombre: 'Escopeta', kind: 'arma', slot: 'arma', icon: 'v4/arma_escopeta', weight: 4, value: 170, small: false, rolls: true, maxStack: 1,
+    weapon: { dmg: 7, aps: 0.83, rangeTiles: 4.5, noise: 9, melee: false, ability: 'postas', mag: 4, reloadSec: 0.5, ammo: 'cartuchos' }, desc: '6 perdigones a corta distancia. Mucho ruido. Postas concentradas: cono cerrado y +40 % de alcance 5 s.' },
   ropa: { id: 'ropa', nombre: 'Ropa', kind: 'armadura', slot: 'torso', icon: null, weight: 0, value: 5, small: false, rolls: false, maxStack: 1,
     armor: { protection: 0 }, desc: 'No protege nada.' },
   tablas: { id: 'tablas', nombre: 'Tablas atadas', kind: 'armadura', slot: 'torso', icon: 'tablas', weight: 3, value: 40, small: false, rolls: true, maxStack: 1,
@@ -62,8 +68,9 @@ export const ITEMS: Record<string, ItemDef> = {
     heal: { amount: 30, seconds: 2 }, desc: '+30 de vida en 2 s.' },
   botiquin: { id: 'botiquin', nombre: 'Botiquín', kind: 'consumible', icon: 'botiquin', weight: 0.8, value: 60, small: true, rolls: false, maxStack: 3,
     heal: { amount: 70, seconds: 4 }, desc: '+70 de vida en 4 s.' },
-  flechas: { id: 'flechas', nombre: 'Flechas', kind: 'municion', icon: 'flecha', weight: 0.05, value: 3, small: true, rolls: false, maxStack: 30, desc: 'Para el arco. Se pueden recoger del suelo o del cadáver.' },
-  virotes: { id: 'virotes', nombre: 'Virotes', kind: 'municion', icon: 'v3/proyectil_virote', weight: 0.08, value: 4, small: true, rolls: false, maxStack: 24, desc: 'Para la ballesta. Se pueden recoger del suelo o del cadáver.' },
+  flechas: { id: 'flechas', nombre: 'Flechas', kind: 'municion', icon: 'flecha', weight: 0.05, value: 3, small: true, rolls: false, maxStack: 30, desc: 'Para el arco y la ballesta. Se pueden recoger del suelo o del cadáver.' },
+  virotes: { id: 'virotes', nombre: 'Virotes', kind: 'municion', icon: 'v3/proyectil_virote', weight: 0.08, value: 4, small: true, rolls: false, maxStack: 24, desc: 'Ya no se usan: se convierten en flechas.' },
+  cartuchos: { id: 'cartuchos', nombre: 'Cartuchos', kind: 'municion', icon: 'v4/cartucho', weight: 0.05, value: 8, small: true, rolls: false, maxStack: 24, desc: 'Para la escopeta.' },
   municion: { id: 'municion', nombre: 'Munición 9 mm', kind: 'municion', icon: 'municion', weight: 0.02, value: 4, small: true, rolls: false, maxStack: 48, desc: 'Escasa y cara.' },
   bengala: { id: 'bengala', nombre: 'Bengala', kind: 'bengala', icon: 'bengala', weight: 0.5, value: 50, small: true, rolls: false, maxStack: 2, desc: 'Abre la extracción de bengala (min 8-10).' },
   // ---- v3 (diseno-v3 §1/§3): materiales del refugio y objetos nuevos de Doc Reyes / Hierro
@@ -97,7 +104,10 @@ export const ABILITIES: Record<AbilityId, AbilityDef> = {
   torbellino: { id: 'torbellino', nombre: 'Torbellino', cooldown: 10, icon: 'machete' },
   perforante: { id: 'perforante', nombre: 'Perforante', cooldown: 8, icon: 'arco' },
   clavar: { id: 'clavar', nombre: 'Clavar', cooldown: 8, icon: 'arma_ballesta' },
-  rafaga: { id: 'rafaga', nombre: 'Ráfaga', cooldown: 12, icon: 'pistola' },
+  rafaga: { id: 'rafaga', nombre: 'Ráfaga', cooldown: WEAPON_BUFFS.rafaga.cooldown, icon: 'pistola' },
+  ojo_halcon: { id: 'ojo_halcon', nombre: 'Ojo de halcón', cooldown: WEAPON_BUFFS.ojo_halcon.cooldown, icon: 'arco' },
+  perforacion: { id: 'perforacion', nombre: 'Perforación', cooldown: WEAPON_BUFFS.perforacion.cooldown, icon: 'arma_ballesta' },
+  postas: { id: 'postas', nombre: 'Postas', cooldown: WEAPON_BUFFS.postas.cooldown, icon: 'v4/arma_escopeta' },
   aguantar: { id: 'aguantar', nombre: 'Aguantar', cooldown: 20, icon: 'chaleco' },
   escanear: { id: 'escanear', nombre: 'Escanear', cooldown: 25, icon: 'casco' },
 };

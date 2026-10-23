@@ -37,14 +37,14 @@ export class Vision {
   ox = 0; oy = 0;
   /** v4b: la Ventisca lo baja a 4 casillas. */
   R = VISION.rangeTiles * TILE;
-  readonly nearR = VISION.nearTiles * TILE;
+  nearR = VISION.nearTiles * TILE;
   readonly half = Phaser.Math.DegToRad(VISION.coneDeg / 2);
 
-  constructor(private sc: Phaser.Scene, private walls: () => Rect[], private index: () => WallIndex) {
+  constructor(protected sc: Phaser.Scene, protected walls: () => Rect[], protected index: () => WallIndex, layers = VISION.fogLayers) {
     // n capas iguales cuya suma da fogAlpha: 1-(1-a)^n = fogAlpha
-    const n = Math.max(1, VISION.fogLayers);
+    const n = layers;
     const a = 1 - Math.pow(1 - VISION.fogAlpha, 1 / n);
-    for (let i = 0; i < n; i++) {
+    for (let i = 0; i < n && n > 0; i++) {
       const g = sc.make.graphics({}, false);
       const f = sc.add.rectangle(0, 0, 10, 10, 0x05060a, a).setOrigin(0).setDepth(14);
       const m = g.createGeometryMask();
@@ -55,7 +55,8 @@ export class Vision {
   }
 
   /** Recalcula el polígono si el jugador se movió o giró (o cambiaron las paredes: puertas). */
-  update(x: number, y: number, facing: number, wallsVersion: number, now = 0) {
+  update(x: number, y: number, facing: number, wallsVersion: number, now = 0, _dt?: number) {
+    void _dt;
     this.facing = facing; this.ox = x; this.oy = y;
     const v = this.sc.cameras.main.worldView;
     for (const f of this.fogs) f.setPosition(v.x - 40, v.y - 40).setSize(v.width + 80, v.height + 80).setVisible(this.enabled);
@@ -191,6 +192,16 @@ export class Vision {
     return false;
   }
   lingerCount() { return this.hist.length; }
+  /** Opacidad que le queda a una silueta fantasma vista hace `age` s (v3.1: lineal en LINGER.sec). */
+  ghostFade(age: number) { return Math.max(0, 1 - age / LINGER.sec); }
+  /** ¿Se ve (px, py) desde la pose (x, y, mirada a)? Mismo criterio que sees(). */
+  seesFrom(x: number, y: number, a: number, px: number, py: number) {
+    const dx = px - x, dy = py - y, d = Math.hypot(dx, dy);
+    if (d <= this.nearR) return lineClear(this.walls(), x, y, px, py);
+    if (d > this.R) return false;
+    if (Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(dy, dx) - a)) > this.half) return false;
+    return lineClear(this.walls(), x, y, px, py);
+  }
 
   /** ¿El jugador ve este punto? (mismo criterio que el polígono: cono + línea de visión, o radio cercano). */
   sees(px: number, py: number, pad = 0) {
@@ -212,7 +223,7 @@ export class Vision {
 
   setEnabled(v: boolean) { this.enabled = v; this.last.v = -1; for (const f of this.fogs) f.setVisible(v); }
   /** QA: opacidad total de la niebla y número de capas. */
-  fogInfo() { const a = this.fogs[0]?.fillAlpha ?? 0; return { layers: this.fogs.length, layerAlpha: a, total: 1 - Math.pow(1 - a, this.fogs.length) }; }
+  fogInfo(): { layers: number; layerAlpha: number; total: number; v2?: boolean } { const a = this.fogs[0]?.fillAlpha ?? 0; return { layers: this.fogs.length, layerAlpha: a, total: 1 - Math.pow(1 - a, this.fogs.length) }; }
   destroy() { for (const f of this.fogs) f.destroy(); for (const g of this.masks) g.destroy(); }
 }
 

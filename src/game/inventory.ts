@@ -186,6 +186,9 @@ export function itemLabel(it: ItemInst) {
  * Se llama al entrar en la raid: se entra con el arma cargada (la munición sale de la mochila
  * y queda guardada en el arma, `mag`, dentro del loadout/instantánea). Devuelve las balas cargadas.
  */
+/** v4d: munición del cargador (pistola: munición 9 mm; escopeta: cartuchos). */
+export const magAmmo = (ws: { ammo?: string }) => ws.ammo ?? 'municion';
+
 export function loadMagazine(lo: Loadout): number {
   let got = 0;
   for (const w of [lo.arma, lo.reserva ?? null]) {
@@ -193,7 +196,7 @@ export function loadMagazine(lo: Loadout): number {
     if (!w || !ws.mag) continue;
     const need = ws.mag - (w.mag ?? 0);
     if (need <= 0) continue;
-    const g = consume(lo.mochila, 'municion', need);
+    const g = consume(lo.mochila, magAmmo(ws), need);
     w.mag = (w.mag ?? 0) + g; got += g;
   }
   return got;

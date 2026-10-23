@@ -144,7 +144,7 @@ await E(()=>gengi.start()); await sleep(1500); await E(setup); await E(()=>__cal
  const j=await E(async()=>{const s=gengi.raid();__calm();__open(6);const lo=s.snap.loadout;
    const pis=lo.reserva?.def==='pistola'?null:null;
    const e=s.spawnAt('errante',s.player.x,s.player.y-2.5*48);e.state='idle';e.sees=false;e.sightT=1e9;await __frames(3);
-   const st0=s.fx.stainCount;const hs0=s.stats.hitStops;const x0=e.x,y0=e.y;const nShown=s.fx.shown.length;
+   const st0=s.fx.stainCount;const hs0=s.stats.hitStops;const x0=e.x,y0=e.y;s.fx.shown.length=0;const nShown=0;
    s.dealDamage(e,6,-Math.PI/2,'bate',false,55);const inStop=s.hitStopActive();await __frames(1);await __wait(150);
    const moved=Math.hypot(e.x-x0,e.y-y0);const stag=e.stagger;
    s.dealDamage(e,9,-Math.PI/2,'bate',true,80);await __wait(150);

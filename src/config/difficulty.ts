@@ -1,3 +1,4 @@
+import { LATE_RAID } from './v4d';
 /**
  * Curva de dificultad de GenGi: TODOS los parámetros ajustables están aquí.
  * Dott/Basu: cambiad estos números tras cada ronda de pruebas; no hace falta tocar el resto del código.
@@ -65,8 +66,10 @@ export const DIFFICULTY = {
 
 /** Multiplicadores para un minuto dado (fracción continua permitida). */
 export function scaling(minute: number) {
+  // v4d (§7): +4 %/min hasta el minuto 10; desde ahí +9 %/min
+  const L = LATE_RAID, m0 = Math.min(minute, L.lateFromMinute), m1 = Math.max(0, minute - L.lateFromMinute);
   return {
     spawn: 1 + DIFFICULTY.spawnRatePerMinute * minute,
-    stats: 1 + DIFFICULTY.statScalePerMinute * minute,
+    stats: 1 + L.statPerMinEarly * m0 + L.statPerMinLate * m1,
   };
 }

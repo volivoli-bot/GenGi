@@ -17,7 +17,7 @@ async function page(){
 let p=await page(); const E=(f,...a)=>p.evaluate(f,...a);
 const setup=`
 window.T=48;window.__wrap=a=>Math.atan2(Math.sin(a),Math.cos(a));
-window.__calm=()=>{const s=gengi.raid();gengi.god(true);gengi.clearEnemies();s.snap.stream=null;s.snap.spawnTimer=-1e9;gengi.move(0,0);gengi.aim(null);
+window.__calm=()=>{const s=gengi.raid();/* v4c: esta suite es anterior a la nieve; con semilla al azar a veces caía en la Zona Helada (ruido ×0,7, enemigos ×1,3, hielo) */const N=gengi.cfg42,V4=gengi.v4().cfg;N.SNOW_ENEMIES.enabled=false;N.SNOW_RULES.muffle=1;N.SNOW_RULES.prints.enabled=false;N.SNOW_RULES.ventisca.enabled=false;V4.SNOW.enemyMult=1;if(s.snowR){for(const q of s.snowR.plates)q.img?.destroy();s.snowR.plates=[];}gengi.god(true);gengi.clearEnemies();s.snap.stream=null;s.snap.spawnTimer=-1e9;gengi.move(0,0);gengi.aim(null);
   if(!window.__hooked){window.__hooked=true;window.__pins=new Map();s.events.on('update',()=>{s.idleT=0;for(const [e,pos] of window.__pins){if(!e.dead){e.body.reset(pos.x,pos.y);if(pos.f!==undefined&&e.state==='idle'){e.facing=pos.f;e.turnT=1e9;e.pauseT=0;e.turnTo=null;}}}});}
   window.__pins.clear();};
 window.__gt=()=>gengi.raid().snap.elapsed;

@@ -3,6 +3,7 @@ import { TILE, WORLD } from '../config/constants';
 import { SNOW_RULES } from '../config/v42';
 import { seeded } from '../game/loot';
 import type { RaidScene } from './RaidScene';
+import type { SnowSnap } from '../save/types';
 import { pointInWalls } from './map';
 
 interface Print { x: number; y: number; ang: number; t: number; enemy: boolean; img: Phaser.GameObjects.Image | null }
@@ -36,7 +37,22 @@ export class SnowRules {
     this.rng = seeded((s.snap.seed ^ R.ice.seedSalt) >>> 0);
     const [a, b] = R.ventisca.firstSec;
     this.ventT = a + this.rng() * (b - a);
-    if (s.map.snow) this.placePlates();
+    // v4c: solo hay sistemas de nieve (huellas, hielo, ventisca) en mapas con zona de nieve
+    this.active = !!s.map.snow && s.mapDef.zonas.some(z => z.bioma === 'nieve');
+    if (this.active) this.placePlates();
+    const st = s.snap.snowState;
+    if (this.active && st) {
+      this.ventT = st.ventT; this.ventLeft = Math.max(0, st.ventLeft); this.warned = st.warned;
+      for (const p of st.prints ?? []) { this.addPrint(p.x, p.y, p.ang, !!p.enemy, p.t); }
+      this.stats.prints = 0; this.stats.enemyPrints = 0; this.restored = true;
+    }
+  }
+  /** v4c: ¿hay nieve en este mapa? Si no, nada de esto corre. */
+  active: boolean;
+  /** v4c: se retomó del guardado. */
+  restored = false;
+  toSnap(): SnowSnap {
+    return { ventT: this.ventT, ventLeft: this.ventLeft, warned: this.warned, prints: this.prints.map(p => ({ x: Math.round(p.x), y: Math.round(p.y), ang: +p.ang.toFixed(3), t: +p.t.toFixed(2), ...(p.enemy ? { enemy: true } : {}) })) };
   }
 
   private placePlates() {
@@ -67,7 +83,7 @@ export class SnowRules {
   /** Tope de vista (casillas) durante la Ventisca. */
   sightCap() { return this.ventLeft > 0 ? SNOW_RULES.ventisca.sightTiles : 99; }
 
-  private addPrint(x: number, y: number, ang: number, enemy: boolean) {
+  private addPrint(x: number, y: number, ang: number, enemy: boolean, life?: number) {
     const P = SNOW_RULES.prints;
     const own = this.prints.filter(p => p.enemy === enemy);
     if (own.length >= (enemy ? P.enemyMax : P.max)) { const old = own[0]; old.img?.destroy(); this.prints.splice(this.prints.indexOf(old), 1); }
@@ -75,13 +91,14 @@ export class SnowRules {
     const ox = Math.cos(ang + Math.PI / 2) * 5 * this.side, oy = Math.sin(ang + Math.PI / 2) * 5 * this.side;
     const img = this.s.textures.exists('v4/huella') ? this.s.add.image(x + ox, y + oy, 'v4/huella').setDisplaySize(12, 18).setRotation(ang + Math.PI / 2).setDepth(0.7).setAlpha(P.alpha) : null;
     if (enemy) img?.setTint(0x9a6a6a);
-    this.prints.push({ x, y, ang, t: P.lifeSec, enemy, img });
+    this.prints.push({ x, y, ang, t: life ?? P.lifeSec, enemy, img });
+    if (life !== undefined && life < 3) img?.setAlpha(P.alpha * life / 3);
     if (enemy) this.stats.enemyPrints++; else this.stats.prints++;
   }
 
   update(dt: number) {
     const s = this.s, P = SNOW_RULES.prints;
-    if (!s.map.snow) { this.updateVentisca(dt); return; }
+    if (!this.active) return;
     const px = s.player.x, py = s.player.y;
     // huellas: envejecen y se borran
     for (let i = this.prints.length - 1; i >= 0; i--) {

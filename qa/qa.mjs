@@ -38,7 +38,7 @@ st=await E(()=>gengi.state()); ok('equipo sale del refugio al entrar (1 escritur
   await p.touchscreen.touchStart(geo.l+12, geo.t+60); await sleep(120);
   const joyDuring=await E(()=>gengi.raid().joy.pointerId); await p.touchscreen.touchEnd(); await sleep(100);
   // 2) se fuerza el panel encima de los botones de habilidad y se toca justo sobre uno de ellos
-  const btn=await E(()=>{const h=gengi.raid().hud;const b=h.abilities[0].bg;const q=h.quick.bg;const el=document.querySelector('.sheet');Object.assign(el.style,{top:(q.y-60)+'px',height:'200px'});return {x:b.x,y:b.y,qx:q.x,qy:q.y}});
+  const btn=await E(()=>{const h=gengi.raid().hud;const b=h.abilities[0].bg;const q=h.quick.bg;const el=document.querySelector('.sheet');Object.assign(el.style,{top:(q.y-60)+'px',height:'200px',left:Math.min(el.getBoundingClientRect().left,q.x-40)+'px'});return {x:b.x,y:b.y,qx:q.x,qy:q.y}});
   await p.touchscreen.tap(btn.x, btn.y); await sleep(100); await E(()=>document.querySelector('.ctx')?.remove()); /* v2: el toque abre el menú contextual del objeto; se cierra para que el 2º toque pruebe el botón de debajo */ await p.touchscreen.tap(btn.qx, btn.qy); await sleep(150);
   const s1=await snapState(); const stillOpen=await E(()=>!!document.querySelector('.sheet'));
   // control positivo: sin panel, el mismo toque SÍ usa el consumible rápido (el test es sensible)

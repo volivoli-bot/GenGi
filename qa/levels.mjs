@@ -155,7 +155,7 @@ await endRaid('extraido');
 {const r=await E(()=>{const d=JSON.parse(JSON.stringify(gengi.state()));d.saveVersion=5;delete d.prog;delete d.profileId;delete d.rev;d.createdAt='2026-03-03T10:00:00.000Z';
   const a=gengi.importStr(JSON.stringify(d));const pid1=a.profileId;const b=JSON.parse(JSON.stringify(d));b.stats.raids+=1;const a2=gengi.importStr(JSON.stringify(b));
   return {v:a.saveVersion,prog:a.prog,pid1,pid2:a2.profileId};});
- ok('S1 migración 5→6: nivel 1 sin experiencia y perfil estable a partir de la fecha de creación', r.v===6&&r.prog.level===1&&r.prog.xp===0&&r.pid1===r.pid2&&!!r.pid1, JSON.stringify({v:r.v,lv:r.prog.level,pid:r.pid1}));}
+ ok('S1 migración 5→6 (→7 en v4d): nivel 1 sin experiencia y perfil estable a partir de la fecha de creación', r.v>=6&&r.prog.level===1&&r.prog.xp===0&&r.pid1===r.pid2&&!!r.pid1, JSON.stringify({v:r.v,lv:r.prog.level,pid:r.pid1}));}
 {const r=await E(()=>{const old=gengi.exportStr();
   // juego sigue: una incursión más
   const d=gengi.state();const later=JSON.parse(old);later.stats.raids+=1;later.rev+=5;

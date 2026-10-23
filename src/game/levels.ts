@@ -1,5 +1,6 @@
 /** v4.0 §2: nivel, experiencia y atributos (lógica pura; los números están en config/levels.ts). */
 import { ATTR_IDS, ATTR_RULES, ATTRS, AttrId, LEVEL_MAX, XP, XP_CURVE, XP_DEATH } from '../config/levels';
+import { XP4D } from '../config/v4d';
 import type { Progress, SaveData } from '../save/types';
 
 export const newProgress = (): Progress => ({ level: 1, xp: 0, total: 0, free: 0, attrs: Object.fromEntries(ATTR_IDS.map(a => [a, 0])) as Record<AttrId, number>, gym: {}, cheapRespecAt: -999, lastLevelUp: 0 });
@@ -47,7 +48,8 @@ export function killXp(type: string, elite: boolean, boss = false) {
 /** v4b: experiencia base de una muerte con las reglas de Basu (oleada ×0,3; pasado el tope de 1.500 base por incursión, ×0,5). Devuelve la base que suma al contador. */
 export function killXpRaid(base: number, wave: boolean, killBaseSoFar: number) {
   let v = base * (wave ? XP.waveMult : 1);
-  if (killBaseSoFar >= XP.killSoftCap) v *= XP.overCapMult;
+  // v4d (§7): sin tope de experiencia por incursión
+  if (!XP4D.removeKillCap && killBaseSoFar >= XP.killSoftCap) v *= XP.overCapMult;
   return v;
 }
 /** v4b: experiencia que se asegura al extraer. El ×1,5 del helipuerto no se aplica a la del jefe. `raidXp` y `bossXp` ya llevan el ×mapa. */

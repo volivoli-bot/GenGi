@@ -1,3 +1,4 @@
+import { MAP_RANGES } from './v4d';
 /**
  * v4 (diseño de Basu, diseno-v4.md §1 y §5): mochilas, peso del botín y sistema de mapas por datos.
  * Todos los números de diseño de la v4 están aquí.
@@ -113,7 +114,7 @@ const FIXED_VARIATION: MapVariation = { containerKeep: 1, containerJitterTiles: 
 
 export const MAPS: MapDef[] = [
   {
-    id: 'arrabal', nombre: 'El Arrabal', nivelMin: 1, nivelMax: 9, dificultad: 1, calaveras: 1,
+    id: 'arrabal', nombre: 'El Arrabal', nivelMin: MAP_RANGES.arrabal[0], nivelMax: MAP_RANGES.arrabal[1], dificultad: 1, calaveras: 1,
     rarezas: ['chatarra', 'militar'], rarezaJefe: 'anomalia', xpMult: 1,
     zonas: [{ id: 'arrabal', nombre: 'Arrabal', bioma: 'urbano' }, { id: 'helada', nombre: 'Zona Helada', bioma: 'nieve' }],
     edificios: ['casas', 'parque', 'comisaria', 'hospital', 'aparcamiento', 'plaza', 'bloque', 'super', 'almacen'],
@@ -123,7 +124,7 @@ export const MAPS: MapDef[] = [
     jefe: 'La Matriarca', extraccionEspecial: 'Helipuerto', mecanica: 'Ventisca',
   },
   {
-    id: 'via_muerta', nombre: 'Vía Muerta', nivelMin: 5, nivelMax: 25, dificultad: 1.8, calaveras: 2,
+    id: 'via_muerta', nombre: 'Vía Muerta', nivelMin: MAP_RANGES.via_muerta[0], nivelMax: MAP_RANGES.via_muerta[1], dificultad: 1.8, calaveras: 2,
     rarezas: ['comun', 'anomalia'], rarezaJefe: 'anomalia', xpMult: 2.5,
     pesosRareza: { comun: 50, reforzado: 32, militar: 14, anomalia: 4 },
     zonas: [{ id: 'estacion', nombre: 'Estación de mercancías', bioma: 'industrial' }, { id: 'poligono', nombre: 'Polígono', bioma: 'industrial' }],
@@ -133,7 +134,7 @@ export const MAPS: MapDef[] = [
     jefe: 'El Maquinista', extraccionEspecial: 'Tren en marcha', mecanica: 'Tren Fantasma',
   },
   {
-    id: 'crater', nombre: 'El Cráter', nivelMin: 15, nivelMax: 40, dificultad: 3, calaveras: 4,
+    id: 'crater', nombre: 'El Cráter', nivelMin: MAP_RANGES.crater[0], nivelMax: MAP_RANGES.crater[1], dificultad: 3, calaveras: 4,
     rarezas: ['reforzado', 'reliquia'], rarezaJefe: 'reliquia', xpMult: 6,
     pesosRareza: { reforzado: 52, militar: 33, anomalia: 13, reliquia: 2 },
     zonas: [{ id: 'crater', nombre: 'Cráter', bioma: 'anomalo' }, { id: 'ruinas', nombre: 'Ciudad partida', bioma: 'urbano' }],
@@ -143,7 +144,7 @@ export const MAPS: MapDef[] = [
     jefe: 'El Eco', extraccionEspecial: 'Portal estable (40 s)', mecanica: 'Anomalías',
   },
   {
-    id: 'colmena', nombre: 'La Colmena', nivelMin: 30, nivelMax: null, dificultad: 5, calaveras: 5,
+    id: 'colmena', nombre: 'La Colmena', nivelMin: MAP_RANGES.colmena[0], nivelMax: MAP_RANGES.colmena[1], dificultad: 5, calaveras: 5,
     rarezas: ['militar', 'reliquia'], rarezaJefe: 'reliquia', xpMult: 6,
     pesosRareza: { militar: 62, anomalia: 32, reliquia: 6 },
     zonas: [{ id: 'metro', nombre: 'Metro', bioma: 'subterraneo' }, { id: 'nido', nombre: 'Nido', bioma: 'subterraneo' }],

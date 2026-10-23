@@ -53,19 +53,20 @@ export function makeRolledGear(rng: Rng, id: string, rarity: Rarity) {
   return makeItem(id, rarity, 1, rollTraits(rng, id, rarity));
 }
 
-const TABLE: { id: string; w: number; qty?: [number, number] }[] = [
+export const TABLE: { id: string; w: number; qty?: [number, number] }[] = [
   { id: 'vendaje', w: 22, qty: [1, 2] },
   { id: 'chapas', w: 22, qty: [4, 20] },
   { id: 'botiquin', w: 6 },
   { id: 'municion', w: 5, qty: [4, 10] },
   { id: 'flechas', w: 5, qty: [3, 8] },
-  { id: 'virotes', w: 3, qty: [3, 6] },
+  { id: 'cartuchos', w: 3, qty: [2, 5] }, // v4d: los virotes ya no existen (la ballesta usa flechas)
   { id: 'bengala', w: 4 },
   { id: 'bate', w: 6 },
   { id: 'machete', w: 6 },
   { id: 'arco', w: 4 },
   { id: 'ballesta', w: 3 },
   { id: 'pistola', w: 3 },
+  { id: 'escopeta', w: 2.5 },
   { id: 'tablas', w: 6 },
   { id: 'chaleco', w: 2.5 },
   { id: 'casco', w: 3 },
@@ -136,7 +137,8 @@ export function rollContainer(rng: Rng, kind: ContainerKind, bonus: number, snow
     const n = kind === 'caja' ? 1 + Math.floor(rng() * 2) : kind === 'cerrada' ? 2 + Math.floor(rng() * 3) : 1;
     for (let i = 0; i < n; i++) out.push(rollItem(rng, 0, rollWeighted(rng, SNOW.rarity)));
     if (out.some(i => i.def === 'arco')) out.push(makeItem('flechas', 'comun', 6));
-    if (out.some(i => i.def === 'ballesta')) out.push(makeItem('virotes', 'comun', 5));
+    if (out.some(i => i.def === 'ballesta')) out.push(makeItem('flechas', 'comun', 5));
+    if (out.some(i => i.def === 'escopeta')) out.push(makeItem('cartuchos', 'comun', 4));
     return out;
   }
   if (kind === 'elite') {
@@ -149,7 +151,8 @@ export function rollContainer(rng: Rng, kind: ContainerKind, bonus: number, snow
   for (let i = 0; i < n; i++) out.push(rollItem(rng, b));
   // un arco encontrado viene con unas flechas
   if (out.some(i => i.def === 'arco')) out.push(makeItem('flechas', 'comun', 6));
-  if (out.some(i => i.def === 'ballesta')) out.push(makeItem('virotes', 'comun', 5));
+  if (out.some(i => i.def === 'ballesta')) out.push(makeItem('flechas', 'comun', 5));
+    if (out.some(i => i.def === 'escopeta')) out.push(makeItem('cartuchos', 'comun', 4));
   return out;
 }
 

@@ -72,9 +72,9 @@ import fs from 'fs'; import path from 'path';
   const p1=v.lingerStats.polys,s1=v.lingerStats.samples;let frames=0;const t0=__gt();const h=()=>{frames++;s.facing+=0.08;};s.events.on('update',h);
   let maxHist=0;while(__gt()-t0<1.5){maxHist=Math.max(maxHist,v.lingerCount());await new Promise(r=>setTimeout(r,16));}
   s.events.off('update',h);
-  return {still,sweep:{samples:v.lingerStats.samples-s1,frames,polysPerFrame:+((v.lingerStats.polys-p1)/frames).toFixed(1),maxHist}};});
+  return {still,v2:!!v.fogInfo?.().v2,sweep:{samples:v.lingerStats.samples-s1,frames,polysPerFrame:+((v.lingerStats.polys-p1)/frames).toFixed(1),maxHist}};});
  ok('N1 quieto: sin fotos nuevas ni redibujos de la niebla', r.still.samples===0&&r.still.redraws===0&&r.still.polys===0, JSON.stringify(r.still));
- ok('N2 barriendo: ≤ 1 foto cada 0,12 s, ≤ 6 vivas y ≤ 15 polígonos de máscara por fotograma (antes hasta 33)', r.sweep.samples<=Math.ceil(1.5/0.12)+1&&r.sweep.maxHist<=6&&r.sweep.polysPerFrame<=15, JSON.stringify(r.sweep));}
+ ok('N2 barriendo: ≤ 1 foto cada 0,12 s, ≤ 6 vivas y ≤ 15 polígonos de máscara por fotograma (antes hasta 33; v4d niebla v2: una sola máscara, 0 fotos/polígonos)', r.v2 ? (r.sweep.samples===0&&r.sweep.polysPerFrame===0) : (r.sweep.samples<=Math.ceil(1.5/0.12)+1&&r.sweep.maxHist<=6&&r.sweep.polysPerFrame<=15), JSON.stringify({v2:r.v2,...r.sweep}));}
 
 // ======================= F. Contador de fps =======================
 {const r=await E(async()=>{const s=gengi.raid();__calm();__open(8);gengi.minute(11.98);await __waitGame(3);

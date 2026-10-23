@@ -7,7 +7,7 @@ import type { ContainerKind } from '../game/loot';
 import type { MutationId, StationId, VendorId } from '../config/v3';
 
 /** Versión actual del formato de guardado. Súbela y añade una migración en migrations.ts al cambiar el formato. */
-export const SAVE_VERSION = 6;
+export const SAVE_VERSION = 7;
 
 export type TargetPriority = 'cercano' | 'debil' | 'peligroso';
 
@@ -81,6 +81,8 @@ export interface EnemySnap {
   lair?: boolean;
   /** v4b: salió en una oleada/horda (da el 30 % de experiencia). */
   wave?: boolean;
+  /** v4d: cazador. */
+  hunter?: boolean;
   /** v4.2: el Congelado conserva el caparazón. */
   ice?: boolean;
 }
@@ -96,7 +98,9 @@ export interface RaidSnapshot {
   kills: number;
   player: { x: number; y: number; hp: number; healLeft: number; healRate: number; aguantar: number; cds: Partial<Record<AbilityId, number>>; reload: number;
     /** Prueba v2: cargas de sangrado / veneno (segundos que le quedan a cada una). */
-    bleed?: number[]; poison?: number[] };
+    bleed?: number[]; poison?: number[];
+    /** v4d: habilidades temporales de las armas a distancia activas (segundos que les quedan). */
+    buffs?: Partial<Record<AbilityId, number>> };
   loadout: Loadout;
   enemies: EnemySnap[];
   containers: ContainerSnap[];
@@ -136,6 +140,19 @@ export interface RaidSnapshot {
   /** v4b: id de la definición del mapa (MapDef.id; `mapId` es su saveId) y experiencia base por muertes acumulada (para el tope de 1.500). */
   mapDefId?: string;
   killBase?: number;
+  /** v4c: ventisca y huellas en la nieve (para retomar igual al reabrir). Opcional: los guardados de antes empiezan sin ventisca. */
+  snowState?: SnowSnap;
+  /** v4d §7: reloj de la niebla (corre ×2 desde el minuto 13), siguiente cazador y aviso dado. */
+  fogT?: number;
+  hunterT?: number;
+  huntersWarned?: boolean;
+}
+
+export interface SnowSnap {
+  ventT: number;
+  ventLeft: number;
+  warned: boolean;
+  prints: { x: number; y: number; ang: number; t: number; enemy?: boolean }[];
 }
 
 export interface RaidTrack {

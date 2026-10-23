@@ -196,3 +196,4 @@ table.cmp td.down { color: #ff6b6b; font-weight: 800; }
 .mesa-mapas .polaroid.locked small { color: #a3261b; font-weight: 700; }
 .mesa-mapas .polaroid.on { border-color: #ffc94a; box-shadow: 0 0 10px #ffc94a99; }
 .mesa-mapas .polaroid.sup small { color: #2e6b2e; }
+.mesa-mapas .polaroid .ph img.cinta { position: absolute; left: -6%; right: -6%; top: 34%; width: 112%; height: auto; object-fit: contain; filter: drop-shadow(0 1px 2px #000a); }

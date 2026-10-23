@@ -1,3 +1,4 @@
+import { SHOTGUN } from './v4d';
 /**
  * Números de diseño de la v2 (Basu, diseno-v1.md → "Cambios v2"). Todo lo ajustable de las mecánicas nuevas vive aquí.
  * Unidades: casillas (TILE = 48 px de mundo), segundos, grados.
@@ -77,7 +78,7 @@ export const STAGGER = {
   /** Masa relativa por tipo (divide el impulso). */
   weight: { errante: 1, corredor: 0.8, hinchado: 1.7, abominacion: 7, escupidor: 0.9, chillon: 0.9, acechador: 1, bruto: 4, reptante: 3, enjambre: 0.3 } as Record<string, number>,
   /** Fuerza del arma (px/s de impulso para masa 1) y duración del tambaleo (s). */
-  weapon: { punos: [140, 0.12], bate: [330, 0.35], machete: [170, 0.16], arco: [220, 0.18], ballesta: [280, 0.22], pistola: [180, 0.14] } as Record<string, [number, number]>,
+  weapon: { punos: [140, 0.12], bate: [330, 0.35], machete: [170, 0.16], arco: [220, 0.18], ballesta: [280, 0.22], pistola: [180, 0.14], escopeta: [SHOTGUN.knockbackPerPellet, SHOTGUN.staggerSec] } as Record<string, [number, number]>,
   impulseSec: 0.12,
   /** Un tambaleo de al menos esto (s) interrumpe un aviso de ataque. */
   interruptSec: 0.3,

@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { WORLD } from '../config/constants';
 import { AIM, HUD2, SWAP } from '../config/v2';
 import { safeInsets } from '../ui/safe';
+import { HUD4D, RANGED } from '../config/v4d';
 
 const FONT = 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
 const D = 2000;
@@ -68,6 +69,10 @@ export class Hud {
   vignette: Phaser.GameObjects.Graphics;
   pauseBtn: RoundButton;
   bagBtn: RoundButton;
+  /** v4d §7: contador de munición junto al joystick derecho ("8 / 24" o "14"); parpadea en rojo con ≤ 3. */
+  ammo!: Phaser.GameObjects.Text;
+  ammoLow = false;
+  private ammoT = 0;
   /** v4.0: «+3» dorado (puntos de atributo sin gastar) y nivel. */
   lvlBtn: RoundButton;
   lvlText!: Phaser.GameObjects.Text;
@@ -119,6 +124,7 @@ export class Hud {
     this.barBg = sc.add.rectangle(0, 0, 220, 14, 0x000000, 0.6).setStrokeStyle(2, 0x14110f).setScrollFactor(0).setDepth(D).setVisible(false);
     this.barFill = sc.add.rectangle(0, 0, 216, 10, 0x4cd964).setOrigin(0, 0.5).setScrollFactor(0).setDepth(D).setVisible(false);
     this.barText = t(14).setOrigin(0.5, 1).setVisible(false);
+    this.ammo = sc.add.text(0, 0, '', { fontFamily: FONT, fontSize: '20px', fontStyle: 'bold', color: '#e8e2d0', stroke: '#000', strokeThickness: 5 }).setOrigin(1, 0.5).setScrollFactor(0).setDepth(D + 3).setVisible(false);
     this.mini = sc.add.graphics().setScrollFactor(0).setDepth(D);
     this.arrows = sc.add.graphics().setScrollFactor(0).setDepth(D - 1);
     this.threats = sc.add.graphics().setScrollFactor(0).setDepth(D - 1);
@@ -151,6 +157,20 @@ export class Hud {
     const cx = R - ar - HUD2.edgeInsetPx, cy = B - ar - HUD2.edgeInsetPx; // reposo a 20 px del borde (gesto de atrás de iOS)
     this.aimRest = { x: cx, y: cy };
     const br = HUD2.buttonPx / 2;
+    if (HUD4D.layout) {
+      // v4d §7: arco encima del joystick (arma, casco, chaleco); venda y botiquín (44 px) a su izquierda, uno encima del otro
+      HUD4D.arcDeg.forEach((deg, i) => {
+        const a = Phaser.Math.DegToRad(deg);
+        this.abilities[i].place(cx + Math.cos(a) * HUD2.arcRadius, cy + Math.sin(a) * HUD2.arcRadius, br);
+      });
+      const a0 = this.abilities[0].bg, hr = HUD4D.healButtonPx / 2, g = HUD4D.healGapPx;
+      const hx = a0.x - br - g - hr;
+      this.quick.place(hx, a0.y - hr - g / 2, hr);
+      this.quick2.place(hx, a0.y + hr + g / 2, hr);
+      const a1 = this.abilities[1].bg, a2 = this.abilities[2].bg;
+      this.swap.place((a1.x + a2.x) / 2 + 6, Math.min(a1.y, a2.y) - br - SWAP.buttonPx / 2 - 14, SWAP.buttonPx / 2);
+      this.ammo.setPosition(cx - ar - 6, cy + ar * 0.55);
+    } else {
     const btns = [this.abilities[0], this.abilities[1], this.abilities[2], this.quick];
     HUD2.arcDeg.forEach((deg, i) => {
       const a = Phaser.Math.DegToRad(deg);
@@ -159,6 +179,8 @@ export class Hud {
     { const a = Phaser.Math.DegToRad(HUD2.arcDeg[0] - (HUD2.arcDeg[1] - HUD2.arcDeg[0])); this.quick2.place(cx + Math.cos(a) * HUD2.arcRadius, cy + Math.sin(a) * HUD2.arcRadius, br); }
     const top = this.quick.bg, q2 = this.abilities[2].bg;
     this.swap.place((top.x + q2.x) / 2 + 4, Math.min(top.y, q2.y) - br - SWAP.buttonPx / 2 - 14, SWAP.buttonPx / 2);
+    this.ammo.setPosition(cx - ar - 6, cy + ar * 0.55);
+    }
     this.actionBtn.setPosition(Math.max(L + 80, W * 0.36), B - 232);
     this.barBg.setPosition(W / 2, H * 0.62); this.barFill.setPosition(W / 2 - 108, H * 0.62); this.barText.setPosition(W / 2, H * 0.62 - 10);
   }
@@ -229,7 +251,17 @@ export class Hud {
     this.onAction = run;
   }
 
+  /** v4d: munición del arma (null = cuerpo a cuerpo: se oculta). `total` = disparos que te quedan (parpadeo con ≤ 3). */
+  setAmmo(text: string | null, total: number) {
+    this.ammo.setVisible(!!text);
+    if (!text) { this.ammoLow = false; return; }
+    this.ammo.setText(text);
+    this.ammoLow = total <= RANGED.lowAmmo;
+    if (!this.ammoLow) this.ammo.setColor('#e8e2d0').setAlpha(1);
+  }
+
   update(dt: number) {
+    if (this.ammoLow && this.ammo.visible) { this.ammoT += dt; const on = Math.floor(this.ammoT * 4) % 2 === 0; this.ammo.setColor(on ? '#ff3b30' : '#ffb0a8').setAlpha(on ? 1 : 0.55); }
     if (this.msgT > 0) { this.msgT -= dt; if (this.msgT < 0.5) this.msg.setAlpha(Math.max(0, this.msgT / 0.5)); }
     if (this.hurt.fillAlpha > 0) this.hurt.fillAlpha = Math.max(0, this.hurt.fillAlpha - dt * 1.5);
   }

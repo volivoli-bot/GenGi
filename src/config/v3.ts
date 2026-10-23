@@ -1,3 +1,4 @@
+import { SHOTGUN } from './v4d';
 import { BAG_PRICES, BAG_RECIPES, HIERRO_BAGS } from './v4';
 /**
  * Diseño v3 (Basu, gengi-art/diseno-v3.md §1-§6): refugio, materiales, vendedores, enemigos nuevos y mutaciones.
@@ -114,7 +115,7 @@ export const VENDORS = {
   /** Precio base (Común, rep. 1, por unidad). Lo que no esté aquí: valor × refPriceMult. */
   basePrice: {
     vendaje: 20, botiquin: 80, bengala: 90, adrenalina: 120, granada: 110, antidoto: 90, estimulante: 140,
-    bate: 28, machete: 60, arco: 95, ballesta: 130, pistola: 150, municion: 6, flechas: 2.5, virotes: 3.5,
+    bate: 28, machete: 60, arco: 95, ballesta: 130, pistola: 150, municion: 6, flechas: 2.5, virotes: 2.5, escopeta: SHOTGUN.price, cartuchos: SHOTGUN.shellPrice,
     tablas: 55, chaleco: 190, casco: 120,
     ...BAG_PRICES,
   } as Record<string, number>,
@@ -133,8 +134,8 @@ export const VENDORS = {
   ] as [string, number][][],
   /** Chispas / Hierro: casillas de equipo por renovación y rareza de cada casilla según el nivel. */
   gearSlots: [['comun', 'comun', 'comun', 'comun'], ['comun', 'reforzado', 'comun', 'reforzado'], ['comun', 'reforzado', 'militar', 'reforzado'], ['comun', 'reforzado', 'militar', 'reforzado']],
-  chispasGear: ['bate', 'machete', 'arco', 'ballesta', 'pistola'],
-  chispasAmmo: [['municion', 12, 4], ['flechas', 12, 4], ['virotes', 10, 3]] as [string, number, number][],
+  chispasGear: ['bate', 'machete', 'arco', 'ballesta', 'pistola', 'escopeta'],
+  chispasAmmo: [['municion', 12, 4], ['flechas', 12, 4], ['cartuchos', 8, 3]] as [string, number, number][],
   hierroGear: ['tablas', 'chaleco', 'casco'],
   /** v4: mochilas de Hierro (config/v4.ts HIERRO_BAGS: [id, unidades, desde rep.]). */
   hierroBags: HIERRO_BAGS,

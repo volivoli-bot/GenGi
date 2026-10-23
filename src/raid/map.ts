@@ -191,7 +191,9 @@ export function snowAt(map: MapData, x: number, y: number) {
 export function generateMap(raidSeed = 0, opts: GenOptions = {}): MapData {
   const def = opts.def ?? mapDef(DEFAULT_MAP);
   const V = opts.variation ?? def.variacion;
-  const snowIdx = opts.snowStrip === undefined ? snowStripFor(raidSeed) : opts.snowStrip;
+  // v4c: un mapa sin zona de nieve en su definición no tiene franja nevada
+  const hasSnowZone = def.zonas.some(z => z.bioma === 'nieve');
+  const snowIdx = !hasSnowZone ? null : opts.snowStrip === undefined ? snowStripFor(raidSeed) : opts.snowStrip;
   const rng = seeded(def.layoutSeed);
   const raidRng = seeded((raidSeed ^ 0x51a7e) >>> 0);
   const walls: Rect[] = [], floors: Rect[] = [], zones: Zone[] = [], doors: Door[] = [];

@@ -84,7 +84,7 @@ await E(()=>gengi.start()); await sleep(1500); await E(setup); await E(()=>__cal
   await __waitGame(0.1);s.refreshAbilities?.();const idx=s.abilityIds.indexOf('escanear');s.useAbility(idx);
   await __waitGame(0.3);const during=last.map(m=>Math.round(Math.hypot(m.x-s.player.x,m.y-s.player.y)/T*10)/10);const nearHidden=!near.visibleNow;
   const t=await __until(()=>last.length===0,6)+0.3;
-  h.drawMinimap=orig;s.snap.loadout.cabeza=null;return {wall:!!wallSpot,during,nearHidden,t,far:!!far,scanDepth:s.scanGfx.depth,fogDepth:s.vision?.fogs?.[0]?.depth};});
+  h.drawMinimap=orig;s.snap.loadout.cabeza=null;return {wall:!!wallSpot,during,nearHidden,t,far:!!far,scanDepth:s.scanGfx.depth,fogDepth:s.vision?.fogs?.[0]?.depth??s.vision?.rtA?.depth};});
  ok('P3 Escanear marca solo enemigos a ≤ 10 casillas (antes: todo el mapa)', r.during.length===1&&r.during[0]<=10&&r.far, JSON.stringify({dist:r.during,lejano14:r.far}));
  ok('P3 se ve también tras una pared (marca por encima de la niebla)', r.wall&&r.nearHidden&&r.during.length===1&&r.scanDepth>r.fogDepth, JSON.stringify({pared:r.wall,enemigoOculto:r.nearHidden,capas:[r.scanDepth,r.fogDepth]}));
  ok('P3 dura 3 s (antes 6 s)', Math.abs(r.t-3)<0.25, `${r.t.toFixed(2)} s`);}
@@ -115,7 +115,7 @@ await E(()=>gengi.start()); await sleep(1500); await E(setup); await E(()=>__cal
 {const r=await E(async()=>{const s=gengi.raid();__calm();__open(7);gengi.face(0);
   const e=s.spawnAt('errante',s.player.x-T*3,s.player.y);e.turnT=1e9;window.__pins.set(e,{x:e.x,y:e.y});s.facing=0;await __waitGame(0.3);
   const f=s.vision.fogInfo();const out={...f,hidden:!e.visibleNow,spriteVis:e.sprite?.visible??null};s.enemies.kill(e);return out;});
- ok('P5 niebla al 45 % (antes 62 %) con borde difuminado en 3 capas', Math.abs(r.total-0.45)<0.005&&r.layers===3, JSON.stringify({total:+r.total.toFixed(3),capas:r.layers}));
+ ok('P5 niebla al 45 % (antes 62 %) con borde difuminado (3 capas; v4d niebla v2: 1 máscara con degradado)', Math.abs(r.total-0.45)<0.005&&(r.layers===3||(r.v2&&r.layers===1)), JSON.stringify({total:+r.total.toFixed(3),capas:r.layers,v2:!!r.v2}));
  ok('P5 los enemigos en la niebla siguen ocultos', r.hidden, JSON.stringify(r));}
 
 // ---------- 6. Cadencia a distancia ×0,67 ----------
@@ -128,8 +128,8 @@ await E(()=>gengi.start()); await sleep(1500); await E(setup); await E(()=>__cal
     const pull=()=>{if(s.fireLatch)gengi.aim(0.3,0);else gengi.aim(1,0);};s.events.on('update',pull);await __waitGame(w==='arco'?6:4.5);s.events.off('update',pull);gengi.aim(null);s.events.off('update',hook);s.enemies.kill(e);window.__pins.clear();
     const iv=[];for(let i=1;i<times.length;i++)iv.push(times[i]-times[i-1]);iv.sort((a,b)=>a-b);const med=iv[Math.floor(iv.length/2)];out[w]={shots:times.length,aps:+(1/med).toFixed(3)};}
   return out;});
- ok('P6 pistola 2,0 → 1,34 disparos/s', Math.abs(r.pistola.aps-1.34)<0.08, JSON.stringify(r.pistola));
- ok('P6 arco 0,8 → 0,536 disparos/s', Math.abs(r.arco.aps-0.536)<0.04, JSON.stringify(r.arco));}
+ ok('P6 pistola: 1 disparo cada 0,8 s (v4d §7; antes 1,34/s)', Math.abs(r.pistola.aps-1/0.8)<0.08, JSON.stringify(r.pistola));
+ ok('P6 arco: 1 flecha cada 1,4 s (v4d §7; antes 0,536/s)', Math.abs(r.arco.aps-1/1.4)<0.04, JSON.stringify(r.arco));}
 
 // ---------- 7. Veneno y sangrado acumulables ----------
 {const r=await E(async()=>{const s=gengi.raid();__calm();__open(6);__naked();gengi.god(false);const p=s.snap.player;p.hp=100;const out={};
@@ -173,6 +173,8 @@ await E(()=>gengi.start()); await sleep(1500); await E(setup); await E(()=>__cal
 
 // ---------- 8. Curación con tiempo y botón mantenido ----------
 const qpos=await E(()=>{const q=gengi.raid().hud.quick.bg;return {x:q.x,y:q.y}});
+// v4d §7: venda y botiquín tienen cada uno su botón fijo de 44 px (el 2.º es el botiquín)
+const bpos=await E(()=>{const h=gengi.raid().hud;const q=(gengi.v4d?.().cfg.HUD4D?.layout&&h.quick2)?h.quick2.bg:h.quick.bg;return {x:q.x,y:q.y}});
 {await E(()=>{const s=gengi.raid();__calm();__open(7);__naked();gengi.god(false);const p=s.snap.player;s.snap.loadout.mochila=[];gengi.give('vendaje','comun',3);gengi.give('botiquin','comun',2);p.hp=50;s.settings.rapido='vendaje';s.healStats={done:0,cancelHit:0,cancelRelease:0};});
  // vendaje mantenido hasta el final
  const v0=await E(()=>__count('vendaje'));
@@ -194,7 +196,7 @@ const qpos=await E(()=>{const q=gengi.raid().hud.quick.bg;return {x:q.x,y:q.y}})
  // botiquín mantenido: 2,5 s
  await E(()=>{const s=gengi.raid();s.snap.player.healLeft=0;s.snap.player.hp=40;s.settings.rapido='botiquin';});
  const b0=await E(()=>__count('botiquin'));
- await p.touchscreen.touchStart(qpos.x,qpos.y);
+ await p.touchscreen.touchStart(bpos.x,bpos.y);
  const bt=await E(async()=>{const s=gengi.raid();await __until(()=>!!s.applying,1);const t0=s.applying?s.applying.t:0;const st=__gt()-t0;await __until(()=>!s.applying,5);return +(__gt()-st).toFixed(2);});
  await p.touchscreen.touchEnd(); await sleep(100);
  const b1=await E(()=>__count('botiquin'));

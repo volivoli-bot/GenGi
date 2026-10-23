@@ -13,10 +13,12 @@ import { rarityAtLeast, RARITIES } from '../data/rarity';
 import {
   backpackAdd, backpackSlots, canPocket, loadNoiseTiles, quickSlots, useTimeMult, consume, countOf, def, ItemInst, itemLabel, itemValue, makeItem, slotOf,
   speedMult, totalProtection, totalWeight, weaponStats,
+  magAmmo,
 } from '../game/inventory';
 import { rollContainer, rollEliteDrops, rollItem, rollLair, rollMaterial, seeded, setLootMap } from '../game/loot';
-import { mapDef, SNOW } from '../config/v4';
+import { DEFAULT_MAP, mapDef, SNOW } from '../config/v4';
 import { SNOW_ENEMIES } from '../config/v42';
+import { FOG2, HUD4D, LATE_RAID, RANGED, SHOTGUN, WEAPON_BUFFS, isBuff } from '../config/v4d';
 import { AttrId, XP, XP_UI } from '../config/levels';
 import { attrK, killXp, killXpRaid, xpToNext } from '../game/levels';
 import { RARITY_ORDER } from '../data/rarity';
@@ -38,6 +40,7 @@ import { PERF } from '../config/v32';
 import { rollDamage } from '../game/damage';
 import { Rig } from './rig';
 import { Vision } from './vision';
+import { VisionV2 } from './vision2';
 import { SnowRules } from './snow';
 import { genTrapero, traperoRejects, valesFor } from './trapero';
 
@@ -77,8 +80,15 @@ export class RaidUIScene extends Phaser.Scene {
 export const NO_VIBRATE = typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function';
 function vibrate(ms: number | number[]) { try { if (!NO_VIBRATE) navigator.vibrate(ms); } catch { /* sin vibración */ } }
 
-export function newRaidSnapshot(seed: number, loadout: RaidSnapshot['loadout'], valueIn: number): RaidSnapshot {
-  const map = generateMap(seed);
+/** v4c: trazado de una incursión a partir de la definición de su mapa (sin generador propio, el de El Arrabal). */
+export function mapForRaid(seed: number, defId?: string | null): MapData {
+  const want = mapDef(defId);
+  return generateMap(seed, want.generador ? { def: want } : {});
+}
+
+export function newRaidSnapshot(seed: number, loadout: RaidSnapshot['loadout'], valueIn: number, defId: string = DEFAULT_MAP): RaidSnapshot {
+  // v4c: inicio y salidas sobre el mapa elegido (antes, siempre El Arrabal)
+  const map = mapForRaid(seed, defId);
   const exits = chooseExits(seeded(seed ^ 0x5bd1e995), map);
   const heli = helipadExit(map); if (heli) exits.push(heli);
   const sp = map.spawns[Math.floor(seeded(seed ^ 0x2545f491)() * map.spawns.length)] ?? map.spawn;
@@ -86,7 +96,7 @@ export function newRaidSnapshot(seed: number, loadout: RaidSnapshot['loadout'], 
     id: 'raid-' + Date.now().toString(36), seed, startedAt: new Date().toISOString(), elapsed: 0, valueIn, kills: 0,
     player: { x: sp.x, y: sp.y, hp: PLAYER_MAX_HP, healLeft: 0, healRate: 0, aguantar: 0, cds: {}, reload: 0 },
     loadout, enemies: [], containers: [], exits, acid: [], spawnTimer: 0, hordeCd: 0, saves: 0,
-    mapId: map.id, doorsOpen: [], arrows: [],
+    mapId: map.id, mapDefId: map.defId, doorsOpen: [], arrows: [],
   };
 }
 
@@ -134,7 +144,15 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   /** Cambio de arma en curso (s restantes): no se ataca. */
   swapT = 0;
   /** QA / diagnóstico v2. */
-  stats = { shots: 0, swaps: 0, attacksDuringSwap: 0, behindWarn: 0, behindVibes: 0, hitStops: 0, crits: 0, critsTaken: 0, doorsOpened: 0, arrowsRecovered: 0, impactNoises: 0, clavarShots: 0, lootPaused: 0, iosKick: 0, backstabs: 0, executes: 0, debrisSteps: 0, autoSkippedUnaware: 0 };
+  stats = { shots: 0, swaps: 0, attacksDuringSwap: 0, behindWarn: 0, behindVibes: 0, hitStops: 0, crits: 0, critsTaken: 0, doorsOpened: 0, arrowsRecovered: 0, impactNoises: 0, clavarShots: 0, lootPaused: 0, iosKick: 0, backstabs: 0, executes: 0, debrisSteps: 0, autoSkippedUnaware: 0, ...RaidScene.v4dStats() };
+  /** v4d: estadísticas de QA (disparos, escopeta, perdigones, cazadores, habilidades temporales). */
+  static v4dStats() {
+    return { autoShots: 0, pierceShots: 0, shellsLoaded: 0, hunters: 0, buffsUsed: 0,
+      fireLog: [] as { t: number; w: string; auto: boolean }[],
+      shotgun: [] as { t: number; crit: boolean; dmg: number; coneDeg: number; rangeTiles: number; angs: number[] }[],
+      pellets: [] as { t: number; d: number; dmg: number; raw: number; crit: boolean; far: boolean }[],
+      hunterLog: [] as { t: number; type: string; gx: number; gy: number }[] };
+  }
   private attackT = 0;
   private autosaveT = 0;
   private idleT = 0;
@@ -150,7 +168,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   private fpsFrames = 0;
   private fpsWin = 0;
   private fpsWarm = 0;
-  private abilityIds: (AbilityId | null)[] = [null, null, null];
+  abilityIds: (AbilityId | null)[] = [null, null, null];
   private glanceT = 0;
   // ---- prueba v2: estados e indicadores junto al jugador ----
   private acidStackT = 0;
@@ -227,7 +245,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.v3s = { mats: 0, trunks: 0, muestras: 0, grenades: 0, grenadeHits: 0, mutated: 0, screamsSpawned: 0 };
     this.v31s = { eliteKills: 0, eliteDrops: 0, traperoSold: 0, traperoBought: 0 };
     this.v42s = { packs: 0, bossKills: 0, spawned: { congelado: 0, lobo: 0, escarcha: 0, matriarca: 0 } };
-    this.stats = { shots: 0, swaps: 0, attacksDuringSwap: 0, behindWarn: 0, behindVibes: 0, hitStops: 0, crits: 0, critsTaken: 0, doorsOpened: 0, arrowsRecovered: 0, impactNoises: 0, clavarShots: 0, lootPaused: 0, iosKick: 0, backstabs: 0, executes: 0, debrisSteps: 0, autoSkippedUnaware: 0 };
+    this.stats = { shots: 0, swaps: 0, attacksDuringSwap: 0, behindWarn: 0, behindVibes: 0, hitStops: 0, crits: 0, critsTaken: 0, doorsOpened: 0, arrowsRecovered: 0, impactNoises: 0, clavarShots: 0, lootPaused: 0, iosKick: 0, backstabs: 0, executes: 0, debrisSteps: 0, autoSkippedUnaware: 0, ...RaidScene.v4dStats() };
   }
 
   // ---------- RaidCtx ----------
@@ -283,11 +301,13 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   /** ¿Lo ve el jugador? (cono de 220° + línea de visión; en la niebla = no visible). */
   /** v4b: tope de vista de los enemigos (Ventisca). */
   sightCapTiles() { return this.snowR?.sightCap() ?? 99; }
+  /** v4d: opacidad que le queda a una silueta fantasma (misma curva que la memoria de la niebla). */
+  ghostFade(age: number) { return this.vision ? this.vision.ghostFade(age) : Math.max(0, 1 - age / LINGER.sec); }
   visible(x: number, y: number, pad = 0) { return this.vision ? this.vision.sees(x, y, pad) : true; }
 
   create() {
     // v4b: el mapa elegido (si aún no tiene generador, El Arrabal)
-    { const want = mapDef(this.snap.mapDefId); this.map = generateMap(this.snap.seed, want.generador ? { def: want } : {}); }
+    this.map = mapForRaid(this.snap.seed, this.snap.mapDefId);
     setLootMap(this.mapDef);
     const s = this.snap;
     // Guardado de la v1 (otro mapa): se repuebla en el mapa nuevo conservando equipo, vida y tiempo.
@@ -342,8 +362,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       walls: () => this.walls, enemies: () => this.enemies.list,
       onHit: (pj, e) => this.onProjHit(pj, e),
       // v3.1 §9.1: el fallo se queda SIEMPRE en el suelo y hace un ruido pequeño donde cae (distrae)
-      onLand: (pj, x, y) => { this.dropArrow(x, y, 1, pj.kind === 'virote' ? 'virotes' : 'flechas'); if (BOWS.impactNoiseTiles > 0) { this.noise(x, y, BOWS.impactNoiseTiles); this.stats.impactNoises++; } },
-      onWall: (pj, x, y) => { if (pj.kind === 'bala') this.fx.impact(x, y); },
+      onLand: (pj, x, y) => { this.dropArrow(x, y, 1, 'flechas'); if (BOWS.impactNoiseTiles > 0) { this.noise(x, y, BOWS.impactNoiseTiles); this.stats.impactNoises++; } },
+      onWall: (pj, x, y) => { if (pj.kind === 'bala' || pj.kind === 'perdigon') this.fx.impact(x, y); },
     });
 
     this.setupSewers();
@@ -385,7 +405,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     cam.setBackgroundColor('#0d0e10');
     this.applyZoom();
     this.scale.on('resize', this.onResize, this);
-    this.vision = new Vision(this, () => this.walls, () => this.wallIndex);
+    // v4d: niebla v2 (una textura a 1/4, memoria continua); FOG2.enabled = false → niebla anterior
+    this.vision = FOG2.enabled ? new VisionV2(this, () => this.walls, () => this.wallIndex) : new Vision(this, () => this.walls, () => this.wallIndex);
     this.snowR = new SnowRules(this);
     this.facing = -Math.PI / 2; this.viewFacing = this.facing;
     this.vision.update(this.player.x, this.player.y, this.facing, this.wallsVersion, this.snap.elapsed);
@@ -456,7 +477,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     hud.abilities.forEach((b, i) => b.onTap = () => this.useAbility(i));
     hud.quick.onTap = () => this.useQuick();
     hud.quick2.onTap = () => this.useQuick(2);
-    hud.quick2.setShown(false);
+    hud.quick2.setShown(HUD4D.fixedHeal);
     hud.swap.onTap = () => { if (this.execTarget) this.execute(); else this.swapWeapon(); };
     hud.pauseBtn.onTap = () => this.setPaused(true, 'usuario');
     hud.bagBtn.onTap = () => this.toggleInventory();
@@ -958,6 +979,40 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     for (let i = 0; i < Math.min(n, room); i++) this.markWave(this.spawnAt(type, p.x + (Math.random() - 0.5) * TILE * 2, p.y + (Math.random() - 0.5) * TILE * 2));
   }
   /** v4b: enemigo de oleada/horda (30 % de experiencia); la manada de lobos que crea también. */
+  /** v4d: ritmo del reloj de la niebla (×2 desde el minuto 13). */
+  fogRate() { return this.snap.elapsed >= LATE_RAID.fogFastFromMinute * 60 ? LATE_RAID.fogFastMult : 1; }
+  /** v4d: avanza y devuelve el reloj de la niebla (guardado en la instantánea; sin él, = tiempo transcurrido). */
+  private fogClock(dt: number) {
+    const s = this.snap;
+    s.fogT = (s.fogT ?? s.elapsed - dt) + dt * this.fogRate();
+    return s.fogT;
+  }
+  /** v4d §7: aviso «Se acercan cazadores» (min 10) y un cazador élite cada 60 s desde el minuto 11. */
+  private lateRaid(dt: number) {
+    const s = this.snap, L = LATE_RAID;
+    if (!s.huntersWarned && s.elapsed >= L.warnMinute * 60) { s.huntersWarned = true; this.hud?.toast('⚠ ' + L.warnText, 4); }
+    if (s.elapsed < L.huntersFromMinute * 60) return;
+    s.hunterT = (s.hunterT ?? 0) - dt;
+    if (s.hunterT > 0) return;
+    s.hunterT = L.hunterEverySec;
+    this.spawnHunter();
+  }
+  /** Cazador: élite fuera de pantalla que va directo a tu último ruido (o a donde estás si no has hecho ruido). */
+  spawnHunter() {
+    const L = LATE_RAID;
+    const last = this.noiseLog[this.noiseLog.length - 1];
+    const gx = last ? last.x : this.player.x, gy = last ? last.y : this.player.y;
+    const p = this.offscreenPoint(L.hunterSpawnTiles[0], L.hunterSpawnTiles[1]);
+    if (!p) return null;
+    const type = L.hunterTypes[Math.floor(Math.random() * L.hunterTypes.length)] as EnemyType;
+    const e = this.spawnAt(type, p.x, p.y, undefined, true);
+    if (!e.elite) this.enemies.makeElite(e);
+    e.hunter = true;
+    if (isUnaware(e)) { e.state = 'investigate'; e.meter = 0.6; e.goal = { x: gx, y: gy, until: this.snap.elapsed + L.hunterEverySec }; e.susPhase = 'go'; e.pauseT = 0; e.turnTo = null; }
+    this.stats.hunters++;
+    this.stats.hunterLog.push({ t: this.snap.elapsed, type, gx, gy }); if (this.stats.hunterLog.length > 20) this.stats.hunterLog.shift();
+    return e;
+  }
   private markWave(e: Enemy) { e.wave = true; for (const o of this.enemies.list) if (o.packOf === e) o.wave = true; return e; }
 
   /** Ruido en el mundo. Desde el minuto 10, el ruido fuerte atrae hordas. */
@@ -1195,6 +1250,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     p.x = Math.round(this.player.x); p.y = Math.round(this.player.y);
     s.enemies = this.enemies.snapshot();
     s.fx = { ...(s.fx ?? {}), grabImm: this.enemies.v3.grabImm };
+    if (this.snowR) s.snowState = this.snowR.toSnap(); // v4c: ventisca y huellas
     this.syncArrows();
     s.saves++;
   }
@@ -1233,7 +1289,12 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
 
   /** v3.1 §9.2: variación de daño + crítico del jugador (sustituye el crítico de la v2). */
   /** v4.0: Fuerza (+daño cuerpo a cuerpo) y Pulso (+crítico a distancia). */
-  private rollCrit(dmg: number) { const melee = this.playerMelee(); return rollDamage(dmg * (melee ? 1 + this.att('fuerza', 'melee') : 1), 'player', Math.random, melee ? 0 : this.att('pulso', 'crit')); }
+  private rollCrit(dmg: number) {
+    const melee = this.playerMelee();
+    // v4d «Ojo de halcón» (arco): +50 % de probabilidad de crítico
+    const hawk = !melee && this.weaponId() === 'arco' && this.buffOn('ojo_halcon') ? WEAPON_BUFFS.ojo_halcon.critAdd : 0;
+    return rollDamage(dmg * (melee ? 1 + this.att('fuerza', 'melee') : 1), 'player', Math.random, melee ? 0 : this.att('pulso', 'crit') + hawk);
+  }
 
   /** Puñalada / Ejecutar / disparo apuntado a un desprevenido: ×2,5 (STEALTH.backstabMult), siempre crítico. */
   private backstabDmg(base: number) { const c = DAMAGE.player; return (DAMAGE.backstabRolls ? base * (c.minFrac + (c.maxFrac - c.minFrac) * Math.random()) : base) * STEALTH.backstabMult; }
@@ -1326,14 +1387,15 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   private weaponId() { return this.snap.loadout.arma?.def ?? 'punos'; }
   /** Arco o ballesta (proyectil físico recuperable, munición propia). */
   private isBow() { const d = this.snap.loadout.arma?.def; return d === 'arco' || d === 'ballesta'; }
-  private bowAmmo() { return this.snap.loadout.arma?.def === 'ballesta' ? 'virotes' : 'flechas'; }
+  /** v4d §7: arco y ballesta comparten flechas (ya no hay virotes). */
+  private bowAmmo() { return 'flechas'; }
   private arrowsLeft() { const lo = this.snap.loadout, id = this.bowAmmo(); return countOf(lo.mochila, id) + this.pocketCount(id); }
   private takeArrow() {
     const lo = this.snap.loadout, id = this.bowAmmo();
     if (consume(lo.mochila, id, 1) > 0) return true;
     return this.pocketTake(id);
   }
-  private noAmmoText() { return this.bowAmmo() === 'virotes' ? 'Sin virotes' : 'Sin flechas'; }
+  private noAmmoText() { return 'Sin flechas'; }
   /** v3: bolsillo seguro con varias casillas (bolsillo + bolsilloExtra). */
   pocketList(): ItemInst[] { const lo = this.snap.loadout; return [lo.bolsillo ?? null, ...(lo.bolsilloExtra ?? [])].filter((x): x is ItemInst => !!x); }
   pocketCount(id: string) { return this.pocketList().filter(i => i.def === id).reduce((s, i) => s + i.qty, 0); }
@@ -1350,16 +1412,28 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   /** ¿Puede disparar ya? Gestiona recarga y munición (cargador / flechas). Devuelve false si no. */
   private readyRanged(dt: number): boolean {
     const lo = this.snap.loadout, ws = weaponStats(lo.arma), p = this.snap.player;
+    const ammoId = magAmmo(ws), shells = lo.arma?.def === 'escopeta';
     if (p.reload > 0) {
       p.reload -= dt;
-      if (p.reload <= 0 && lo.arma) { const need = (ws.mag ?? 0) - (lo.arma.mag ?? 0); lo.arma.mag = (lo.arma.mag ?? 0) + consume(lo.mochila, 'municion', need); this.host.refreshInventory(); }
-      return false;
+      if (p.reload <= 0 && lo.arma) {
+        if (shells) {
+          // v4d: la escopeta recarga cartucho a cartucho (0,5 s cada uno) mientras falten y te queden
+          lo.arma.mag = (lo.arma.mag ?? 0) + consume(lo.mochila, ammoId, 1);
+          p.reload = (lo.arma.mag ?? 0) < (ws.mag ?? 0) && countOf(lo.mochila, ammoId) > 0 ? this.shellReloadSec() : 0;
+          this.stats.shellsLoaded++;
+        } else { const need = (ws.mag ?? 0) - (lo.arma.mag ?? 0); lo.arma.mag = (lo.arma.mag ?? 0) + consume(lo.mochila, ammoId, need); }
+        this.host.refreshInventory();
+      }
+      // escopeta: con algún cartucho dentro se puede disparar (corta la recarga)
+      if (!(shells && (lo.arma?.mag ?? 0) > 0)) return false;
     }
     if (ws.mag && lo.arma && (lo.arma.mag ?? 0) <= 0) {
-      if (countOf(lo.mochila, 'municion') > 0) p.reload = (ws.reloadSec ?? 1.5) * (1 - this.att('pulso', 'reload'));
-      else if (!this.noAmmoWarned) { this.noAmmoWarned = true; this.hud?.toast('¡Sin munición!'); }
+      if (countOf(lo.mochila, ammoId) > 0) p.reload = shells ? this.shellReloadSec() : (ws.reloadSec ?? 1.5) * (1 - this.att('pulso', 'reload'));
+      else if (!this.noAmmoWarned) { this.noAmmoWarned = true; this.hud?.toast(shells ? '¡Sin cartuchos!' : '¡Sin munición!'); }
       return false;
     }
+    // escopeta: sin apuntar y con hueco en el cargador, va metiendo cartuchos
+    if (shells && lo.arma && p.reload <= 0 && !this.aim?.aiming && (lo.arma.mag ?? 0) < (ws.mag ?? 0) && countOf(lo.mochila, ammoId) > 0) p.reload = this.shellReloadSec();
     if (this.isBow() && this.arrowsLeft() <= 0) {
       if (!this.noAmmoWarned) { this.noAmmoWarned = true; this.hud?.toast(this.noAmmoText()); }
       return false;
@@ -1367,19 +1441,69 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     return true;
   }
 
-  /** Dispara un proyectil real hacia `ang`. */
+  /** v4d §7: munición de un arma a distancia: "8 / 24" (cargador / reserva) o "14" (flechas). null = cuerpo a cuerpo. */
+  ammoOf(w: ItemInst | null) {
+    if (!w) return null;
+    const ws = weaponStats(w);
+    if (ws.melee) return null;
+    const lo = this.snap.loadout;
+    if (ws.mag) { const id = magAmmo(ws), reserve = countOf(lo.mochila, id) + this.pocketCount(id), mag = w.mag ?? 0; return { text: `${mag} / ${reserve}`, mag, reserve, total: mag + reserve }; }
+    const n = countOf(lo.mochila, 'flechas') + this.pocketCount('flechas');
+    return { text: String(n), mag: null, reserve: n, total: n };
+  }
+  /** v4d: recarga de un cartucho de escopeta (s). */
+  private shellReloadSec() { return SHOTGUN.reloadPerShellSec * (1 - this.att('pulso', 'reload')); }
+  /** v4d: ¿está activa esta habilidad temporal? */
+  buffOn(id: AbilityId) { return (this.snap.player.buffs?.[id] ?? 0) > 0; }
+  /** v4d §7: tiempo entre disparos del arma a distancia (pistola 0,8 s, arco 1,4, ballesta 1,8, escopeta 1,2). */
+  rangedInterval(auto = false) {
+    const lo = this.snap.loadout, ws = weaponStats(lo.arma), id = this.weaponId();
+    const base = RANGED.intervalSec[id];
+    let iv = base !== undefined ? base / (lo.arma?.traits?.includes('cadencia') ? 1.1 : 1) : 1 / ws.aps;
+    if (id === 'pistola' && this.buffOn('rafaga')) iv *= WEAPON_BUFFS.rafaga.intervalMult;
+    if (auto) iv /= AIM.autoFireRateMult;
+    return iv;
+  }
+
+  /** Dispara un proyectil real hacia `ang` (escopeta: 6 perdigones en cono). */
   private fireRanged(ang: number, auto: boolean) {
     const lo = this.snap.loadout, ws = weaponStats(lo.arma);
     if (this.swapT > 0) { this.stats.attacksDuringSwap++; return; }
     if (ws.mag && lo.arma) { lo.arma.mag!--; }
     if (this.isBow() && !this.takeArrow()) return;
     this.noAmmoWarned = false;
-    this.attackT = 1 / (ws.aps * (auto ? AIM.autoFireRateMult : 1));
+    this.attackT = this.rangedInterval(auto);
+    this.stats.fireLog.push({ t: this.snap.elapsed, w: this.weaponId(), auto }); if (this.stats.fireLog.length > 60) this.stats.fireLog.shift();
+    if (auto) this.stats.autoShots++;
+    // v4d: una sola tirada de crítico por disparo (en la escopeta vale para todos los perdigones)
     const { dmg, crit } = this.rollCrit(ws.dmg);
     const ox = this.player.x + Math.cos(ang) * 20, oy = this.player.y + Math.sin(ang) * 20;
-    const pj: Proj = this.proj.fire(this.isBow() ? (this.bowAmmo() === 'virotes' ? 'virote' : 'flecha') : 'bala', ox, oy, ang, ws.rangeTiles * TILE, dmg, crit, this.weaponId(), !auto);
-    pj.base = ws.dmg;
-    if (this.clavarArmed && pj.kind === 'virote') { pj.pierce = BOWS.clavarPierce; this.clavarArmed = false; this.stats.clavarShots++; }
+    if (this.weaponId() === 'escopeta') {
+      this.snap.player.reload = 0; // disparar corta la recarga cartucho a cartucho
+      const post = this.buffOn('postas');
+      const cone = Phaser.Math.DegToRad(post ? WEAPON_BUFFS.postas.coneDeg : SHOTGUN.coneDeg);
+      const range = ws.rangeTiles * TILE * (post ? WEAPON_BUFFS.postas.rangeMult : 1);
+      const n = SHOTGUN.pellets;
+      const angs: number[] = [];
+      for (let k = 0; k < n; k++) {
+        const a = ang + cone * ((k + 0.5) / n - 0.5) + (Math.random() - 0.5) * cone / n * 0.6;
+        angs.push(a);
+        const pj = this.proj.fire('perdigon', ox, oy, a, range, dmg, crit, 'escopeta', !auto);
+        pj.base = ws.dmg;
+      }
+      this.stats.shotgun.push({ t: this.snap.elapsed, crit, dmg, coneDeg: Phaser.Math.RadToDeg(cone), rangeTiles: range / TILE, angs: angs.map(a => Phaser.Math.RadToDeg(a - ang)) }); if (this.stats.shotgun.length > 30) this.stats.shotgun.shift();
+      if (this.textures.exists('v4/fx_cono_escopeta')) {
+        const w = 2 * range * Math.tan(cone / 2) * 1.15;
+        const fx = this.add.image(this.player.x, this.player.y, 'v4/fx_cono_escopeta').setOrigin(0.5, 0.97).setRotation(ang + Math.PI / 2).setDisplaySize(w, range).setDepth(11.5).setAlpha(0.9);
+        this.tweens.add({ targets: fx, alpha: 0, duration: 160, onComplete: () => fx.destroy() });
+      }
+    } else {
+      const pj: Proj = this.proj.fire(this.isBow() ? (this.weaponId() === 'ballesta' ? 'virote' : 'flecha') : 'bala', ox, oy, ang, ws.rangeTiles * TILE, dmg, crit, this.weaponId(), !auto);
+      pj.base = ws.dmg;
+      // v4d «Perforación»: las flechas de la ballesta atraviesan; alcanzan hasta 3 enemigos
+      if (this.weaponId() === 'ballesta' && this.buffOn('perforacion')) { pj.pierce = WEAPON_BUFFS.perforacion.pierce - 1; this.stats.pierceShots++; }
+      else if (this.clavarArmed && pj.kind === 'virote') { pj.pierce = BOWS.clavarPierce; this.clavarArmed = false; this.stats.clavarShots++; }
+    }
     this.stats.shots++;
     if (!this.isBow()) this.fx.muzzle(this.player.x + Math.cos(ang) * 34, this.player.y + Math.sin(ang) * 34, ang);
     // retroceso: en Android vibración corta; en iOS (sin vibración) más retroceso del arma + golpe y sacudida de cámara
@@ -1402,13 +1526,21 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const ang = Math.atan2(pj.vy, pj.vx);
     // v3.1: si acierta, el 60 % cae junto al enemigo al morir (atravesado por «Clavar»: no se queda clavado)
     const through = pj.pierce > 0 || !!pj.pierced?.has(e);
-    if (isPhysical(pj.kind) && !through && Math.random() < BOWS.recoverOnHitChance) { const st = this.stuck.get(e) ?? {}; const id = pj.kind === 'virote' ? 'virotes' : 'flechas'; st[id] = (st[id] ?? 0) + 1; this.stuck.set(e, st); }
+    if (isPhysical(pj.kind) && !through && Math.random() < BOWS.recoverOnHitChance) { const st = this.stuck.get(e) ?? {}; const id = 'flechas'; st[id] = (st[id] ?? 0) + 1; this.stuck.set(e, st); }
     // sigilo: un disparo apuntado (joystick derecho) a un desprevenido aplica x2,5 y crítico
     if (pj.aimed && isUnaware(e)) {
       this.dealDamage(e, this.backstabDmg(pj.base), ang, pj.weapon, true, JUICE.hitStopHeavyMs, true);
       return;
     }
-    this.dealDamage(e, pj.dmg, ang, pj.weapon, pj.crit, pj.kind === 'bala' ? 50 : JUICE.hitStopMs);
+    // v4d: perdigones al 60 % a partir de 3 casillas
+    let dmg = pj.dmg;
+    if (pj.kind === 'perdigon') {
+      const d = Math.hypot(pj.x - pj.ox, pj.y - pj.oy);
+      const far = d > SHOTGUN.falloffFromTiles * TILE;
+      if (far) dmg *= SHOTGUN.falloffMult;
+      this.stats.pellets.push({ t: this.snap.elapsed, d: d / TILE, dmg, raw: pj.dmg, crit: pj.crit, far }); if (this.stats.pellets.length > 120) this.stats.pellets.shift();
+    }
+    this.dealDamage(e, dmg, ang, pj.weapon, pj.crit, pj.kind === 'bala' ? 50 : pj.kind === 'perdigon' ? 30 : JUICE.hitStopMs);
   }
 
   /** Desviación actual del disparo (grados): empieza en 9° y se estabiliza a 1,2° tras 0,4 s quieto. */
@@ -1453,7 +1585,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       } else {
         this.steadyT = 0; this.fireLatch = false;
         // sin tocar el joystick de apuntar: disparo automático (más lento) a lo que se ve en pantalla
-        if (AIM.autoFireWhenIdle && !aim.active && ready && this.attackT <= 0) {
+        // v4d §7: las armas a distancia ya no disparan solas (solo con el joystick derecho)
+        if (RANGED.autoFire && AIM.autoFireWhenIdle && !aim.active && ready && this.attackT <= 0) {
           const t = this.pickTarget(ws.rangeTiles * TILE, false);
           if (t) { const a = Math.atan2(t.y - this.player.y, t.x - this.player.x); this.facing = a; this.fireRanged(a, true); }
         }
@@ -1537,7 +1670,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   refreshAbilities() {
     const lo = this.snap.loadout;
     const wa = lo.arma ? def(lo.arma).weapon?.ability ?? null : null;
-    this.abilityIds = [wa, lo.torso ? def(lo.torso).armor?.ability ?? null : null, lo.cabeza ? def(lo.cabeza).armor?.ability ?? null : null];
+    // v4d §7: de izquierda a derecha: habilidad del arma (siempre la primera), del casco y del chaleco
+    this.abilityIds = [wa, lo.cabeza ? def(lo.cabeza).armor?.ability ?? null : null, lo.torso ? def(lo.torso).armor?.ability ?? null : null];
   }
 
   /** Habilidades: las direccionales (golpe, perforante, ráfaga) salen hacia donde miras. */
@@ -1550,7 +1684,16 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const lo = this.snap.loadout;
     const ws = weaponStats(lo.arma);
     const px = this.player.x, py = this.player.y;
-    if (this.swapT > 0 && (id === 'golpe' || id === 'perforante' || id === 'rafaga' || id === 'torbellino')) { this.stats.attacksDuringSwap++; return; }
+    if (this.swapT > 0 && (id === 'golpe' || id === 'perforante' || id === 'torbellino')) { this.stats.attacksDuringSwap++; return; }
+    // v4d §7: habilidades de las armas a distancia = efectos temporales (no disparan)
+    if (isBuff(id)) {
+      p.buffs ??= {};
+      p.buffs[id] = WEAPON_BUFFS[id].sec;
+      p.cds[id] = ABILITIES[id].cooldown;
+      this.stats.buffsUsed++;
+      this.hud?.toast(`${WEAPON_BUFFS[id].nombre}: ${WEAPON_BUFFS[id].sec} s`, 1.2);
+      return;
+    }
     let ok = true;
     switch (id) {
       case 'golpe': {
@@ -1597,15 +1740,6 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
         this.hud?.toast('Clavar: el siguiente virote atraviesa', 1.2);
         break;
       }
-      case 'rafaga': {
-        if (!lo.arma || (lo.arma.mag ?? 0) <= 0) { ok = false; this.hud?.toast('Cargador vacío', 1); break; }
-        for (let k = 0; k < 5; k++) this.time.delayedCall(k * 90, () => {
-          if (this.ended || this.swapT > 0 || !lo.arma || (lo.arma.mag ?? 0) <= 0 || lo.arma.def !== 'pistola') return;
-          this.attackT = 0;
-          this.fireRanged(this.facing + (Math.random() - 0.5) * Phaser.Math.DegToRad(6), false);
-        });
-        break;
-      }
       case 'aguantar': p.aguantar = 3; break; // sin texto arriba: icono sobre el personaje (§8.4)
       case 'escanear': this.scanT = PRUEBA_V2.scanSec; break;
     }
@@ -1613,11 +1747,12 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   }
   // ---------- Consumibles ----------
   useQuick(slot: 1 | 2 = 1) {
-    if (slot === 2 && quickSlots(this.snap.loadout) < 2) return;
+    if (slot === 2 && !HUD4D.fixedHeal && quickSlots(this.snap.loadout) < 2) return; // v4d: el botiquín siempre tiene su botón
     this.useConsumable(this.quickItem(slot), true);
   }
   /** Consumible de cada botón rápido: el 1.º el preferido (o el otro si no tienes); el 2.º (v4, mochila), el otro. */
   quickItem(slot: 1 | 2): string {
+    if (HUD4D.fixedHeal) return slot === 1 ? 'vendaje' : 'botiquin'; // v4d §7: un botón para cada uno
     const pref = this.settings.rapido;
     const other = pref === 'vendaje' ? 'botiquin' : 'vendaje';
     const first = this.hasItem(pref) ? pref : other;
@@ -2352,8 +2487,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
 
     // visión (cono hacia donde miras) y muñeco del jugador
     // v3.1 §9.3: la mirada (cono) gira como mucho LINGER.maxTurnDegPerSec, también al apuntar o con giros instantáneos
-    this.viewFacing = Phaser.Math.Angle.RotateTo(this.viewFacing, this.facing, Phaser.Math.DegToRad(LINGER.maxTurnDegPerSec) * dt);
-    this.vision!.update(this.player.x, this.player.y, this.viewFacing, this.wallsVersion, this.snap.elapsed);
+    this.viewFacing = Phaser.Math.Angle.RotateTo(this.viewFacing, this.facing, Phaser.Math.DegToRad(FOG2.enabled ? FOG2.maxTurnDegPerSec : LINGER.maxTurnDegPerSec) * dt);
+    this.vision!.update(this.player.x, this.player.y, this.viewFacing, this.wallsVersion, this.snap.elapsed, dt);
     const body = this.player.body as Phaser.Physics.Arcade.Body;
     this.rig.sneaking = this.moveTier === 'sigilo';
     this.rig.update(dt, this.player.x, this.player.y, this.facing, Math.hypot(body.velocity.x, body.velocity.y) / Math.max(1, max), true);
@@ -2400,6 +2535,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
 
     // cooldowns, curación, aguantar
     for (const id of Object.keys(p.cds) as AbilityId[]) { p.cds[id] = Math.max(0, (p.cds[id] ?? 0) - dt); }
+    if (p.buffs) for (const id of Object.keys(p.buffs) as AbilityId[]) { const v = (p.buffs[id] ?? 0) - dt; if (v > 0) p.buffs[id] = v; else delete p.buffs[id]; }
     if (p.aguantar > 0) p.aguantar -= dt;
     if (p.healLeft > 0) { const h = Math.min(p.healLeft, p.healRate * dt); p.healLeft -= h; p.hp = Math.min(PLAYER_MAX_HP, p.hp + h); if (p.hp >= PLAYER_MAX_HP) p.healLeft = 0; }
     this.updateApply(dt);
@@ -2431,10 +2567,14 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     { const c = this.chill.t > 0; if (c !== this.chillTinted) { this.chillTinted = c; this.rig?.setTint(c ? 0xbfe6ff : null); } }
     if (this.ended) return;
 
-    // niebla tóxica
-    if (s.elapsed >= DIFFICULTY.fogWarningSeconds && !this.warned13) { this.warned13 = true; this.hud.toast('⚠ La niebla tóxica llega en 2 minutos', 4); }
-    if (s.elapsed >= DIFFICULTY.raidSeconds) {
-      const over = s.elapsed - DIFFICULTY.raidSeconds;
+    // v4d §7: cazadores (aviso en el minuto 10; desde el 11, 1 élite cada 60 s a por tu último ruido)
+    this.lateRaid(dt);
+    if (this.ended) return;
+    // niebla tóxica (v4d: desde el minuto 13 avanza el doble de rápido → reloj propio de la niebla)
+    const fogT = this.fogClock(dt);
+    if (s.elapsed >= DIFFICULTY.fogWarningSeconds && !this.warned13) { this.warned13 = true; const left = Math.max(0, DIFFICULTY.raidSeconds - fogT) / this.fogRate(); this.hud.toast(`⚠ La niebla tóxica avanza el doble de rápido: llega en ${Math.max(1, Math.round(left / 60))} min`, 4); }
+    if (fogT >= DIFFICULTY.raidSeconds) {
+      const over = fogT - DIFFICULTY.raidSeconds;
       const pct = DIFFICULTY.fogDpsPct + Math.floor(over / 30) * DIFFICULTY.fogDpsGrowthPctPer30s;
       this.damagePlayer((pct / 100) * PLAYER_MAX_HP * dt, 'Niebla tóxica', false);
       this.hud.fog.fillAlpha = Math.min(0.45, 0.18 + over / 300);
@@ -2483,25 +2623,29 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const ws = weaponStats(lo.arma);
     this.hud.setHp(p.hp, PLAYER_MAX_HP, totalProtection(lo));
     { const pr = this.host?.saveData?.()?.prog; if (pr) this.hud.setLevel(pr.level, pr.free, s.elapsed); }
-    const remain = Math.max(0, DIFFICULTY.raidSeconds - s.elapsed);
+    const remain = Math.max(0, DIFFICULTY.raidSeconds - (s.fogT ?? s.elapsed)) / this.fogRate();
     this.hud.timer.setText(remain > 0 ? `${Math.floor(remain / 60)}:${String(Math.floor(remain % 60)).padStart(2, '0')}` : 'NIEBLA').setColor(remain < 120 ? '#ff3cc8' : '#e8e2d0');
-    const ammo = ws.mag && lo.arma ? `  ·  ${p.reload > 0 ? 'recargando' : lo.arma.mag ?? 0}/${countOf(lo.mochila, 'municion')}` : this.isBow() ? `  ·  ${this.bowAmmo()} ${this.arrowsLeft()}${this.clavarArmed ? ' · Clavar' : ''}` : '';
+    const ammo = ws.mag && lo.arma ? `  ·  ${p.reload > 0 ? 'recargando' : lo.arma.mag ?? 0}/${countOf(lo.mochila, magAmmo(ws))}` : this.isBow() ? `  ·  ${this.bowAmmo()} ${this.arrowsLeft()}${this.clavarArmed ? ' · Clavar' : ''}` : '';
     const sm = this.spd(lo);
     this.hud.info.setText(`${lo.arma ? def(lo.arma).nombre : 'Puños'}${ammo}  ·  min ${Math.floor(minute)}${sm < 0.999 ? `  ·  vel ${Math.round(sm * 100)}%` : ''}${p.healLeft > 0 ? '  ·  curando' : ''}`);
     this.abilityIds.forEach((id, i) => {
       const b = this.hud!.abilities[i];
       if (!id) b.set({ icon: null, label: '', cd: 0, maxCd: 0, enabled: false });
-      else b.set({ icon: ABILITIES[id].icon, label: ABILITIES[id].nombre, cd: p.cds[id] ?? 0, maxCd: ABILITIES[id].cooldown, enabled: this.swapT <= 0 && (id !== 'rafaga' || (lo.arma?.mag ?? 0) > 0) });
+      else {
+        const on = p.buffs?.[id] ?? 0; // v4d: habilidad temporal activa → segundos que le quedan
+        b.set({ icon: ABILITIES[id].icon, label: ABILITIES[id].nombre, cd: on > 0 ? 0 : p.cds[id] ?? 0, maxCd: ABILITIES[id].cooldown, enabled: this.swapT <= 0, badge: on > 0 ? Math.ceil(on) + 's' : undefined });
+      }
     });
     const qid = this.quickItem(1);
     const qn = countOf(lo.mochila, qid) + this.pocketCount(qid);
     this.hud.quick.set({ icon: ITEMS[qid].icon, label: ITEMS[qid].nombre, cd: p.healLeft > 0 ? p.healLeft : 0, maxCd: ITEMS[qid].heal!.amount, enabled: qn > 0, badge: String(qn) });
-    const q2 = quickSlots(lo) >= 2;
+    const q2 = HUD4D.fixedHeal || quickSlots(lo) >= 2;
     this.hud.quick2.setShown(q2);
     if (q2) { const id2 = this.quickItem(2), n2 = countOf(lo.mochila, id2) + this.pocketCount(id2); this.hud.quick2.set({ icon: ITEMS[id2].icon, label: ITEMS[id2].nombre, cd: p.healLeft > 0 ? p.healLeft : 0, maxCd: ITEMS[id2].heal!.amount, enabled: n2 > 0, badge: String(n2) }); }
     const rv = lo.reserva ?? null;
     if (this.execTarget) this.hud.swap.set({ icon: 'ui_ejecutar', label: 'Ejecutar', cd: 0, maxCd: 0, enabled: this.attackT <= 0 });
-    else this.hud.swap.set({ icon: rv ? ITEMS[rv.def].icon ?? null : null, label: rv ? 'Cambiar' : '', cd: this.swapT, maxCd: SWAP.sec, enabled: !!rv, badge: rv ? '⇄' : undefined });
+    else { const rn = rv ? this.ammoOf(rv) : null; this.hud.swap.set({ icon: rv ? ITEMS[rv.def].icon ?? null : null, label: rv ? 'Cambiar' : '', cd: this.swapT, maxCd: SWAP.sec, enabled: !!rv, badge: rv ? (rn ? String(rn.total) : '⇄') : undefined }); }
+    { const a = this.ammoOf(lo.arma ?? null); this.hud.setAmmo(a ? a.text : null, a ? a.total : 99); }
     this.hud.bagBtn.set({ icon: 'caja', label: '', cd: 0, maxCd: 0, enabled: true });
     this.hud.pauseBtn.set({ icon: null, label: '', cd: 0, maxCd: 0, enabled: true });
     // salidas: solo las vistas alguna vez en este mapa (o a la vista ahora); flechas de borde solo de las activas vistas

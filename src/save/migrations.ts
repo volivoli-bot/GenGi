@@ -96,7 +96,27 @@ export const MIGRATIONS: Record<number, (d: AnySave) => AnySave> = {
     if (out.activeRaid) out.activeRaid = { ...out.activeRaid, xp: out.activeRaid.xp ?? 0 };
     return out;
   },
+  /**
+   * 6 → 7 (v4d §7): se quitan los virotes; arco y ballesta comparten flechas. Cualquier virote del guardado (alijo, equipo,
+   * raid activa: mochila, bolsillos, contenedores y suelo; tiendas) pasa a ser flechas. Mismo número de unidades.
+   */
+  6: (d) => {
+    const out = virotesToFlechas({ ...d }) as AnySave;
+    out.saveVersion = 7;
+    return out;
+  },
 };
+
+/** v4d: recorre el guardado y convierte los virotes en flechas (objetos `{def:'virotes'}` y entradas de tienda `{id:'virotes'}`). */
+export function virotesToFlechas(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(virotesToFlechas);
+  if (!v || typeof v !== 'object') return v;
+  const o: AnySave = {};
+  for (const [k, x] of Object.entries(v as AnySave)) o[k] = virotesToFlechas(x);
+  if (o.def === 'virotes') o.def = 'flechas';
+  if (o.id === 'virotes' && ('qty' in o || 'left' in o || 'w' in o)) o.id = 'flechas';
+  return o;
+}
 
 /** Id estable de una partida a partir de su fecha de creación. */
 export function profileIdFor(createdAt: string) {

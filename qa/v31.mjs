@@ -24,7 +24,7 @@ window.__gt=()=>gengi.raid().snap.elapsed;
 window.__waitGame=sec=>new Promise(r=>{const t0=__gt();const f=()=>{if(__gt()-t0>=sec)r();else setTimeout(f,20)};f();});
 window.__open=(r=7)=>{const s=gengi.raid();let o=null;for(let k=r;k>=2&&!o;k--)o=s.openSpot(k);s.player.setPosition(o.x,o.y);s.vel.set(0,0);s.player.body.reset(o.x,o.y);return o;};
 window.__dummy=(type,dx,dy,f,hp,state)=>{const s=gengi.raid();const x=s.player.x+dx*T,y=s.player.y+dy*T;const e=s.spawnAt(type,x,y,undefined,false);e.state=state||'idle';e.meter=0;e.facing=f??0;e.turnT=1e9;e.wander?.set(0,0);if(hp){e.hp=e.maxHp=hp;}window.__pins.set(e,{x,y,f});return e;};
-window.__arm=(id,ammo,n=30)=>{const s=gengi.raid();const lo=s.snap.loadout;lo.arma={uid:'qa-w-'+id+Math.random(),def:id,rarity:'comun',qty:1};lo.mochila=lo.mochila.filter(i=>i.def!=='flechas'&&i.def!=='virotes');if(ammo)lo.mochila.push({uid:'qa-a'+Math.random(),def:ammo,rarity:'comun',qty:n});s.host.refreshInventory();s.swapT=0;s.applyLoadout?.();};
+window.__arm=(id,ammo,n=30)=>{const s=gengi.raid();if(ammo==='virotes')ammo='flechas'; /* v4d §7: arco y ballesta comparten flechas */const lo=s.snap.loadout;lo.arma={uid:'qa-w-'+id+Math.random(),def:id,rarity:'comun',qty:1};lo.mochila=lo.mochila.filter(i=>i.def!=='flechas'&&i.def!=='virotes');if(ammo)lo.mochila.push({uid:'qa-a'+Math.random(),def:ammo,rarity:'comun',qty:n});s.host.refreshInventory();s.swapT=0;s.applyLoadout?.();};
 window.__ammo=id=>{const lo=gengi.raid().snap.loadout;return lo.mochila.filter(i=>i.def===id).reduce((a,i)=>a+i.qty,0);};
 `;
 async function newRaid(){ await E(()=>{const s=gengi.raid();if(s&&!s.ended)s.host.endRaid('extraido',{exit:s.snap.exits[0]});}); await sleep(500); await E(()=>gengi.start()); await sleep(1600); try{await p.waitForFunction(()=>gengi.raid()&&gengi.raid().hud,{timeout:20000});}catch(err){console.log('newRaid falló',errs.slice(-5),await E(()=>({act:!!gengi.state().activeRaid,r:!!gengi.raid(),ended:gengi.raid()?.ended,ov:document.querySelector('.overlay,.card')?.textContent?.slice(0,80)})));throw err;} await E(setup); await E(()=>__calm()); }
@@ -43,7 +43,7 @@ const D=await E(()=>gengi.defs());
   return out;});
  ok('A2 flecha 7 casillas/s (336 px/s), virote 10 casillas/s (480 px/s)', r.arco.speed===336&&r.ballesta.speed===480, `flecha=${r.arco.speed} virote=${r.ballesta.speed}`);
  ok('A2 disparar no hace ruido; al caer sí (1,5 casillas donde cae)', r.arco.atPlayer===0&&r.ballesta.atPlayer===0&&r.arco.imp===1&&r.ballesta.imp===1&&r.arco.impact.every(n=>n.r===1.5&&n.d>2), JSON.stringify({arco:r.arco.impact,ballesta:r.ballesta.impact}));
- ok('A3 los fallos se quedan en el suelo (flecha/virote con brillo)', r.arco.ground===1&&r.ballesta.ground===1&&r.ballesta.gdef==='virotes', JSON.stringify({a:r.arco.ground,b:r.ballesta.ground,def:r.ballesta.gdef}));}
+ ok('A3 los fallos se quedan en el suelo (con brillo; v4d: la ballesta deja flechas)', r.arco.ground===1&&r.ballesta.ground===1&&r.ballesta.gdef==='flechas', JSON.stringify({a:r.arco.ground,b:r.ballesta.ground,def:r.ballesta.gdef}));}
 {const r=await E(async()=>{const s=gengi.raid();__calm();__open(8);__arm('arco','flechas',5);
   const e=__dummy('errante',3,0,Math.PI,50,'idle');await __waitGame(0.2);const a0=__ammo('flechas');
   s.fireRanged(0,false);await __waitGame(1.6);const out={hpLost:50-e.hp,dead:e.dead};
@@ -52,7 +52,7 @@ const D=await E(()=>gengi.defs());
   s.noise(e2.x+T*0.8,e2.y,1.5);await __waitGame(0.3);out.invest=e2.state;
   // recogida al pasar por encima, sin anillo
   __calm();const o=__open(8);s.dropArrow(o.x+T*2,o.y,3,'flechas');const g=s.groundArrows.length;const b0=__ammo('flechas');
-  s.player.body.reset(o.x+T*2,o.y);await __waitGame(0.4);out.pick={before:b0,after:__ammo('flechas'),ground:[g,s.groundArrows.length],ring:!!s.loot?.c};
+  s.player.body.reset(o.x+T*2,o.y);await __waitGame(0.4);out.pick={before:b0,after:__ammo('flechas'),ground:[g,s.groundArrows.length],ring:!!s.loot?.c&&Math.hypot((s.loot.c.x??0)-(o.x+T*2),(s.loot.c.y??0)-o.y)<T*0.6}; /* un contenedor del mapa que quede al lado no cuenta */
   return out;});
  ok('A3 un impacto ruidoso distrae: el enemigo va a mirar', r.invest==='investigate'||r.invest==='suspicious', `estado=${r.invest}`);
  ok('A3 recoger al pasar por encima (sin anillo de saqueo)', r.pick.after===r.pick.before+3&&r.pick.ground[1]===r.pick.ground[0]-1&&!r.pick.ring, JSON.stringify(r.pick));}
@@ -64,14 +64,15 @@ const D=await E(()=>gengi.defs());
   const near=s.groundArrows.filter(a=>Math.hypot(a.x-e.x,a.y-e.y)<T*1.5).reduce((a,x)=>a+x.qty,0);
   return {N,stuck,rate:stuck/N,dropped:s.groundArrows.reduce((a,x)=>a+x.qty,0)-g0,near:near-near0};});
  ok('A4 al acertar se recupera el 60 % (cae junto al cuerpo al morir)', Math.abs(r.rate-0.6)<0.04&&r.dropped===r.stuck&&r.near===r.stuck, JSON.stringify(r));}
-{const r=await E(async()=>{const s=gengi.raid();__calm();__open(9);__arm('ballesta','virotes',10);await __waitGame(0.2);
-  const ab=s.hud.abilities.map(b=>b.id??b.key??b.label?.text);let idx=-1;for(let i=0;i<3;i++){s.clavarArmed=false;s.abilityCd&&(s.abilityCd=[0,0,0]);s.useAbility(i);if(s.clavarArmed){idx=i;break;}}
+{const r=await E(async()=>{const s=gengi.raid();__calm();__open(9);__arm('ballesta','flechas',10);await __waitGame(0.2);const P=s.snap.player;
+  // v4d §7: «Clavar» pasa a ser «Perforación» (6 s): cada flecha atraviesa hasta 3 enemigos en total
+  const ab=s.hud.abilities.map(b=>b.id??b.key??b.label?.text);let idx=-1;for(let i=0;i<3;i++){P.buffs={};s.abilityCd&&(s.abilityCd=[0,0,0]);s.useAbility(i);if(P.buffs?.perforacion>0){idx=i;break;}}
   const es=[2.2,3.6,5,6.4].map(dx=>__dummy('errante',dx,0,Math.PI,1000,'chase'));await __waitGame(0.1);
-  if(!s.clavarArmed)s.clavarArmed=true;s.fireRanged(0,false);await __waitGame(1.2);
+  if(!(P.buffs?.perforacion>0)){P.buffs={...(P.buffs||{}),perforacion:6};}s.attackT=0;s.fireRanged(0,false);await __waitGame(1.2);
   const first=es.map(e=>Math.round(1000-e.hp));es.forEach(e=>{e.hp=1000});
-  s.attackT=0;s.fireRanged(0,false);await __waitGame(1.2);const second=es.map(e=>Math.round(1000-e.hp));
-  return {idx,ab,first,second,stuck:es.map(e=>s.stuck.get(e)?.virotes??0)};});
- ok('A5 «Clavar»: el virote atraviesa a 2 enemigos (se para en el 3.º); sin Clavar se para en el 1.º', r.first[0]>0&&r.first[1]>0&&r.first[2]>0&&r.first[3]===0&&r.second[0]>0&&r.second[1]===0, JSON.stringify(r));}
+  P.buffs={};s.attackT=0;s.fireRanged(0,false);await __waitGame(1.2);const second=es.map(e=>Math.round(1000-e.hp));
+  return {idx,ab,first,second,stuck:es.map(e=>s.stuck.get(e)?.flechas??0)};});
+ ok('A5 «Perforación» (v4d; antes «Clavar»): la flecha alcanza a 3 enemigos (se para en el 3.º); sin el efecto se para en el 1.º', r.idx>=0&&r.first[0]>0&&r.first[1]>0&&r.first[2]>0&&r.first[3]===0&&r.second[0]>0&&r.second[1]===0, JSON.stringify(r));}
 
 // ======================= B. Daño variable y críticos (§9.2) =======================
 {const r=await E(()=>{const f=(side)=>{const {out,mean}=gengi.rollDmg(100,side,40000);const nc=out.filter(o=>!o.crit).map(o=>o.dmg),c=out.filter(o=>o.crit).map(o=>o.dmg);
@@ -256,14 +257,15 @@ await newRaid();
  await E(()=>{gengi.cfg31.PLAYER_ART.version='v3';});await newRaid();}
 
 // ======================= H. Simulación de 15 min (élites) =======================
-{const r=await E(async()=>{const s=gengi.raid();__calm();window.__natural=true;gengi.cfg31.ELITE.chance=0.05;s.snap.spawnTimer=0;gengi.god(true);
+// v4d §7: los cazadores del minuto 11+ son aparte (v4d L3); aquí solo los élites al azar
+{const r=await E(async()=>{const s=gengi.raid();__calm();const LR=gengi.v4d().cfg.LATE_RAID;const hf=LR.huntersFromMinute;LR.huntersFromMinute=1e9;window.__natural=true;gengi.cfg31.ELITE.chance=0.05;s.snap.spawnTimer=0;gengi.god(true);
   const k0={...s.v31s};const typeCount={};let spawned=0;const seen=new Set();let maxAlive=0,maxEl=0;
   const dt=50;let t=performance.now();
   for(let i=0;i<15*60*1000/dt;i++){t+=dt;s.update(t,dt);s.hitStopT=0;
     if(i%20===0){for(const e of s.enemies.list){if(!seen.has(e)){seen.add(e);spawned++;typeCount[e.def.type]=(typeCount[e.def.type]||0)+1;}}maxAlive=Math.max(maxAlive,s.enemies.list.length);maxEl=Math.max(maxEl,s.enemies.eliteAlive());}
     if(i%200===0){for(const e of [...s.enemies.list])if(!e.dead&&Math.random()<0.5)s.dealDamage(e,1e9,0,'x',false);}
     if(s.ended)break;}
-  window.__natural=false;gengi.cfg31.ELITE.chance=0;
+  window.__natural=false;gengi.cfg31.ELITE.chance=0;LR.huntersFromMinute=hf;
   const drops=s.snap.containers.filter(c=>c.kind==='cadaver'||c.elite).length;
   return {min:+(s.snap.elapsed/60).toFixed(1),spawned,typeCount,elites:s.snap.elites,maxEl,kills:s.v31s.eliteKills-k0.eliteKills,drops:s.v31s.eliteDrops-k0.eliteDrops,maxAlive};});
  ok('H1 incursión simulada de 15 min: élites ≤6, nunca >3 vivos', r.elites<=6&&r.maxEl<=3&&r.min>=14.9, JSON.stringify(r));

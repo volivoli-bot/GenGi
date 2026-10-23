@@ -18,12 +18,18 @@ import { cashChapas, ensureFreeGear, equip, toBackpack } from './game/hubOps';
 import { TILE } from './config/constants';
 import { pocketSlots, stashSlots, stationLevel, deliverCrafts } from './game/refugio';
 import { emptyTrack, evalMissions, refreshAll } from './game/vendors';
-import { newRaidSnapshot, RaidHost, RaidScene } from './raid/RaidScene';
+import { mapForRaid, newRaidSnapshot, RaidHost, RaidScene } from './raid/RaidScene';
 import { LEGACY_SAMPLE } from './save/migrations';
 import { SaveManager } from './save/SaveManager';
 import type { ExitState, RaidLogEntry } from './save/types';
 import { chooseExits, EXIT_NAMES, helipadExit } from './raid/extraction';
 import * as V4CFG from './config/v4';
+import * as V4DCFG from './config/v4d';
+import { TABLE as LOOT_TABLE } from './game/loot';
+import { STAGGER as V2STAGGER } from './config/v2';
+import { migrate, virotesToFlechas } from './save/migrations';
+import { scaling } from './config/difficulty';
+import { killXpRaid } from './game/levels';
 import { checkLayout } from './raid/layoutCheck';
 import { bagOf, backpackSlots, itemWeight, loadNoiseTiles, quickSlots, speedMult, totalWeight, useTimeMult } from './game/inventory';
 import { generateMap, snowStripFor } from './raid/map';
@@ -99,8 +105,7 @@ export class App implements RaidHost {
     // v4b: Mesa de Mapas: solo se entra en un mapa permitido por nivel
     const sel = V4CFG.mapDef(d.mapSel ?? V4CFG.DEFAULT_MAP);
     if (!V4CFG.mapAllowed(sel, d.prog?.level ?? 1)) { toast(V4CFG.mapGate(sel, d.prog?.level ?? 1) === 'sin_construir' ? 'Ese mapa aún está en construcción' : `Requiere nivel ${sel.nivelMin}`); d.mapSel = V4CFG.DEFAULT_MAP; this.hub.render(); return; }
-    d.activeRaid = newRaidSnapshot(seed, d.loadout, valueIn);
-    d.activeRaid.mapDefId = sel.id;
+    d.activeRaid = newRaidSnapshot(seed, d.loadout, valueIn, sel.id);
     // v3: estaciones que afectan a la raid
     d.activeRaid.pocketSlots = pocketSlots(d);
     d.activeRaid.radio = stationLevel(d, 'radio');
@@ -305,7 +310,26 @@ export class App implements RaidHost {
       /** QA v4: guardado de la v3.2 (versión 4) sin mochila, con salidas vistas del mapa v2 y una raid activa del mapa viejo. */
       loadV4old: (withRaid = false) => { localStorage.setItem('gengi.save', JSON.stringify({ ...JSON.parse(JSON.stringify(app.save.data)), saveVersion: 4, seenExits: { 'ciudad-v2': [0, 2] }, loadout: { ...emptyLoadout(), arma: null, espalda: null, mochila: [makeItem('vendaje', 'comun', 2)] }, activeRaid: withRaid ? { ...newRaidSnapshot(4242, { ...emptyLoadout(), espalda: null, mochila: [makeItem('vendaje', 'comun', 1)] }, 0), mapId: 'ciudad-v2' } : null })); location.reload(); },
       /** v4.0 niveles: configuración, operaciones puras y atajos sobre el guardado. */
-      v4b: () => ({ app, save: app.save, cfg: V4CFG, setLevel: (n: number) => { prog(app.save.data).level = n; app.save.save(); if (!app.raidScene()) app.hub.render(); } }),
+      /** v4d (QA): configuración, estado de la incursión y ganchos (cazadores, máscara de la niebla, migración). */
+      v4d: () => {
+        const s = app.raidScene();
+        return {
+          cfg: V4DCFG, migrate, virotesToFlechas, scaling, killXpRaid, items: ITEMS, lootTable: LOOT_TABLE, rollItem, v3: V3CFG, stagger: V2STAGGER, maps: V4CFG.MAPS.map(m => ({ id: m.id, min: m.nivelMin, max: m.nivelMax })),
+          gate: (id: string, lv: number) => V4CFG.mapGate(V4CFG.mapDef(id), lv),
+          raid: s ? {
+            stats: s.stats, buffs: { ...(s.snap.player.buffs ?? {}) }, cds: { ...s.snap.player.cds }, abilityIds: [...s.abilityIds],
+            interval: s.rangedInterval(), ammo: s.ammoOf(s.snap.loadout.arma ?? null), reserveAmmo: s.ammoOf(s.snap.loadout.reserva ?? null),
+            mag: s.snap.loadout.arma?.mag ?? null, reload: s.snap.player.reload, weapon: s.snap.loadout.arma?.def ?? 'punos',
+            fogT: s.snap.fogT ?? s.snap.elapsed, fogRate: s.fogRate(), hunterT: s.snap.hunterT ?? null, huntersWarned: !!s.snap.huntersWarned,
+            hunters: s.enemies.list.filter(e => e.hunter && !e.dead).map(e => ({ type: e.def.type, elite: e.elite, state: e.state, goal: e.goal ? { x: e.goal.x, y: e.goal.y } : null, x: e.x, y: e.y })),
+            hud: (() => { const h = s.hud!; const b = (x: { bg: Phaser.GameObjects.Arc; badge: Phaser.GameObjects.Text; label: Phaser.GameObjects.Text }) => ({ x: x.bg.x, y: x.bg.y, r: x.bg.radius, vis: x.bg.visible, badge: x.badge.text, label: x.label.text });
+              return { abilities: h.abilities.map(b), quick: b(h.quick), quick2: b(h.quick2), swap: b(h.swap), aimRest: h.aimRest, ammo: { text: h.ammo.text, vis: h.ammo.visible, x: h.ammo.x, y: h.ammo.y, color: h.ammo.style.color, low: h.ammoLow } }; })(),
+            fog: s.vision?.fogInfo(), fog2: (s.vision as unknown as { fog2Stats?: unknown })?.fog2Stats ?? null, viewFacing: s.viewFacing,
+          } : null,
+          scene: s,
+        };
+      },
+      v4b: () => ({ newRaidSnapshot, mapForRaid, chooseExits, helipadExit, seeded, app, save: app.save, cfg: V4CFG, setLevel: (n: number) => { prog(app.save.data).level = n; app.save.save(); if (!app.raidScene()) app.hub.render(); } }),
       lv: () => ({ cfg: LVCFG, ops: LVOPS, prog: () => JSON.parse(JSON.stringify(prog(app.save.data))), bank: (n: number) => { const up = bankXp(app.save.data, n); app.save.save(); if (!app.raidScene() && !app.save.data.activeRaid) app.hub.render(); return up; },
         setAttr: (a: string, n: number) => { prog(app.save.data).attrs[a as LVCFG.AttrId] = n; app.save.save(); }, setFree: (n: number) => { prog(app.save.data).free = n; app.save.save(); },
         setStation: (sid: string, n: number) => { (app.save.data.refugio.levels as Record<string, number>)[sid] = n; app.save.save(); if (!app.raidScene() && !app.save.data.activeRaid) app.hub.render(); },

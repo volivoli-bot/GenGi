@@ -78,8 +78,8 @@ for(const [id,a] of Object.entries(L)){
 // ======================= C. Partida: mochila gratuita, quick2, quitar mochila, ruido de carga =======================
 await E(()=>{gengi.chapas(5000);});
 await newRaid();
-{const r=await E(()=>{const s=gengi.raid();const lo=s.snap.loadout;return {bag:lo.espalda?.def,free:!!lo.espalda?.free,slots:gengi.v4().backpackSlots(lo),q2:s.hud.quick2.bg.visible};});
- ok('C1 sin mochila propia se entra con la escolar gratuita (12 casillas) y sin 2.º consumible rápido', r.bag==='mochila_escolar'&&r.free&&r.slots===12&&!r.q2, JSON.stringify(r));}
+{const r=await E(()=>{const s=gengi.raid();const lo=s.snap.loadout;return {bag:lo.espalda?.def,free:!!lo.espalda?.free,slots:gengi.v4().backpackSlots(lo),q2:s.hud.quick2.bg.visible,fixedHeal:!!gengi.v4d?.().cfg.HUD4D?.fixedHeal};});
+ ok('C1 sin mochila propia se entra con la escolar gratuita (12 casillas) y sin 2.º consumible rápido (v4d: venda y botiquín siempre tienen su botón)', r.bag==='mochila_escolar'&&r.free&&r.slots===12&&(r.fixedHeal?r.q2:!r.q2), JSON.stringify(r));}
 {const r=await E(async()=>{const s=gengi.raid();__calm();const lo=s.snap.loadout;gengi.give('mochila_grande','militar');gengi.give('vendaje','comun',3);gengi.give('botiquin','comun',1);
   const bag=lo.mochila.find(i=>i.def==='mochila_grande');s.invEquip(bag.uid);await __waitGame(0.2);
   const q2=s.hud.quick2.bg.visible,lbl1=s.hud.quick.label.text,lbl2=s.hud.quick2.label.text;const freeGone=!lo.mochila.some(i=>i.def==='mochila_escolar');
@@ -124,7 +124,7 @@ for(let k=0;k<3;k++){
     const lairBox=s.snap.containers.find(x=>x.kind==='elite'&&Math.hypot(x.x-m.snow.lair.cx,x.y-m.snow.lair.cy)<T*2);
     const zoneNames=s.children.list.filter(c=>c.type==='Text'&&/CABAÑAS|BOSQUE NEVADO|PLAZA HELADA|HOSPITAL HELADO|COMISARÍA HELADA|RADAR MILITAR|INVERNADERO|BLOQUE HELADO|APARCAMIENTO NEVADO|PRESA HELADA/.test(c.text)).map(c=>c.text);
     // aviso al entrar en la nieve
-    __tp(pin.x,pin.y);await __waitGame(0.5);const toast=s.hud.msg.text;
+    const tl=[],ot=s.hud.toast.bind(s.hud);s.hud.toast=(m,...r)=>{tl.push(m);return ot(m,...r);};/* v4c: otro aviso (subida de nivel) podía tapar el de la nieve */__tp(pin.x,pin.y);await __waitGame(0.5);s.hud.toast=ot;const toast=tl.find(m=>/Zona Helada/.test(m))??s.hud.msg.text;
     return {variant:m.variant,heli:heli?{loc:heli.loc,unlocked:heli.unlocked}:null,exits:s.snap.exits.map(e=>e.type),lair:lairE.length,lairTint:lairE[0]?.tint,lairType:lairE[0]?.type,snowTiles,snowDist:d/T,ratio,dratio,rar:[...rar],nSnowConts:snowConts.length,lairItems:lairBox?.items.map(i=>`${i.def}:${i.rarity}`),zoneNames,toast,spawnInSnow:inSnow(s.snap.player.x,s.snap.player.y)};});
   variantsSeen.push(r.variant);
   ok(`D1 ${r.variant}: helipuerto (salida extra, cerrada) + 2 salidas normales`, r.heli&&r.heli.loc===3&&!r.heli.unlocked&&r.exits.length===3&&r.exits.filter(t=>t!=='helipuerto').length===2, JSON.stringify({heli:r.heli,exits:r.exits}));
@@ -156,7 +156,8 @@ ok('D6 se han jugado las 3 variantes', new Set(variantsSeen).size===3, variantsS
 
 // ======================= F. Mapas por datos y Reliquia =======================
 {const r=await E(()=>{const V=gengi.v4();const M=V.cfg.MAPS.map(m=>({id:m.id,lv:[m.nivelMin,m.nivelMax],dif:m.dificultad,rar:m.rarezas,boss:m.rarezaJefe,xp:m.xpMult,gen:m.generador}));const s=gengi.raid();return {M,cur:s?.mapDef?.id,saveId:s?.map?.id};});
- const want=[['arrabal',[1,9],1,['chatarra','militar'],'anomalia'],['via_muerta',[5,25],1.8,['comun','anomalia']],['crater',[15,40],3,['reforzado','reliquia']],['colmena',[30,null],5,['militar','reliquia']]];
+ // v4d §7: rangos nuevos 1-12, 5-22, 12-40, 22-40
+ const want=[['arrabal',[1,12],1,['chatarra','militar'],'anomalia'],['via_muerta',[5,22],1.8,['comun','anomalia']],['crater',[12,40],3,['reforzado','reliquia']],['colmena',[22,40],5,['militar','reliquia']]];
  ok('F1 4 mapas por datos (niveles, dificultad, rarezas); el 1 es El Arrabal y se guarda como arrabal-v4', want.every((w,i)=>r.M[i].id===w[0]&&JSON.stringify(r.M[i].lv)===JSON.stringify(w[1])&&r.M[i].dif===w[2]&&JSON.stringify(r.M[i].rar)===JSON.stringify(w[3]))&&r.M[0].boss==='anomalia'&&r.M[0].gen==='arrabal', JSON.stringify(r.M));}
 
 // ======================= G. Migración 4 → 5 =======================

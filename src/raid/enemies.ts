@@ -32,6 +32,8 @@ export interface RaidCtx {
   px(): number;
   py(): number;
   playerRadius: number;
+  /** v4d: opacidad que le queda a una silueta fantasma vista hace `age` s. */
+  ghostFade?(age: number): number;
   playerMelee(): boolean;
   walls: Rect[];
   elapsed(): number;
@@ -147,6 +149,8 @@ export class Enemy {
   /** v3.1: último instante en que el jugador lo vio (silueta fantasma) y si es de élite. */
   seenAt = -99;
   elite = false;
+  /** v4d: cazador del final de la incursión. */
+  hunter = false;
   flankPhase = Math.random() * 10;
   /** Último arma que le golpeó (misiones "mata con arma a distancia"). */
   lastWeapon?: string;
@@ -220,6 +224,7 @@ export class EnemyManager {
       if (extra.mut) this.mutate(e, extra.mut as MutationId, true);
       if (extra.elite) { e.elite = true; e.rig.setElite(ELITE.scale); }
       if (extra.wave) e.wave = true;
+      if (extra.hunter) e.hunter = true;
       if (extra.lair) { e.lair = true; if (type !== 'matriarca') { e.baseTint = 0x9fd8ff; e.tint(null); } }
       if (extra.swell !== undefined) { this.startSwell(e, true); e.t = extra.swell; }
     }
@@ -641,7 +646,7 @@ export class EnemyManager {
     let ng = 0;
     for (const e of ghosts) {
       if (e.dead) continue;
-      if (ng < PERF.maxGhosts) { ng++; e.rig.setGhost(LINGER.ghostAlpha * (1 - (now - e.seenAt) / LINGER.sec)); this.ghostFrames++; }
+      if (ng < PERF.maxGhosts) { ng++; e.rig.setGhost(LINGER.ghostAlpha * (this.c.ghostFade ? this.c.ghostFade(now - e.seenAt) : 1 - (now - e.seenAt) / LINGER.sec)); this.ghostFrames++; }
       else { e.rig.setGhost(0); e.rig.update(dt, e.x, e.y, e.facing, 0, false); }
     }
     this.ghostsNow = ng; if (ng > this.ghostsMax) this.ghostsMax = ng;
@@ -815,7 +820,7 @@ export class EnemyManager {
     return this.list.filter(e => !e.dead).map(e => ({
       type: e.def.type, x: Math.round(e.x), y: Math.round(e.y), hp: e.hp, maxHp: e.maxHp, dmg: e.dmg,
       gx: e.gx, gy: e.gy, swell: e.state === 'swell' ? Math.max(0, e.t) : undefined, bleed: e.bleed || undefined,
-      mut: e.mut, group: e.group, elite: e.elite || undefined, lair: e.lair || undefined, wave: e.wave || undefined, ice: e.def.type === 'congelado' ? e.ice : undefined,
+      mut: e.mut, group: e.group, elite: e.elite || undefined, hunter: e.hunter || undefined, lair: e.lair || undefined, wave: e.wave || undefined, ice: e.def.type === 'congelado' ? e.ice : undefined,
     }));
   }
 

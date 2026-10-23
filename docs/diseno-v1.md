@@ -500,3 +500,105 @@ Números en `PRUEBA_V2.applySec` (vendaje 1,5 s, botiquín 2,5 s) y `PRUEBA_V2.a
   - Antes fallaba de vez en cuando: un 50 % medido con 600 tiradas al azar, o el jugador resbalaba sobre una placa.
 - Resultado final contra la build v4b: qa 23/23, offscreen 11/11, fog sin fallos, v2 50/50, sigilo 25/25, prueba 36/36, v3 42/42, v31 48/48, v32 13/13, v4 51/51, levels 36/36, v42 16/16 y v4b 26/26.
 - Captura nueva: `shots/v4b-mesa-mapas.png`.
+
+### Implementación v4c (notas de progreso)
+- Punto 1: la ventisca y las huellas se guardan en la incursión, en el campo opcional `snowState`. No hace falta subir la versión del guardado: los guardados de antes empiezan sin ventisca.
+- Punto 2: `newRaidSnapshot(seed, …, defId)` y `mapForRaid()` calculan el inicio y las salidas sobre el MapDef elegido. Un mapa sin zona de nieve no tiene franja nevada, y `SnowRules.active` apaga huellas, hielo y ventisca.
+- Punto 3: la cinta `cinta_superada.svg` de Basu va sobre la polaroid de los mapas superados. Entra sola en la precarga, porque se genera con todo `dist`.
+- El tope de 1.500 no cambia en la v4c: se quita entero en la v4d (Basu, §7). Los mapas superados siguen dando experiencia.
+- Nuevo `qa/v4c.mjs`, 7 comprobaciones:
+  - K1-K2: la ventisca y las huellas siguen al reabrir la app;
+  - K3: el inicio y las salidas salen del MapDef;
+  - K4: un mapa sin nieve no tiene sistemas de nieve;
+  - K5-K6: la cinta sale en la mesa y está en la precarga;
+  - y sin errores en la página.
+- Captura nueva: `shots/v4c-mesa-mapas.png` (`qa/v4cmesa.mjs`).
+
+### QA v4c
+- Todas las suites contra la build v4c (`dist-v42`, puerto 4178), un solo ejecutor cada vez: qa 23/23, offscreen 11/11, fog sin fallos, v2 50/50, sigilo 25/25, prueba 36/36, v3 42/42, v31 48/48, v32 13/13, v4 51/51, levels 36/36, v42 16/16, v4b 26/26 y v4c 7/7.
+- v31 falló una vez la D6 y otra la A3/E2, siempre por tiempos (son fallos intermitentes ya conocidos). Pasada sola, dio 48/48.
+
+### Implementación v4d (diseno-v4.md §7, cambios de Pablo; números en `src/config/v4d.ts`)
+- **Rangos de mapas**: salen de `MAP_RANGES`. Cada mapa ocupa una línea, así que cambiar un rango es cambiar una línea.
+  - Arrabal 1-12, Vía Muerta 5-22, Cráter 12-40 y Colmena 22-40.
+  - Colmena antes no tenía máximo.
+- **Experiencia**: se quita el tope de 1.500 (`XP4D.removeKillCap`). Las bajas de oleada siguen dando el 30 %. Los cazadores no cuentan como oleada y dan la experiencia entera.
+- **Presión al final** (`LATE_RAID`):
+  - Los enemigos escalan +4 %/min hasta el minuto 10 y +9 %/min desde ahí: ×1,40 en el minuto 10 y ×1,58 en el 12.
+  - En el minuto 10 sale el aviso «⚠ Se acercan cazadores».
+  - Desde el minuto 11 aparece un cazador cada 60 s. Es un élite (corredor, bruto, errante o acechador) que nace a 12-18 casillas, fuera de pantalla, y va a investigar tu último ruido (o tu posición si no has hecho ruido).
+  - Desde el minuto 13, la niebla va con un reloj propio (`fogT`) que corre ×2, así que llega hacia el minuto 14. El aviso pasa a ser «⚠ La niebla tóxica avanza el doble de rápido: llega en N min», y el temporizador muestra el tiempo real que queda.
+  - `fogT`, el temporizador de cazadores, el aviso y la marca de cazador de cada enemigo se guardan en la incursión.
+- **Armas a distancia** (`RANGED`):
+  - Ya no disparan solas; el cuerpo a cuerpo sigue siendo automático.
+  - Tiempo entre disparos: pistola 0,8 s, arco 1,4 s, ballesta 1,8 s y escopeta 1,2 s. El rasgo «cadencia» sigue dando +10 %.
+  - Arco y ballesta usan flechas, y la ballesta dispara su proyectil de virote con flechas. Las recuperadas y las del suelo son flechas.
+  - Los virotes salen del botín y de la tienda. Guardado v7: la migración 6→7 convierte todos los virotes en flechas (refugio, equipo, incursión en curso y flechas en el suelo). La definición del objeto se queda por seguridad.
+- **Munición en el HUD**:
+  - Contador junto al joystick derecho: «8 / 24» si el arma tiene cargador y «14» si usa flechas.
+  - El botón de cambio de arma lleva un número pequeño con la munición del arma de reserva.
+  - El contador parpadea en rojo si quedan 3 o menos en total (cargador + reserva).
+- **Escopeta** (`SHOTGUN`; arte de Basu: `arma_escopeta.svg`, `cartucho.svg` y `fx_cono_escopeta.svg`):
+  - Disparo: 6 perdigones × 7 en un cono de 25°, con 4,5 casillas de alcance. Al 60 % a partir de 3 casillas.
+  - Una sola tirada de crítico por disparo, que vale para todos los perdigones.
+  - Recarga: cargador de 4 y 0,5 s por cartucho. Disparar corta la recarga si queda alguno dentro. Sin apuntar, va metiendo cartuchos sola.
+  - Ruido 9 y peso 4. Tambaleo fuerte: 110 de empuje por perdigón y 0,4 s.
+  - Munición «Cartuchos» (pila de 24).
+  - Disponibilidad: sale en el botín (peso 2,5, y trae 4 cartuchos) y en la tienda de Chispas (170; los cartuchos, 8).
+- **Habilidades temporales** (`WEAPON_BUFFS`). Ya no disparan, solo dan un efecto. Mientras duran, el botón muestra los segundos que quedan, y se guardan en la incursión.
+  - Ráfaga (pistola): mitad del intervalo durante 4 s; recarga de 20 s.
+  - Ojo de halcón (arco): +50 % de crítico durante 6 s; recarga de 22 s.
+  - Perforación (ballesta): hasta 3 enemigos por flecha durante 6 s; recarga de 22 s.
+  - Postas concentradas (escopeta): cono de 12° y +40 % de alcance durante 5 s; recarga de 20 s.
+- **Botones** (`HUD4D`):
+  - Arco de habilidades encima del joystick derecho, de izquierda a derecha: arma, casco y chaleco.
+  - Vendaje y botiquín van fijos en dos botones de 44 px, apilados a la izquierda del arco y con su número.
+  - Con `HUD4D.layout = false` vuelve la disposición anterior.
+- **Niebla v2** (`FOG2`; `src/raid/vision2.ts`; `FOG2.enabled = false` vuelve a la niebla anterior):
+  - Una sola RenderTexture a 1/4 de la resolución de pantalla, con filtrado lineal y opacidad del 45 %. Va anclada al mundo: al moverse la cámara, la memoria se desplaza con ella.
+  - Cada frame se oscurece toda la máscara con k = 1 − exp(−dt/τ), con τ = 0,15 s. La memoria se apaga igual a 30 y a 60 fps: queda un 2 % a los 0,6 s.
+  - Después se borra encima la visión actual:
+    - un círculo de 2,5 casillas, también por la espalda, con borde degradado de 1 casilla;
+    - el cono, en un abanico de 64 rayos con oclusión de muros, con degradado en el final (1,5 casillas) y en los lados (10°).
+  - El degradado se hace por vértice y no con una textura rotada; el resultado (bordes suaves) es el mismo.
+  - El giro de la vista está limitado a 540°/s.
+  - Las siluetas fantasma usan la misma curva, exp(−t/τ), y las poses recientes de la máscara.
+  - Detalle técnico: en Phaser 3.90, `RenderTexture.resize()` no redimensiona el framebuffer, así que las texturas se crean ya con su tamaño (y se rehacen si cambia la pantalla).
+- **Depuración**: `gengi.v4d()` (configuración, estado de la incursión, HUD, máscara de niebla, cazadores y migración).
+- **Arreglos durante el QA v4d**:
+  - Con la mochila escolar, el botón del botiquín no hacía nada (seguía mirando los huecos rápidos de la mochila). Ahora, con `HUD4D.fixedHeal`, funciona siempre.
+  - `lingerCount()` de la niebla v2 cuenta solo las poses de la memoria que aún se ven y que no son la vista actual. Quieto es 0, igual que con la niebla anterior.
+- **Suites antiguas adaptadas a v4d** (en `qa/`):
+  - prueba P5/P6/P8: 1 máscara; cadencias de 0,8 y 1,4 s; botón propio del botiquín.
+  - v31 A2-A5: munición compartida y Perforación en lugar de Clavar. H1 va sin cazadores (se prueban en v4d L3).
+  - v32 N2: con la niebla v2 no hay fotos ni polígonos.
+  - v4 C1/F1 y v4b M3 / v4c K5: segundo botón siempre visible, rangos nuevos y nivel 13.
+  - v4b X2: sin tope.
+  - levels S1: guardado v7.
+  - offscreen: el bloque del disparo automático activa `RANGED.autoFire`.
+  - Arreglos de las propias pruebas:
+    - qa 1b: el panel se fuerza también encima del botón nuevo.
+    - v2 5: la lista de números se vacía antes de medir.
+
+### Rendimiento v4d (niebla v2 frente a v4b, minuto 12)
+- Prueba: `perf12.mjs` en 3 rondas intercaladas (v4b en el 4179, v4d en el 4178), con la misma semilla.
+  - Normal: bate, sin élites.
+  - Estrés: arco y élites. En v4d se activa `RANGED.autoFire=true` para que dispare igual que en v4b.
+  - `perf_v4d.sh` / `perf_v4d.out`.
+
+| Minuto 12 | fps reales (media de 3) | fps del juego (media) | p95 por fotograma | paso del juego (mediana) |
+|---|---|---|---|---|
+| v4b normal | 19,4 (18,5 / 19,4 / 20,4) | 21,6 | 66,7 ms | 3,4 ms |
+| **v4d normal** | **26,8** (26,4 / 28,3 / 25,6) | **29,2** | **50,1 ms** | **2,5 ms** |
+| v4b estrés | 19,8 (20,4 / 17,5 / 21,4) | 22,1 | 66,7-83,4 ms | 3,0 ms |
+| **v4d estrés** | **26,7** (26,4 / 25,3 / 28,4) | **28,0** | **50,1 ms** | **2,7 ms** |
+
+- La niebla v2 sustituye los ~1.500-1.750 polígonos de máscara por ráfaga de la v4b (`maskPolys`) por una sola textura a 1/4 de resolución. Mejora un 35-38 % en los dos casos.
+
+### QA v4d
+- Todas las suites se pasan contra la build v4d (`dist-v42`, puerto 4178), una detrás de otra y con un solo ejecutor (`qa-run/runv42all.sh`, salida en `runv4d_full2.out`). Los resultados se apuntan aquí al acabar cada suite.
+- qa 23/23 · offscreen 11/11 · fog sin fallos · v2 50/50 · sigilo 25/25 · prueba 36/36 · v3 42/42
+- v31: 47/48 en la pasada completa (fallo en la D6, el del Trapero; es el fallo intermitente de tiempos ya apuntado en la v4c). Pasada sola, 48/48.
+- v32 13/13 · v4 51/51 · levels 36/36 · v42 16/16 · v4b 26/26 · v4c 7/7 · **v4d 31/31**
+- Capturas: `shots/v4d-hud-armas.png`, `v4d-hud-pistola-arco.png`, `v4d-municion-baja.png`, `v4d-escopeta-disparo.png`, `v4d-aviso-cazadores.png`, `v4d-niebla-antes-quieto.png`, `v4d-niebla-antes-girando.png`, `v4d-niebla-despues-quieto.png` y `v4d-niebla-despues-girando.png`.
+- Paquetes: `/workspace/gengi-v4d.tar.gz` (copiado también a `gengi-v1.tar.gz`) y `/workspace/gengi-docs-v4d.tar.gz`. No se ha subido nada a GitHub.

@@ -97,8 +97,8 @@ await newRaid(4242);
   const a=k('errante',false),b=k('errante',true),kb0=s.snap.killBase;s.snap.killBase=1500;const c=k('bruto',false),d=k('bruto',true);
   const n0=s.enemies.list.length;s.spawnWave();const nw=s.enemies.list.slice(n0);const wv=nw.length>0&&nw.every(e=>e.wave);
   gengi.clearEnemies();s.snap.xp=0;s.snap.xpBy={};s.snap.killBase=0;gengi.cfg42.SNOW_ENEMIES.enabled=true;
-  return {a,b,kb0,c,d,nw:nw.map(e=>e.def.type),wv,cfg:gengi.lv().cfg.XP};});
- ok('X2 oleadas/hordas ×0,3 (errante 4 → 1,2) y, pasados 1.500 de base, cada muerte la mitad (bruto 12 → 6; de oleada 1,8)', r.a===4&&r.b===1.2&&Math.abs(r.kb0-5.2)<1e-9&&r.c===6&&r.d===1.8&&r.cfg.waveMult===0.3&&r.cfg.killSoftCap===1500&&r.cfg.overCapMult===0.5, JSON.stringify({a:r.a,b:r.b,kb0:r.kb0,c:r.c,d:r.d}));
+  return {a,b,kb0,c,d,nw:nw.map(e=>e.def.type),wv,cfg:gengi.lv().cfg.XP,noCap:!!gengi.v4d?.().cfg.XP4D?.removeKillCap};});
+ ok('X2 oleadas/hordas ×0,3 (errante 4 → 1,2) y, pasados 1.500 de base, cada muerte la mitad (bruto 12 → 6; de oleada 1,8) — v4d §7: sin tope (bruto 12, de oleada 3,6)', r.a===4&&r.b===1.2&&Math.abs(r.kb0-5.2)<1e-9&&(r.noCap?(r.c===12&&r.d===3.6):(r.c===6&&r.d===1.8))&&r.cfg.waveMult===0.3&&r.cfg.killSoftCap===1500&&r.cfg.overCapMult===0.5, JSON.stringify({a:r.a,b:r.b,kb0:r.kb0,c:r.c,d:r.d}));
  ok('X3 lo que entra por oleada lleva la marca de oleada', r.wv, JSON.stringify(r.nw));}
 const LV=()=>E(()=>gengi.lv().prog());
 async function endRaidX(exitType){ await E(t=>{const s=gengi.raid();const ex=t?s.snap.exits.find(e=>e.type===t)??{...s.snap.exits[0],type:t}:s.snap.exits[0];s.host.endRaid('extraido',{exit:ex});},exitType); await sleep(500); await E(()=>document.querySelectorAll('.overlay button, .card button').forEach(b=>{if(/Volver|Continuar|Refugio/i.test(b.textContent))b.click();})); await sleep(300); }
@@ -131,8 +131,8 @@ const mesa=()=>E(()=>[...document.querySelectorAll('.mesa-mapas .polaroid')].map
  await E(()=>gengi.v4b().setLevel(5));await sleep(200);
  await E(()=>document.querySelector('.mesa-mapas [data-map=via_muerta]').click());await sleep(200);
  const m5=await mesa();const sel5=await E(()=>gengi.state().mapSel);
- await E(()=>gengi.v4b().setLevel(10));await sleep(200);const m10=await mesa();
- ok('M3 a nivel 5 se elige; a nivel 10 El Arrabal sale «Superado» pero sigue disponible', sel5==='via_muerta'&&m5.find(x=>x.id==='via_muerta').on&&!m5.find(x=>x.id==='via_muerta').lock&&m10.find(x=>x.id==='arrabal').g==='superado'&&!m10.find(x=>x.id==='arrabal').lock, JSON.stringify({sel5,a10:m10.find(x=>x.id==='arrabal')}));}
+ await E(()=>gengi.v4b().setLevel(13));await sleep(200);const m10=await mesa(); // v4d: El Arrabal llega hasta el nivel 12
+ ok('M3 a nivel 5 se elige; a nivel 13 (v4d; antes 10) El Arrabal sale «Superado» pero sigue disponible', sel5==='via_muerta'&&m5.find(x=>x.id==='via_muerta').on&&!m5.find(x=>x.id==='via_muerta').lock&&m10.find(x=>x.id==='arrabal').g==='superado'&&!m10.find(x=>x.id==='arrabal').lock, JSON.stringify({sel5,a10:m10.find(x=>x.id==='arrabal')}));}
 // importar: los rangos valen también al importar (mapa elegido e incursión a medias)
 await newRaid(4242);
 {const saved=await E(()=>{gengi.raid().persist();return gengi.state();});

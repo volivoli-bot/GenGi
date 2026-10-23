@@ -1,0 +1,11 @@
+import puppeteer from 'puppeteer-core';
+const URL=process.argv[2]||'http://localhost:4179/?debug=1';
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const b=await puppeteer.launch({executablePath:'/usr/bin/google-chrome',headless:'new',args:['--no-sandbox','--use-gl=swiftshader','--enable-unsafe-swiftshader','--window-size=390,844']});
+const p=await (await b.createBrowserContext()).newPage();
+await p.setViewport({width:390,height:844,isMobile:true,hasTouch:true});
+await p.goto(URL); await p.waitForFunction(()=>window.gengi,{timeout:20000});
+await p.evaluate(()=>{localStorage.removeItem('gengi.marcas');gengi.reset();}).catch(()=>{}); await sleep(900); await p.waitForFunction(()=>window.gengi,{timeout:20000});
+await p.evaluate(()=>{const C=gengi.v4b().cfg;C.MAPS[1].generador=C.MAPS[0].generador;gengi.v4b().setLevel(10);}); await sleep(800);
+await p.screenshot({path:'/workspace/gengi/shots/v4c-mesa-mapas.png'});
+await b.close();

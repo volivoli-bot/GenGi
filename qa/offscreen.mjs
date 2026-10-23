@@ -35,14 +35,15 @@ const A2=await E(async(T)=>{const s=gengi.raid();const e=s.enemies.list.find(x=>
 ok('control: en pantalla el Corredor sí avisa y carga; sin flecha', A2.w && A2.on>0 && A2.off===0 && A2.arrows===0, JSON.stringify(A2));
 await E(()=>{window.__pins.clear();gengi.clearEnemies();});
 // C) el ataque automático a distancia ignora objetivos fuera de pantalla
-const C=await E(async(T)=>{const s=gengi.raid();gengi.give('pistola','reforzado');gengi.give('municion','comun',24);
+// v4d §7: las armas a distancia ya no disparan solas; este bloque prueba el modo anterior (RANGED.autoFire=true)
+const C=await E(async(T)=>{const s=gengi.raid();const RG=gengi.v4d().cfg.RANGED;RG.autoFire=true;try{gengi.give('pistola','reforzado');gengi.give('municion','comun',24);
   const pis=s.snap.loadout.mochila.find(i=>i.def==='pistola');s.invEquip(pis.uid);s.snap.loadout.arma.mag=12;s.snap.player.reload=0;
   const e=s.spawnAt('errante',s.player.x+5*T,s.player.y);s.enemies.becomeAlert(e,false);e.sightT=1e9;window.__pins.set(e,{dx:5*T,dy:0}); // sigilo v3: el disparo automático ignora a los que no te han detectado → enemigo en alerta
   await new Promise(r=>setTimeout(r,100));
   const pickOff=s.pickTarget(6*T,false);const mag0=s.snap.loadout.arma.mag;
   await new Promise(r=>setTimeout(r,1500));const magOff=s.snap.loadout.arma.mag;const hpOff=e.hp;
   window.__pins.set(e,{dx:2.5*T,dy:0});await new Promise(r=>setTimeout(r,1200));
-  return {pickOff:!!pickOff,mag0,magOff,hpOff,max:e.maxHp,magOn:s.snap.loadout.arma.mag,dead:e.dead,onScreenAt5:false};},T);
+  return {pickOff:!!pickOff,mag0,magOff,hpOff,max:e.maxHp,magOn:s.snap.loadout.arma.mag,dead:e.dead,onScreenAt5:false};}finally{RG.autoFire=false;}},T);
 ok('ataque a distancia ignora enemigos fuera de pantalla', !C.pickOff && C.mag0===C.magOff && C.hpOff===C.max, JSON.stringify(C));
 ok('control: en pantalla la pistola sí dispara', C.magOn<C.magOff || C.dead, `mag ${C.magOff}→${C.magOn}`);
 await E(()=>{window.__pins.clear();gengi.clearEnemies();});

@@ -34,7 +34,7 @@
 - Experiencia para pasar del nivel n al n+1:
   - Niveles 1 a 9: 60 + 30 × n (90, 120, 150, 180, 210, 240, 270, 300, 330).
   - Niveles 10 a 14: la del nivel anterior × 1,10. Niveles 15 a 24: × 1,20. Del 25 en adelante: × 1,10 (Dott). Objetivo: del 18 al 25, unas 5 incursiones buenas en el Cráter.
-- Las oleadas y hordas dan el 30 % de la experiencia normal. A partir de 1.500 de experiencia base por muertes en una incursión, las muertes dan la mitad (antes del multiplicador del mapa).
+- Las oleadas y hordas dan el 30 % de la experiencia normal. Sin tope por incursión (Pablo). El equilibrio se consigue con el peligro de los últimos minutos (sección 7).
 - El ×1,5 del helipuerto no se aplica a la experiencia del jefe.
 - Resultado:
   - Llegar al nivel 5 cuesta 540, una incursión muy buena.
@@ -136,7 +136,7 @@ Barrio de las afueras con la Zona Helada al norte (sección 4). Peligro del esce
 - Jefe: **el Maquinista**, un mutado fusionado con una locomotora que embiste por las vías, lanza chatarra y suelta vapor que tapa la visión. Se le hace daño desviándolo con las agujas de cambio de vía.
 - Extracción especial: subirse al tren en marcha en el andén (hay que estar quieto en la marca cuando pasa).
 
-### Mapa 3 · El Cráter (niveles 15-40, dificultad ×3)
+### Mapa 3 · El Cráter (niveles 12-40, dificultad ×3)
 - Ambiente: ciudad partida por el impacto de algo desconocido, con cristales morados, radiación y gravedad rara.
 - Mecánica propia: **anomalías**. Hay zonas que te repelen, otras que te ralentizan y portales cortos que conectan dos puntos. Sirven para escapar o para lanzar enemigos dentro de ellas.
 - Seguridad (Dott): los portales tienen salidas fijas que se comprueban al generar el mapa. Nunca te dejan dentro de un muro, fuera del mapa ni a menos de 2 casillas de un enemigo; si la salida está ocupada, el portal no se activa (se ve apagado).
@@ -164,6 +164,7 @@ Rareza nueva para el final: **Reliquia**, con 1 efecto único por objeto (por ej
 ### En el refugio: la Mesa de Mapas
 - Para salir a una incursión, en vez de un botón tienes una mesa con un mapa de corcho clavado a la pared y fotos de cada zona.
 - Cada mapa es una tarjeta de polaroid con su nombre, el rango de nivel, la dificultad (calaveras de 1 a 5), las rarezas que suelta y el jefe (silueta oscura hasta que lo matas).
+- Mapa superado: se puede seguir jugando con un 30 % menos de botín. Deja de dar experiencia solo cuando exista el mapa siguiente (Dott).
 - Los mapas bloqueados se ven con un candado y "Nivel 5". Si ya has superado el rango, se ve con una cinta de "Zona superada" y no deja entrar.
 - Al tocar una tarjeta se ve la información de la Radio (Trapero, jefe despierto, clima) antes de confirmar.
 - La estación Radio y la Mesa de Mapas están juntas en el refugio.
@@ -173,3 +174,51 @@ Rareza nueva para el final: **Reliquia**, con 1 efecto único por objeto (por ej
 2. v4.1: edificios nuevos, decoración y ambiente del Arrabal.
 3. v4.2: Zona Helada, enemigos de la nieve, la Matriarca y el Helipuerto.
 4. v5: mapa 2.
+
+## 7. Cambios de Pablo (22:22)
+### Rangos de nivel por mapa (siempre 2 mapas disponibles a partir del nivel 5)
+- Arrabal: niveles 1-12.
+- Vía Muerta: 5-22.
+- Cráter: 12-40 (hasta que exista el mapa 5; así del 33 al 40 hay 2 mapas).
+- Colmena: 22-40.
+- Se presupone que el tope está hacia el nivel 40. Más adelante, más mapas.
+
+### Sin tope de experiencia: los últimos minutos tienen que dar miedo
+- Del minuto 0 al 10: +4 % de vida y daño de los enemigos por minuto, como ahora. Del minuto 10 en adelante: +9 % por minuto.
+- Minuto 10: aviso de «Se acercan cazadores».
+- Minuto 11: empiezan los **Cazadores**: 1 élite cada 60 s que va directo a tu último ruido.
+- Minuto 13: la niebla avanza el doble de rápido.
+- Objetivo: con menos de 5 minutos, quedarse tiene que parecer una mala idea aunque vayas bien equipado. Dott lo mide con el registro: casi nadie debería extraer después del minuto 13 sin haber estado a menos del 30 % de vida.
+
+### Armas a distancia
+- Ya no disparan solas: solo se dispara con el joystick derecho. Las armas cuerpo a cuerpo siguen atacando solas.
+- Tiempo entre disparos: pistola 0,8 s, arco 1,4 s, ballesta 1,8 s.
+- Arco y ballesta usan las mismas flechas. Se quita la munición de virotes.
+- Munición visible:
+  - Contador junto al joystick derecho ("8 / 24" en cargador / reserva, o "14" para flechas).
+  - Un número pequeño en el botón de cambio de arma.
+  - El contador parpadea en rojo con ≤ 3.
+- **Escopeta (nueva):**
+  - 1,2 s entre disparos. 6 perdigones en un cono de 25°, con un alcance de 4,5 casillas.
+  - 7 de daño por perdigón, que baja al 60 % a partir de 3 casillas. Si aciertan todos de cerca, 42 (unos 35 de daño por segundo, el doble que la pistola), pero solo a corta distancia.
+  - Cargador de 4 cartuchos. Recarga de 0,5 s por cartucho, que se puede cortar disparando.
+  - Ruido de 9 casillas. Peso 4. Tambaleo fuerte.
+  - Una sola tirada de crítico por disparo, que se aplica a todos los perdigones (Dott).
+  - Contra la Matriarca (2.000 de vida) harían falta unos 48 disparos perfectos a bocajarro. Es buena para jefes, pero obliga a ponerse muy cerca.
+- Habilidades de armas a distancia (temporales, no disparos):
+  - Pistola, «Ráfaga»: tiempo entre disparos a la mitad durante 4 s. Recarga de la habilidad: 20 s.
+  - Arco, «Ojo de halcón»: +50 % de probabilidad de crítico durante 6 s. Recarga: 22 s.
+  - Ballesta, «Perforación»: las flechas atraviesan hasta 3 enemigos durante 6 s. Recarga: 22 s.
+  - Escopeta, «Postas concentradas»: cono de 12° y +40 % de alcance durante 5 s. Recarga: 20 s.
+
+### Botones
+- Arco de habilidades encima del joystick derecho, de izquierda a derecha: habilidad del arma (siempre la primera), habilidad del casco y habilidad del chaleco.
+- Venda y botiquín: dos botones de 44 px justo a la izquierda del arco, uno encima del otro, cada uno con su número de unidades.
+
+### Niebla v2 (sustituye a las rebanadas de memoria)
+- Una sola RenderTexture de niebla a 1/4 de resolución, escalada con filtrado lineal (bordes suaves gratis).
+- Cada frame: oscurecer toda la textura un poco (la memoria se desvanece de forma continua en ~0,6 s; calcular el oscurecimiento con el tiempo de cada frame, no con una cantidad fija, para que dure igual a 30 y a 60 fps — Dott) y después borrar la visión actual encima. Nada de trozos sueltos.
+- Círculo siempre visible de 2,5 casillas alrededor del jugador, incluida la espalda, con borde degradado.
+- Cono de visión: textura de degradado rotada, con oclusión de muros por ~64 rayos; el difuminado tapa los dientes.
+- Giro del cono suavizado, máximo 540°/s. Opacidad de la niebla 45 %.
+- Coste fijo: una textura pequeña y un pase de dibujo por frame. Dott mide fps y cortes al girar rápido en el iPhone 14.

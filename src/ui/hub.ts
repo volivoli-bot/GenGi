@@ -49,12 +49,14 @@ export class Hub {
     if (!d.mapSel || !mapAllowed(MAPS.find(m => m.id === d.mapSel) ?? MAPS[0], lv)) d.mapSel = DEFAULT_MAP;
     return h('div', { class: 'mesa-mapas' }, ...MAPS.map(m => {
       const g = mapGate(m, lv), ok = g === 'ok' || g === 'superado', on = d.mapSel === m.id;
-      const txt = lv < m.nivelMin ? `Requiere nivel ${m.nivelMin}` : g === 'sin_construir' ? 'En construcción' : g === 'superado' ? 'Superado' : `Nv ${m.nivelMin}${m.nivelMax ? '-' + m.nivelMax : '+'}`;
+      const txt = lv < m.nivelMin ? `Requiere nivel ${m.nivelMin}` : g === 'sin_construir' ? 'En construcción' : `Nv ${m.nivelMin}${m.nivelMax ? '-' + m.nivelMax : '+'}`;
       return h('button', {
         class: 'polaroid' + (on ? ' on' : '') + (ok ? '' : ' locked') + (g === 'superado' ? ' sup' : ''), 'data-map': m.id, 'data-gate': g,
         onclick: () => { if (!ok) { toast(lv < m.nivelMin ? `${m.nombre}: requiere nivel ${m.nivelMin}` : `${m.nombre}: en construcción`); return; } d.mapSel = m.id; this.host.save.save(); this.render(); },
       },
-        h('span', { class: 'ph' }, h('img', { src: `art/v4/polaroid_${m.id}.svg`, alt: '' }), ok ? null : h('img', { class: 'lock', src: 'art/v4/candado.svg', alt: 'Bloqueado' })),
+        h('span', { class: 'ph' }, h('img', { src: `art/v4/polaroid_${m.id}.svg`, alt: '' }), ok ? null : h('img', { class: 'lock', src: 'art/v4/candado.svg', alt: 'Bloqueado' }),
+          // v4c: cinta «Zona superada» de Basu (se sigue pudiendo entrar y da experiencia)
+          g === 'superado' ? h('img', { class: 'cinta', src: 'art/v4/cinta_superada.svg', alt: 'Zona superada' }) : null),
         h('b', {}, m.nombre), h('small', {}, txt));
     }));
   }
