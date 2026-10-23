@@ -5,6 +5,11 @@ export const ART = ['player', 'errante', 'corredor', 'hinchado', 'abominacion', 
   'casco', 'chaleco', 'tablas', 'vendaje', 'botiquin', 'bengala', 'generador', 'chapa', 'extraccion', 'aviso-ataque', 'municion', 'flecha'];
 
 /** Arte v2 por piezas (Basu, public/art/v2): [clave, ancho, alto] del viewBox. Se rasteriza a 2× para que no se vea borroso con zoom. */
+/** Arte v3 de Basu integrado de momento: solo la interfaz de sigilo. */
+export const ART_V3_UI: [string, number, number][] = [['ui_sospecha', 32, 40], ['ui_alerta', 32, 40], ['ui_ejecutar', 64, 64], ['ui_anillo_ruido', 128, 128],
+  // indicadores junto al jugador (diseno-v3 §8.4)
+  ['hab_aguantar', 32, 32], ['hab_escanear', 32, 32], ['estado_sangrado', 32, 32], ['estado_veneno', 32, 32], ['barra_vida', 40, 8]];
+
 export const ART_V2: [string, number, number][] = [
   ['abominacion_cuerpo', 128, 128],
   ['abominacion_tentaculo', 32, 96],
@@ -58,6 +63,8 @@ export class BootScene extends Phaser.Scene {
     }
     // si falta alguna pieza, el muñeco usa la imagen única de la v1 (ver rig.ts)
     for (const [k, w, h] of ART_V2) this.load.svg(k, `art/v2/${k}.svg`, { width: w * 2, height: h * 2 });
+    // v3 (Basu): solo la interfaz de sigilo por ahora ('?', '!', Ejecutar, anillo de ruido)
+    for (const [k, w, h] of ART_V3_UI) this.load.svg(k, `art/v3/${k}.svg`, { width: w * 2, height: h * 2 });
   }
   create() { this.game.events.emit('gengi-ready'); }
 }

@@ -89,3 +89,21 @@ Mutaciones (a partir del min 10): cualquier enemigo puede salir mutado con un au
 - Ciertos enemigos lo cambian: el Chillón tiene oído doble, el Acechador oye el sigilo a 2 casillas, el Enjambre no ve pero oye todo.
 - La dificultad por minuto también aumenta el oído de los enemigos (+3 % por minuto).
 - Ataque automático y sigilo: el ataque automático nunca se dirige a enemigos que no te han detectado. Contra ellos solo se ataca a propósito: al estar detrás de uno desprevenido y a alcance de arma cuerpo a cuerpo aparece un botón contextual "Ejecutar" (sustituye temporalmente al botón de cambio rápido). Con armas a distancia, disparar con el joystick derecho a uno desprevenido también aplica el x2,5.
+
+## 8. Cambios tras la prueba de la v2 (Pablo)
+1. Inventario: el mini menú debe abrirse al tocar un objeto también después de hacer scroll. Distinguir toque de arrastre: es toque si el dedo se mueve menos de 8 px y dura menos de 300 ms.
+2. Daño de todos los enemigos +25 % (Errante 6 → 7,5). La curva por minuto sigue igual encima.
+3. Casco, Escanear: radio de 10 casillas alrededor del jugador (antes todo el mapa). Muestra los enemigos 3 s, aunque estén detrás de muros.
+4. Indicadores junto al jugador:
+   - Habilidad activa: icono de 18 px encima del personaje con un arco que se vacía según el tiempo que le queda. Si hay varias, se ponen en fila. Se quita el texto de arriba.
+   - Mini barra de vida (36×4 px, debajo del personaje): aparece si la vida baja del 35 % (fija) o si recibes 2 golpes en 3 s (se queda 3 s desde el último golpe).
+   - Estados (veneno y sangrado): icono de 14 px con el número de cargas, al lado de la barra.
+5. Niebla fuera del cono: oscurecer al 45 % (antes casi negro), con un borde difuminado de 1,5 casillas. Lo que no ves no aparece (enemigos ocultos), pero el mapa se intuye.
+6. Armas a distancia: cadencia ×0,67 (arco 0,8 → 0,53 ataques/s, pistola 2,0 → 1,33 ataques/s).
+7. Veneno y sangrado acumulables:
+   - Sangrado: el 33 % de los golpes cuerpo a cuerpo de los enemigos aplica 1 carga. Dura 6 s.
+   - Veneno: lo aplican el charco de ácido (1 carga por segundo dentro), la explosión del Hinchado y el proyectil del Escupidor. Dura 4 s.
+   - Cada carga hace en total el daño de un golpe de Errante (7,5) repartido en su duración: sangrado 1,25/s y veneno 1,9/s. Cada carga lleva su propio temporizador.
+   - Máximo 5 cargas de cada tipo. Las vendas quitan el sangrado y el botiquín quita ambos.
+   - Al recibir daño por estado: un destello leve en la barra de vida, sin hit-stop.
+8. Tiempo de aplicar curaciones: venda 1,5 s y botiquín 2,5 s. Mientras aplicas te mueves al 50 %, no atacas y se ve un anillo de progreso sobre el jugador. Si recibes un golpe o sueltas el botón, se cancela sin gastar el objeto. Al terminar se aplica la curación de siempre (venda +30 en 2 s, botiquín +70 en 4 s) y se quitan los estados.

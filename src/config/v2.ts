@@ -91,8 +91,11 @@ export const VISION = {
   nearTiles: 1.7,
   /** Rayos del polígono de visibilidad (por cada grado del cono). */
   raysPerDeg: 0.9,
-  /** Opacidad de la niebla detrás / tras muros (se ve el suelo). */
-  fogAlpha: 0.62,
+  /** Opacidad de la niebla detrás / tras muros (se ve el suelo). Prueba v2: 0,62 → 0,45 (diseno-v3 §8.5). */
+  fogAlpha: 0.45,
+  /** Borde difuminado de la niebla (casillas) y capas con que se aproxima el degradado. */
+  fogFeatherTiles: 1.5,
+  fogLayers: 3,
   /** Aviso de enemigo oculto detrás (casillas). */
   behindWarnTiles: 4,
 };
@@ -137,4 +140,128 @@ export const HUD2 = {
   arcDeg: [188, 218, 248, 278],
   /** iOS: los joysticks (base y zona muerta) nunca quedan a menos de esto del borde de la pantalla (px), lejos del gesto de atrás/adelante. */
   edgeInsetPx: 20,
+};
+
+/**
+ * Sigilo (Pablo; especificación final de Basu en diseno-v3.md §7): cada enemigo tiene su mirada, cono de visión y oído.
+ * Estados: sin enterarse (idle) → sospecha (investigate, '?') → alerta (chase, '!').
+ */
+export const STEALTH = {
+  // --- Ruido del jugador (anillo tenue alrededor del personaje) ---
+  /** Joystick: < sigiloStick = sigilo, < andarStick = andar, si no correr. */
+  sigiloStick: 0.4,
+  andarStick: 0.85,
+  /** Velocidad (fracción de la máxima) de cada paso. */
+  sigiloSpeed: 0.35,
+  andarSpeed: 0.7,
+  /** Radio de ruido (casillas) de cada paso. Quieto = 0. */
+  sigiloNoise: 1,
+  andarNoise: 3,
+  correrNoise: 6,
+  /** Chaleco Militar o mejor: +1 casilla. */
+  heavyArmorNoise: 1,
+  /** Ruidos sueltos (casillas): puertas = MAP2.doorNoise (3), cajas cerradas (4), cristales/latas del suelo (5). Disparar: dato del arma (pistola 10, arco 1). */
+  crateNoise: 4,
+  debrisNoise: 5,
+  /** Golpe cuerpo a cuerpo que conecta (no por la espalda): ruido medio. */
+  meleeHitNoise: 3,
+  /** El ruido atraviesa paredes a la mitad de distancia. */
+  wallMuffle: 0.5,
+  /** Cada cuánto se emite el ruido de pasos (s). */
+  stepEverySec: 0.25,
+  /** El oído de los enemigos sube un 3 % por minuto. */
+  hearingPerMinute: 0.03,
+  /** Oído por tipo (multiplica el radio). */
+  hearing: { errante: 1, corredor: 1, hinchado: 1, abominacion: 1 } as Record<string, number>,
+  /** Cristales y latas por el mapa (se ven si te fijas; ocultos en la niebla como el botín). */
+  debrisCount: 70,
+  /** Radio de pisada (casillas) y tiempo hasta que la misma pieza vuelve a sonar (s). */
+  debrisStepTiles: 0.45,
+  debrisCooldownSec: 2,
+
+  // --- Percepción de los enemigos ---
+  /** Vista: cono de 110° y 6 casillas, cortado por paredes. De espaldas no te ven. */
+  coneDeg: 110,
+  sightTiles: { errante: 6, corredor: 6, hinchado: 6, abominacion: 6 } as Record<string, number>,
+  /** Ya en alerta te siguen localizado (sin cono) hasta este factor del alcance. */
+  alertSightMult: 1.3,
+  /** Medidor '?': 0,4 s si estás cerca, 1,2 s en el límite del alcance. */
+  detectNearSec: 0.4,
+  detectFarSec: 1.2,
+  /** Dentro del cono a menos de esto (casillas): instantáneo. */
+  instantTiles: 1,
+  /** El medidor baja a esta velocidad (por s) cuando no te ve. */
+  decayPerSec: 0.5,
+  /** Cada cuánto se comprueba la vista (s). */
+  checkSec: 0.1,
+  /** Sospecha: se gira hacia el ruido, va al último sitio donde te notó y mira alrededor 4 s. */
+  suspiciousTurnSec: 0.5,
+  suspiciousLookSec: 4,
+  suspiciousSpeedMult: 0.6,
+  /** Los quietos giran al azar cada 3-7 s; los que deambulan cambian de rumbo. Antes de girar: pausa visible de 0,4 s. */
+  turnMinSec: 3,
+  turnMaxSec: 7,
+  turnPauseSec: 0.4,
+  turnMaxDeg: 160,
+  /** '!' visible este tiempo al pasar a alerta. */
+  alertMarkSec: 1.2,
+
+  // --- Golpe por la espalda ---
+  /** x2,5 de daño y crítico garantizado a quien no te ha detectado. Matar sin ser detectado no avisa a nadie. */
+  backstabMult: 2.5,
+  /** "Detrás" = fuera de este ángulo frontal del enemigo (grados totales). */
+  backArcDeg: 180,
+  /** Conos tenues en el suelo de los enemigos que están en tu cono (dificultad normal; ajuste para expertos). */
+  conesMaxTiles: 10,
+};
+
+/**
+ * Cambios tras la prueba de la v2 (Pablo; números finales de Basu en diseno-v3.md §8).
+ */
+export const PRUEBA_V2 = {
+  /** §8.1 Inventario: es toque si el dedo se mueve < 8 px y dura < 300 ms. */
+  tapMovePx: 8,
+  tapMaxMs: 300,
+  /** §8.2 Daño de todos los enemigos +25 % (Errante 6 → 7,5); la curva por minuto va encima. */
+  enemyDmgMult: 1.25,
+  /** §8.3 Casco, Escanear: radio 10 casillas, enemigos visibles 3 s aunque estén tras muros (antes: todo el mapa, 6 s). */
+  scanTiles: 10,
+  scanSec: 3,
+  /** §8.4 Indicadores junto al jugador. */
+  abilityIconPx: 18,
+  statusIconPx: 14,
+  miniHpW: 36,
+  miniHpH: 4,
+  /** Mini barra: fija por debajo del 35 %, o tras 2 golpes en 3 s (se queda 3 s desde el último). */
+  miniHpLowPct: 0.35,
+  miniHpHits: 2,
+  miniHpWindowSec: 3,
+  miniHpStaySec: 3,
+  /** §8.6 Armas a distancia: cadencia ×0,67 (arco 0,8 → 0,53 ataques/s; pistola 2,0 → 1,33). */
+  rangedApsMult: 0.67,
+  /** §8.7 Veneno y sangrado acumulables (cada carga con su temporizador). */
+  status: {
+    /** Daño total de una carga = un golpe de Errante (6 × 1,25 = 7,5) repartido en su duración. */
+    stackDmg: 7.5,
+    maxStacks: 5,
+    bleedSec: 6,
+    poisonSec: 4,
+    /** 33 % de los golpes cuerpo a cuerpo de los enemigos aplican 1 carga de sangrado. */
+    bleedChance: 0.33,
+    /** Charco de ácido: 1 carga de veneno por segundo dentro. Explosión del Hinchado: 1 carga. (El Escupidor es arte v3 aún no integrado.) */
+    acidStackEverySec: 1,
+    explosionStacks: 1,
+    /** El daño se aplica en pasos de 0,5 s (sin hit-stop; destello leve en la barra). */
+    tickSec: 0.5,
+    /** Vendas quitan el sangrado; el botiquín quita sangrado y veneno. */
+    curaSangrado: ['vendaje', 'botiquin'] as string[],
+    curaVeneno: ['botiquin'] as string[],
+  },
+  /**
+   * §8.8 Tiempo de aplicar curaciones (s). Botón rápido: mantener pulsado; soltar o recibir un golpe cancela sin gastar el objeto.
+   * Mientras aplicas: te mueves al 50 %, no atacas/apuntas/cambias de arma, anillo de progreso sobre el jugador.
+   * Al terminar: la curación de siempre (venda +30 en 2 s, botiquín +70 en 4 s) y se quitan los estados.
+   */
+  applySec: { vendaje: 1.5, botiquin: 2.5 } as Record<string, number>,
+  applyMoveMult: 0.5,
 };

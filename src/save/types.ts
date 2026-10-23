@@ -17,6 +17,8 @@ export interface Settings {
   curarUmbral: number;
   /** Consumible del botón rápido. */
   rapido: 'vendaje' | 'botiquin';
+  /** Sigilo: conos tenues de visión de los enemigos en el suelo (dificultad normal). Los expertos pueden quitarlos. */
+  conosEnemigos: boolean;
   /** Mano del joystick: izquierda por defecto. */
 }
 
@@ -70,7 +72,9 @@ export interface RaidSnapshot {
   elapsed: number;
   valueIn: number;
   kills: number;
-  player: { x: number; y: number; hp: number; healLeft: number; healRate: number; aguantar: number; cds: Partial<Record<AbilityId, number>>; reload: number };
+  player: { x: number; y: number; hp: number; healLeft: number; healRate: number; aguantar: number; cds: Partial<Record<AbilityId, number>>; reload: number;
+    /** Prueba v2: cargas de sangrado / veneno (segundos que le quedan a cada una). */
+    bleed?: number[]; poison?: number[] };
   loadout: Loadout;
   enemies: EnemySnap[];
   containers: ContainerSnap[];

@@ -1,6 +1,7 @@
 import { ITEMS, ItemDef, Slot, TraitId, WeaponStats } from '../data/items';
 import { RARITIES, Rarity } from '../data/rarity';
 import { BACKPACK_SLOTS, SPEED_PENALTY_MAX, SPEED_PENALTY_PER_WEIGHT } from '../config/constants';
+import { PRUEBA_V2 } from '../config/v2';
 
 /** Instancia concreta de un objeto (lo que se guarda). */
 export interface ItemInst {
@@ -61,7 +62,7 @@ export function weaponStats(it: ItemInst | null): WeaponStats & { dmgMult: numbe
   const r = RARITIES[it.rarity];
   const t = it.traits ?? [];
   const dmgMult = r.mult * (t.includes('dano') ? 1.1 : 1);
-  return { ...base, dmg: base.dmg * dmgMult, dmgMult, aps: base.aps * (t.includes('cadencia') ? 1.1 : 1), rangeTiles: base.rangeTiles * (t.includes('alcance') ? 1.15 : 1) };
+  return { ...base, dmg: base.dmg * dmgMult, dmgMult, aps: base.aps * (t.includes('cadencia') ? 1.1 : 1) * (base.melee ? 1 : PRUEBA_V2.rangedApsMult), rangeTiles: base.rangeTiles * (t.includes('alcance') ? 1.15 : 1) };
 }
 
 export function armorProtection(it: ItemInst | null) {

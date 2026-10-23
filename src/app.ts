@@ -212,12 +212,19 @@ export class App implements RaidHost {
       /** Joystick de apuntar simulado: aim(x, y) con x,y ∈ [-1,1]; aim(null) suelta. */
       aim: (x: number | null, y = 0) => app.raidScene()?.aim?.debugSet(x === null ? null : { x, y }),
       stats: () => { const s = app.raidScene(); return s ? { ...s.stats, swapT: s.swapT, facing: s.facing, vel: { x: s.vel.x, y: s.vel.y }, seen: s.seenExitList(), loot: s.lootState(), stains: s.fx.stainCount, dmgNums: s.fx.shown.slice(-20), fired: s.proj.fired.slice(-20), hitStop: s.hitStopActive() } : null; },
+      saveData: () => JSON.parse(JSON.stringify(app.save.data)),
       seenExits: () => JSON.parse(JSON.stringify(app.save.data.seenExits)),
       doors: () => app.raidScene()?.doorList(),
       swap: () => app.raidScene()?.swapWeapon(),
       equip: (uid: string) => app.raidScene()?.invEquip(uid),
       face: (deg: number) => { const s = app.raidScene(); if (s) s.facing = deg * Math.PI / 180; },
       tp: (tx: number, ty: number) => { const s = app.raidScene(); if (s) { s.player.setPosition(tx * TILE, ty * TILE); s.vel.set(0, 0); } },
+      // ---- sigilo ----
+      /** Todos los enemigos pasan a alerta (como antes del sigilo; útil para pruebas de combate). */
+      alertAll: () => { const s = app.raidScene(); if (s) for (const e of s.enemies.list) s.enemies.becomeAlert(e, false); },
+      stealth: () => { const s = app.raidScene(); return s ? { tier: s.moveTier, noise: s.noiseTiles, exec: s.execTarget ? s.enemies.list.indexOf(s.execTarget) : -1, ...s.enemies.stealthStats, enemies: s.enemies.list.map(e => ({ type: e.def.type, state: e.state, meter: +e.meter.toFixed(2), x: Math.round(e.x), y: Math.round(e.y), facing: e.facing, hp: e.hp })) } : null; },
+      execute: () => app.raidScene()?.execute(),
+      move: (x: number, y: number) => { const s = app.raidScene(); if (s) s.joy!.vec.set(x, y); },
       loadLegacy: () => { localStorage.setItem('gengi.save', JSON.stringify(LEGACY_SAMPLE)); location.reload(); },
       reset: () => { app.save.reset(); location.reload(); },
     };

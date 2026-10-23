@@ -151,7 +151,7 @@ Todos los números ajustables están en `src/config/v2.ts` (MOVE, AIM, PROJECTIL
 - Impacto: parón 55 ms (80 ms en golpes fuertes y críticos), sacudida 0,00025 por punto de daño (tope 0,009), destello blanco 1 fotograma. Crítico 10 % ×1,8, número amarillo 1,4× más grande. Números: suben 20 px en 0,6 s.
 - Tambaleo (impulso px/s para masa 1, duración s): puños 140/0,12, bate 330/0,35, machete 170/0,16, arco 220/0,18, pistola 180/0,14. Masa: Errante 1, Corredor 0,8, Hinchado 1,7, Abominación 7. Un tambaleo ≥ 0,3 s corta el aviso de ataque.
 - Rendimiento: máximo 160 manchas de suelo y 45 cadáveres por raid (se reciclan los más viejos).
-- Visión: cono 220°, alcance 15 casillas, niebla al 62 % de opacidad (el suelo se ve). Aviso por detrás a menos de 4 casillas.
+- Visión: cono 220°, alcance 15 casillas, niebla al 45 % de opacidad con borde difuminado de 1,5 casillas (antes 62 % y borde duro; cambio de la prueba v3 §8.5). Aviso por detrás a menos de 4 casillas.
   - Decisión: hay un radio de "conciencia corporal" de 1,7 casillas siempre visible alrededor del jugador. Así nunca te golpea algo pegado a ti que no puedes ver.
 - Mapa: 104 × 104 casillas (la v1 tenía 60 × 60, ≈3× de área). El trazado es fijo (semilla fija) para que se pueda aprender. Botín, enemigos y salidas activas cambian en cada raid. 31 puertas; una puerta abierta por el jugador hace ruido de 3 casillas.
 - IA: un enemigo que te detecta alerta a su grupo en 6 casillas. Los Errantes flanquean en abanico de 55° hasta 3 casillas. El Corredor apunta su embestida 0,35 s por delante de ti y se abre de lado 0,6 s antes. Velocidad ×1,12 Errante, ×1,05 Corredor, ×1,1 Hinchado, ×1,05 Abominación.
@@ -194,7 +194,57 @@ Todos los números ajustables están en `src/config/v2.ts` (MOVE, AIM, PROJECTIL
 - Un enemigo oculto que te detecta sigue mostrando la flecha roja de borde, pero nunca empieza su aviso de ataque mientras no lo ves.
 - Lootear con enemigos cerca: el anillo se pausa (no se reinicia) si te golpean.
 
+### Sigilo (diseno-v3.md §7)
+Números en `src/config/v2.ts` → `STEALTH`.
+- Pasos según el joystick: sigilo < 40 % (vel. 35 %, ruido 1 casilla), andar 40-85 % (70 %, 3), correr > 85 % (100 %, 6). Chaleco militar +1. Un paso hace ruido cada 0,25 s. Anillo tenue alrededor del jugador con el radio actual (`ui_anillo_ruido`).
+- Otros ruidos: puertas 3, cajas cerradas 4 (antes 6), golpe cuerpo a cuerpo 3, disparos según arma, cristales y latas del suelo 5 (70 por mapa, con semilla; se ven como restos y avisan "¡Crac!" una vez cada 2 s).
+- A través de paredes el ruido llega a la mitad de distancia. Oído de los enemigos +3 % por minuto.
+- Vista enemiga: cono de 110° y 6 casillas, cortado por paredes; en alerta ven ×1,3. Medidor "?" que se llena en 0,4 s (a 1 casilla) hasta 1,2 s (a 6 casillas), interpolado; se vacía a 0,5/s. Lleno = "!" (1,2 s), persigue y avisa al grupo. Iconos `ui_sospecha` / `ui_alerta` de Basu.
+- Sospecha: gira 0,5 s, va al último sitio donde te notó al 60 % de velocidad, mira alrededor 4 s y vuelve. Quietos: giran al azar cada 3-7 s (hasta 160°) con una pausa previa de 0,4 s.
+- Conos tenues en el suelo de los enemigos que están en tu cono (ajuste "Sigilo → Conos enemigos: Mostrar / Ocultar (experto)", activado por defecto).
+- Táctico: el ataque automático nunca apunta a enemigos desprevenidos. Detrás de uno desprevenido y a alcance cuerpo a cuerpo, el botón de cambio de arma pasa a "Ejecutar" (`ui_ejecutar`): daño del arma ×2,5 marcado como crítico. Disparo apuntado a mano contra un desprevenido: ×2,5. Matar sin ser detectado no avisa a nadie; si sobrevive, pasa a alerta.
+- Decisión: los enemigos nuevos de v3 (Chillón, Acechador, Enjambre, Escupidor) no están aún en el juego; el oído por tipo está en la config (todos 1) para cuando lleguen.
+
+### Service worker: caché por build
+- `public/sw.js` usa `gengi-__BUILD_ID__`; el plugin `gengiSw` de `vite.config.ts` lo sustituye en cada `vite build` por hash del bundle + momento del build. Al activarse, borra todas las cachés `gengi*` que no sean la actual (las de otras webs del mismo origen no se tocan) y toma el control (`clients.claim`). Ya no hay que subir el número de versión a mano.
+
+### Guardado v1 → v2
+- Comprobado en QA (S13): un guardado v1 real (alijo, excedente, mochila, chapas, ajustes) se carga sin perder objetos ni chapas, y añade los campos nuevos (`seenExits`, `conosEnemigos`, reserva vacía).
+
+### Cambios tras la prueba v2 (diseno-v3.md §8, números finales de Basu)
+Números en `src/config/v2.ts` → `PRUEBA_V2` (y `VISION.fogAlpha`/`fogFeatherTiles`).
+
+| Punto | Antes | Ahora |
+|---|---|---|
+| Daño Errante / Corredor / Abominación | 6 / 5 / 18 | 7,5 / 6,25 / 22,5 (×1,25; la curva por minuto va encima) |
+| Explosión del Hinchado | 20 | 25 + 1 carga de veneno |
+| Escanear (casco) | todo el mapa, 6 s | 10 casillas, 3 s (también tras muros) |
+| Niebla fuera del cono | 62 %, borde duro | 45 %, borde difuminado 1,5 casillas (3 capas) |
+| Cadencia arco | 0,8 /s | 0,536 /s (×0,67) |
+| Cadencia pistola | 2,0 /s | 1,34 /s (×0,67) |
+| Charco de ácido | 6 de daño/s | 1 carga de veneno por segundo dentro |
+| Sangrado / veneno | no existía | cargas acumulables (abajo) |
+| Vendaje / botiquín | curación al instante de pulsar | 1,5 s / 2,5 s manteniendo el botón (abajo) |
+| Texto AGUANTAR arriba | sí | quitado; icono sobre la cabeza |
+
+- Inventario: el menú se abre al soltar un toque (el dedo se mueve < 8 px y dura < 300 ms). Arreglo: al redibujar el panel se restauraba el scroll y ese evento cerraba el menú recién abierto; ahora solo cierra un scroll real de 8 px o más. El click que el navegador manda tras el toque se ignora en los botones del menú durante 0,4 s (si no, caía sobre el menú recién pintado).
+- Indicadores junto al jugador: iconos de habilidad activa de 18 px sobre la cabeza con arco amarillo que se vacía, en fila (`hab_aguantar`, `hab_escanear`); si hay anillo de progreso (curación, recarga, cambio) la fila sube. Mini barra 36×4 bajo el personaje (colores de `barra_vida`): fija bajo el 35 % de vida, o tras 2 golpes en 3 s (se queda 3 s desde el último). Estados de 14 px (`estado_sangrado`, `estado_veneno`) con el número de cargas junto a la barra.
+- Sangrado: 33 % de los golpes cuerpo a cuerpo enemigos (también el golpe de la Abominación), 1 carga de 6 s. Veneno: charco de ácido (1/s), explosión del Hinchado (1 carga), 4 s. Cada carga hace 7,5 en total repartido en su duración (sangrado 1,25/s, veneno 1,875/s) con su propio temporizador; se aplica cada 0,5 s. Máximo 5 por tipo (si está lleno, se renueva la más gastada). Daño de estado: destello en la barra de vida, sin hit-stop, sin cancelar curaciones. El Escupidor aún no existe.
+
+### Curación con tiempo (diseno-v3.md §8.8)
+Números en `PRUEBA_V2.applySec` (vendaje 1,5 s, botiquín 2,5 s) y `PRUEBA_V2.applyMoveMult` (0,5).
+- Botón rápido de consumible: hay que mantenerlo pulsado. Soltar antes de tiempo o recibir un golpe cancela sin gastar el objeto. Un toque corto no hace nada (avisa "Curación cancelada").
+- Mientras aplicas: anillo verde de progreso sobre la cabeza, movimiento al 50 %, sin atacar, apuntar, cambiar de arma, Ejecutar ni habilidades.
+- Al terminar: se gasta el objeto, empieza la curación de siempre (venda +30 en 2 s, botiquín +70 en 4 s) y se quitan los estados.
+- Decisión: "Usar" desde el inventario y la curación automática por umbral también tardan lo mismo, pero no requieren mantener nada; un golpe sí las cancela. El daño de estado (sangrado/veneno) no cuenta como golpe.
+
 ### QA
 - `qa/qa.mjs` (v1), `qa/offscreen.mjs`, `qa/fog.mjs`, `qa/stress.mjs`.
-- Nuevo `qa/v2.mjs`: 50 comprobaciones de los 7 puntos, la reserva y el endurecimiento para iPhone.
-- Nuevo `qa/shots_v2.mjs`: capturas en `shots/v2-*.png`.
+- Nuevo `qa/v2.mjs`: 50 comprobaciones de los 7 puntos, la reserva y el endurecimiento para iPhone (actualizado: «Usar» tarda 1,5 s; cadencias nuevas; tiempos en tiempo de juego).
+- Nuevo `qa/sigilo.mjs`: 25 comprobaciones de sigilo, migración de guardado v1 y caché del service worker.
+- Nuevo `qa/prueba.mjs`: 36 comprobaciones de la prueba v2 (§8) y de la curación con tiempo.
+- Capturas: `qa/shots_v2.mjs` → `shots/v2-*.png`; nuevo `qa/shots_v3.mjs` → `shots/v3-*.png` (sigilo, indicadores y estados, curación, niebla, menú del inventario).
+
+### Problemas conocidos
+- Ejecutar con el bate (12 × 2,5 = 30) solo mata de un golpe a un Errante cerca del minuto 0; con la vida por minuto ya no, y el superviviente pasa a alerta. Si se quiere que siempre sea muerte silenciosa, subir `backstabMult` o darle al Errante un tope de vida para esto.
+- El borde difuminado de la niebla son 3 capas con máscara (no un degradado real): se ve un escalonado suave. Cuesta rendimiento: en la prueba de estrés (Chrome sin GPU, ~100 enemigos) 3 capas dan 16-17 fps frente a 20-24 con 1 capa, y 19 frente a 29 al principio. Hay que medirlo en el iPhone; si se nota, `VISION.fogLayers: 1` o `2` en `src/config/v2.ts` (sin tocar código).

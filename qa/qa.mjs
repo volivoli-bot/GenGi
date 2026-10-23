@@ -32,7 +32,7 @@ st=await E(()=>gengi.state()); ok('equipo sale del refugio al entrar (1 escritur
 {
   await E(()=>{gengi.clearEnemies();gengi.give('vendaje','comun',3);gengi.god(false);gengi.hurt(40);gengi.god(true);gengi.inventory();}); await sleep(300);
   const geo=await E(()=>{const r=document.querySelector('.sheet').getBoundingClientRect();return {l:r.left,t:r.top,r:r.right,b:r.bottom,W:innerWidth,H:innerHeight}});
-  const snapState=()=>E(()=>{const s=gengi.raid();return JSON.stringify({cds:s.snap.player.cds,bag:s.snap.loadout.mochila.map(i=>i.def+i.qty),joy:s.joy.pointerId})});
+  const snapState=()=>E(()=>{const s=gengi.raid();return JSON.stringify({cds:s.snap.player.cds,bag:s.snap.loadout.mochila.map(i=>i.def+i.qty),joy:s.joy.pointerId,cura:s.healStats,aplicando:!!s.applying})});
   const s0=await snapState();
   // 1) toque en la parte izquierda del panel (mitad izquierda de pantalla = zona del joystick)
   await p.touchscreen.touchStart(geo.l+12, geo.t+60); await sleep(120);

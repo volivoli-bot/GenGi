@@ -200,6 +200,14 @@ export class Hud {
   }
 
   flashHurt() { this.hurt.fillAlpha = 0.28; }
+  /** Daño por estado: destello leve en la barra de vida (sin hit-stop ni sacudida). */
+  pulseHp(color: number) {
+    const f = this.hpFill;
+    f.scene.tweens.killTweensOf(f);
+    f.setAlpha(0.45);
+    this.hpBg.setStrokeStyle(2, color, 1);
+    f.scene.tweens.add({ targets: f, alpha: 1, duration: 220, onComplete: () => this.hpBg.setStrokeStyle(2, 0x14110f) });
+  }
 
   /** Viñeta roja en el borde de pantalla hacia `ang` (enemigo oculto detrás); k 0..1 = cercanía. */
   drawVignette(list: { ang: number; k: number }[]) {

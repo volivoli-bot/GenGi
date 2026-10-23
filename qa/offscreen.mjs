@@ -37,7 +37,7 @@ await E(()=>{window.__pins.clear();gengi.clearEnemies();});
 // C) el ataque automático a distancia ignora objetivos fuera de pantalla
 const C=await E(async(T)=>{const s=gengi.raid();gengi.give('pistola','reforzado');gengi.give('municion','comun',24);
   const pis=s.snap.loadout.mochila.find(i=>i.def==='pistola');s.invEquip(pis.uid);s.snap.loadout.arma.mag=12;s.snap.player.reload=0;
-  const e=s.spawnAt('errante',s.player.x+5*T,s.player.y);e.state='idle';e.sightT=1e9;e.sees=false;window.__pins.set(e,{dx:5*T,dy:0});
+  const e=s.spawnAt('errante',s.player.x+5*T,s.player.y);s.enemies.becomeAlert(e,false);e.sightT=1e9;window.__pins.set(e,{dx:5*T,dy:0}); // sigilo v3: el disparo automático ignora a los que no te han detectado → enemigo en alerta
   await new Promise(r=>setTimeout(r,100));
   const pickOff=s.pickTarget(6*T,false);const mag0=s.snap.loadout.arma.mag;
   await new Promise(r=>setTimeout(r,1500));const magOff=s.snap.loadout.arma.mag;const hpOff=e.hp;

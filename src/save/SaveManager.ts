@@ -5,7 +5,7 @@ import { migrate } from './migrations';
 import { createStorage, SaveStorage } from './storage';
 import { SAVE_VERSION, SaveData, Settings } from './types';
 
-export const defaultSettings = (): Settings => ({ prioridad: 'cercano', rarezaMin: 'comun', curarUmbral: 35, rapido: 'vendaje' });
+export const defaultSettings = (): Settings => ({ prioridad: 'cercano', rarezaMin: 'comun', curarUmbral: 35, rapido: 'vendaje', conosEnemigos: true });
 
 export function newSave(): SaveData {
   const now = new Date().toISOString();

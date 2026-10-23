@@ -1,11 +1,11 @@
 import Phaser from 'phaser';
 import {
-  EXIT_RADIUS_TILES, LOCKED_CRATE_NOISE, LOCKED_CRATE_SEC, LOOT_REACH_TILES, LOOT_RING_SEC,
+  EXIT_RADIUS_TILES, LOCKED_CRATE_SEC, LOOT_REACH_TILES, LOOT_RING_SEC,
   PLAYER_MAX_HP, PLAYER_SPEED_TILES, RAID_AUTOSAVE_SEC, TILE, WORLD, COLORS,
   RAID_ZOOM_FACTOR,
 } from '../config/constants';
 import { DIFFICULTY, scaling } from '../config/difficulty';
-import { AIM, JUICE, MAP2, MOVE, PROJECTILE, STAGGER, SWAP, VISION } from '../config/v2';
+import { AIM, JUICE, MAP2, MOVE, PROJECTILE, PRUEBA_V2, STAGGER, STEALTH, SWAP, VISION } from '../config/v2';
 import { ABILITIES, AbilityId, ITEMS } from '../data/items';
 import { EnemyType } from '../data/enemies';
 import { rarityAtLeast, RARITIES } from '../data/rarity';
@@ -16,7 +16,7 @@ import {
 import { rollContainer, rollItem, seeded } from '../game/loot';
 import type { ContainerSnap, ExitState, RaidSnapshot, Settings } from '../save/types';
 import { AimStick } from './aim';
-import { Enemy, EnemyManager, hasDetected, RaidCtx } from './enemies';
+import { Enemy, EnemyManager, hasDetected, isUnaware, RaidCtx } from './enemies';
 import { chooseExits, EXIT_NAMES, ExtractionManager } from './extraction';
 import { FlowField } from './flow';
 import { Fx } from './fx';
@@ -109,7 +109,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   /** Cambio de arma en curso (s restantes): no se ataca. */
   swapT = 0;
   /** QA / diagnóstico v2. */
-  stats = { shots: 0, swaps: 0, attacksDuringSwap: 0, behindWarn: 0, behindVibes: 0, hitStops: 0, crits: 0, doorsOpened: 0, arrowsRecovered: 0, lootPaused: 0, iosKick: 0 };
+  stats = { shots: 0, swaps: 0, attacksDuringSwap: 0, behindWarn: 0, behindVibes: 0, hitStops: 0, crits: 0, doorsOpened: 0, arrowsRecovered: 0, lootPaused: 0, iosKick: 0, backstabs: 0, executes: 0, debrisSteps: 0, autoSkippedUnaware: 0 };
   private attackT = 0;
   private autosaveT = 0;
   private idleT = 0;
@@ -122,6 +122,29 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   private fpsT = 0;
   private abilityIds: (AbilityId | null)[] = [null, null, null];
   private glanceT = 0;
+  // ---- prueba v2: estados e indicadores junto al jugador ----
+  private acidStackT = 0;
+  private statusAcc = { bleed: 0, poison: 0 };
+  private statusTickT = 0;
+  hitTimes: number[] = [];
+  miniHpUntil = -1;
+  private markG: Phaser.GameObjects.Graphics | null = null;
+  private markImgs = new Map<string, Phaser.GameObjects.Image>();
+  private markTxt = new Map<string, Phaser.GameObjects.Text>();
+  /** QA: daño de estados aplicado. */
+  statusDealt = { bleed: 0, poison: 0 };
+  // ---- sigilo ----
+  /** Paso actual según el joystick (sigilo / andar / correr) y ruido que hace ahora (casillas). */
+  moveTier: 'quieto' | 'sigilo' | 'andar' | 'correr' = 'quieto';
+  noiseTiles = 0;
+  private stepT = 0;
+  private noiseRing: Phaser.GameObjects.Image | null = null;
+  private ringR = 0;
+  private conesGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Cristales y latas del suelo (5 casillas de ruido al pisarlos). */
+  debris: { x: number; y: number; img: Phaser.GameObjects.Image; cd: number }[] = [];
+  /** Enemigo desprevenido a tu alcance y de espaldas: el botón de cambio pasa a "Ejecutar". */
+  execTarget: Enemy | null = null;
   private glanceBase = 0;
   private steadyT = 0;
   private steadyRef = 0;
@@ -144,10 +167,10 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.paused = false; this.ended = false; this.containers = []; this.doors = []; this.hud = null; this.joy = null; this.aim = null;
     this.loot = { c: null, t: 0, done: new Set(), ring: null, pause: 0 };
     this.warned13 = d.snap.elapsed >= DIFFICULTY.fogWarningSeconds;
-    this.attackT = 0; this.autosaveT = 0; this.idleT = 0; this.scanT = 0; this.god = false; this.noAmmoWarned = false;
+    this.attackT = 0; this.autosaveT = 0; this.idleT = 0; this.scanT = 0; this.god = false; this.markG = null; this.markImgs = new Map(); this.markTxt = new Map(); this.hitTimes = []; this.miniHpUntil = -1; this.acidStackT = 0; this.statusAcc = { bleed: 0, poison: 0 }; this.statusDealt = { bleed: 0, poison: 0 }; this.applying = null; this.healStats = { done: 0, cancelHit: 0, cancelRelease: 0 }; this.noiseRing = null; this.conesGfx = null; this.debris = []; this.execTarget = null; this.ringR = 0; this.stepT = 0; this.noAmmoWarned = false;
     this.swapT = 0; this.glanceT = 0; this.steadyT = 0; this.hitStopT = 0; this.vel.set(0, 0); this.kick.set(0, 0);
     this.stuck = new Map(); this.groundArrows = []; this.pendingMelee = []; this.behind = [];
-    this.stats = { shots: 0, swaps: 0, attacksDuringSwap: 0, behindWarn: 0, behindVibes: 0, hitStops: 0, crits: 0, doorsOpened: 0, arrowsRecovered: 0, lootPaused: 0, iosKick: 0 };
+    this.stats = { shots: 0, swaps: 0, attacksDuringSwap: 0, behindWarn: 0, behindVibes: 0, hitStops: 0, crits: 0, doorsOpened: 0, arrowsRecovered: 0, lootPaused: 0, iosKick: 0, backstabs: 0, executes: 0, debrisSteps: 0, autoSkippedUnaware: 0 };
   }
 
   // ---------- RaidCtx ----------
@@ -221,6 +244,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     for (const c of s.containers) this.addContainerObj(c);
     this.nextContainerId = Math.max(0, ...s.containers.map(c => c.id)) + 1;
     for (const a of s.arrows!) this.addGroundArrow(a.x, a.y, a.qty, false);
+    this.setupStealth();
 
     for (const i of this.host.seenExits(this.map.id)) this.seen.add(i);
     this.extraction = new ExtractionManager(s.exits, this.map, {
@@ -300,7 +324,11 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     // Joystick de apuntar: solo nace de toques que NO caen en botones/HUD (ni en el minimapa de arriba)
     this.aim = new AimStick(ui, (x, y, pt) => hud.hitTest(x, y) || this.paused || this.ended || y < hud.miniRect.y + hud.miniRect.s + 8 || (!!pt && overUi(pt)));
     this.aim.place(hud.aimRest.x, hud.aimRest.y);
-    ui.input.on('pointerdown', (pt: Phaser.Input.Pointer) => { if (!this.paused && !this.ended && !overUi(pt)) hud.handleTap(pt.x, pt.y); });
+    ui.input.on('pointerdown', (pt: Phaser.Input.Pointer) => { if (!this.paused && !this.ended && !overUi(pt)) { this.tapPointer = pt.id; hud.handleTap(pt.x, pt.y); this.tapPointer = null; } });
+    // curación con el botón rápido: hay que mantenerlo; soltar antes de terminar cancela sin gastar
+    const release = (pt: Phaser.Input.Pointer) => { const a = this.applying; if (a?.hold && (a.pointerId === null || a.pointerId === pt.id)) this.cancelApply('soltar'); };
+    ui.input.on('pointerup', release); ui.input.on('pointerupoutside', release);
+    ui.input.keyboard!.on('keyup-Q', () => { if (this.applying?.hold && this.applying.pointerId === null) this.cancelApply('soltar'); });
     this.keys = ui.input.keyboard!.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,ONE,TWO,THREE,Q,I,P,R') as Record<string, Phaser.Input.Keyboard.Key>;
     ui.input.keyboard!.on('keydown-P', () => this.setPaused(!this.paused, 'usuario'));
     ui.input.keyboard!.on('keydown-I', () => this.toggleInventory());
@@ -311,7 +339,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     ui.input.keyboard!.on('keydown-R', () => this.swapWeapon());
     hud.abilities.forEach((b, i) => b.onTap = () => this.useAbility(i));
     hud.quick.onTap = () => this.useQuick();
-    hud.swap.onTap = () => this.swapWeapon();
+    hud.swap.onTap = () => { if (this.execTarget) this.execute(); else this.swapWeapon(); };
     hud.pauseBtn.onTap = () => this.setPaused(true, 'usuario');
     hud.bagBtn.onTap = () => this.toggleInventory();
     hud.pauseBtn.label.setText('');
@@ -600,6 +628,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       if (c.sprite.visible !== v) { c.sprite.setVisible(v); c.lock?.setVisible(v); c.glow?.setVisible(v && c.snap.items.length > 0); }
     }
     for (const a of this.groundArrows) a.img.setVisible(this.visible(a.x, a.y, 8));
+    for (const d of this.debris) d.img.setVisible(Math.abs(d.x - this.player.x) < 700 && Math.abs(d.y - this.player.y) < 700 && this.visible(d.x, d.y, 6));
   }
 
   // ---------- Flechas recuperables ----------
@@ -688,9 +717,10 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   }
 
   /** Daño a un enemigo con todo el "juice": número, sangre, tambaleo, hit-stop y sacudida según el daño. */
-  dealDamage(e: Enemy, dmg: number, ang: number, weapon: string, crit: boolean, stopMs = JUICE.hitStopMs) {
+  dealDamage(e: Enemy, dmg: number, ang: number, weapon: string, crit: boolean, stopMs = JUICE.hitStopMs, backstab = false) {
     if (crit) this.stats.crits++;
-    const killed = this.enemies.damage(e, dmg, { ang, weapon, crit });
+    if (backstab) this.stats.backstabs++;
+    const killed = this.enemies.damage(e, dmg, { ang, weapon, crit, backstab });
     if (e.visibleNow || this.visible(e.x, e.y, e.def.size * 0.4)) { this.hitStop(crit ? JUICE.hitStopHeavyMs : stopMs); this.shakeFor(dmg * (crit ? 1.5 : 1)); }
     return killed;
   }
@@ -704,7 +734,12 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     let dmg = n;
     if (react) dmg *= (1 - totalProtection(this.snap.loadout)) * (p.aguantar > 0 ? 0.4 : 1);
     p.hp -= dmg;
+    if (react && this.applying) this.cancelApply('golpe');
     if (react) {
+      // mini barra de vida: 2 golpes en 3 s → visible 3 s desde el último
+      const now = this.snap.elapsed;
+      this.hitTimes = this.hitTimes.filter(t => now - t < PRUEBA_V2.miniHpWindowSec); this.hitTimes.push(now);
+      if (this.hitTimes.length >= PRUEBA_V2.miniHpHits) this.miniHpUntil = now + PRUEBA_V2.miniHpStaySec;
       this.extraction.onHit();
       // el anillo de looteo se PAUSA (no se reinicia) al recibir un golpe
       if (this.loot.c && this.loot.t > 0) { this.loot.pause = 0.6; this.stats.lootPaused++; }
@@ -744,6 +779,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const cands: { e: Enemy; d: number }[] = [];
     for (const e of this.enemies.list) {
       if (!e.targetable) continue;
+      // sigilo: el ataque automático NUNCA elige a quien no te ha detectado (a esos se les ataca a propósito)
+      if (isUnaware(e)) { this.stats.autoSkippedUnaware++; continue; }
       if (!melee && (!this.onScreen(e.x, e.y) || !this.visible(e.x, e.y, e.def.size * 0.3))) continue;
       const d = Math.hypot(e.x - px, e.y - py) - e.def.size * 0.3;
       if (d > rangePx) continue;
@@ -803,7 +840,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.attackT = 1 / (ws.aps * (auto ? AIM.autoFireRateMult : 1));
     const { dmg, crit } = this.rollCrit(ws.dmg);
     const ox = this.player.x + Math.cos(ang) * 20, oy = this.player.y + Math.sin(ang) * 20;
-    this.proj.fire(this.isBow() ? 'flecha' : 'bala', ox, oy, ang, ws.rangeTiles * TILE, dmg, crit, this.weaponId());
+    this.proj.fire(this.isBow() ? 'flecha' : 'bala', ox, oy, ang, ws.rangeTiles * TILE, dmg, crit, this.weaponId(), !auto);
     this.stats.shots++;
     if (!this.isBow()) this.fx.muzzle(this.player.x + Math.cos(ang) * 34, this.player.y + Math.sin(ang) * 34, ang);
     // retroceso: en Android vibración corta; en iOS (sin vibración) más retroceso del arma + golpe y sacudida de cámara
@@ -825,6 +862,12 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   private onProjHit(pj: Proj, e: Enemy) {
     const ang = Math.atan2(pj.vy, pj.vx);
     if (pj.kind === 'flecha' && Math.random() < PROJECTILE.arrowRecoverChance) this.stuck.set(e, (this.stuck.get(e) ?? 0) + 1);
+    // sigilo: un disparo apuntado (joystick derecho) a un desprevenido aplica x2,5 y crítico
+    if (pj.aimed && isUnaware(e)) {
+      const base = pj.crit ? pj.dmg / JUICE.critMult : pj.dmg;
+      this.dealDamage(e, base * STEALTH.backstabMult, ang, pj.weapon, true, JUICE.hitStopHeavyMs, true);
+      return;
+    }
     this.dealDamage(e, pj.dmg, ang, pj.weapon, pj.crit, pj.kind === 'bala' ? 50 : JUICE.hitStopMs);
   }
 
@@ -838,7 +881,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.attackT -= dt;
     const g = this.aimGfx!.clear();
     this.rig.aiming = false;
-    if (this.swapT > 0) return;
+    if (this.swapT > 0 || this.applying) return; // cambiando de arma o curándote: no se ataca ni se apunta
     if (!ws.melee) {
       const ready = this.readyRanged(dt);
       if (aim.aiming) {
@@ -906,6 +949,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       arc.lineStyle(6, COLORS.hueso, 0.9).beginPath().arc(this.player.x, this.player.y, TILE * 0.9, ang - 0.7, ang + 0.7).strokePath();
       this.tweens.add({ targets: arc, alpha: 0, duration: 160, onComplete: () => arc.destroy() });
       this.dealDamage(e, m.dmg, ang, m.weapon, m.crit, m.heavy ? JUICE.hitStopHeavyMs : JUICE.hitStopMs);
+      // golpe que conecta: ruido medio
+      this.noise(this.player.x, this.player.y, STEALTH.meleeHitNoise);
     }
   }
 
@@ -915,19 +960,21 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     g.clear();
     const p = this.snap.player;
     let k = -1;
-    if (this.swapT > 0) k = 1 - this.swapT / SWAP.sec;
+    const ap = this.applying;
+    if (ap) k = Phaser.Math.Clamp(ap.t / ap.total, 0, 1);
+    else if (this.swapT > 0) k = 1 - this.swapT / SWAP.sec;
     else if (p.reload > 0) { const total = weaponStats(this.snap.loadout.arma).reloadSec ?? 1.5; k = Phaser.Math.Clamp(1 - p.reload / total, 0, 1); }
     if (k < 0) return;
-    const x = this.player.x, y = this.player.y - 34;
-    g.fillStyle(COLORS.contorno, 0.6).fillCircle(x, y, 9);
-    g.lineStyle(3, COLORS.hueso, 0.35).strokeCircle(x, y, 7);
-    g.lineStyle(3, this.swapT > 0 ? 0x3c8cff : COLORS.hueso, 1).beginPath().arc(x, y, 7, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2).strokePath();
+    const x = this.player.x, y = this.player.y - 34, r = ap ? 10 : 7; // curación: anillo verde algo mayor
+    g.fillStyle(COLORS.contorno, 0.6).fillCircle(x, y, r + 2);
+    g.lineStyle(3, COLORS.hueso, 0.35).strokeCircle(x, y, r);
+    g.lineStyle(ap ? 4 : 3, ap ? 0x4cd964 : this.swapT > 0 ? 0x3c8cff : COLORS.hueso, 1).beginPath().arc(x, y, r, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2).strokePath();
   }
 
   // ---------- Arma de reserva ----------
   /** Cambio rápido arma principal ↔ reserva: 0,4 s sin poder atacar. */
   swapWeapon() {
-    if (this.paused || this.ended || this.swapT > 0) return false;
+    if (this.paused || this.ended || this.swapT > 0 || this.applying) return false;
     const lo = this.snap.loadout;
     if (!lo.reserva) { this.hud?.toast('Sin arma de reserva', 1); return false; }
     this.swapT = SWAP.sec;
@@ -955,7 +1002,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
 
   /** Habilidades: las direccionales (golpe, perforante, ráfaga) salen hacia donde miras. */
   useAbility(i: number) {
-    if (this.paused || this.ended) return;
+    if (this.paused || this.ended || this.applying) return;
     const id = this.abilityIds[i];
     if (!id) return;
     const p = this.snap.player;
@@ -1013,8 +1060,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
         });
         break;
       }
-      case 'aguantar': p.aguantar = 3; this.hud?.toast('Aguantar: -60 % daño', 1.2); break;
-      case 'escanear': this.scanT = 6; break;
+      case 'aguantar': p.aguantar = 3; break; // sin texto arriba: icono sobre el personaje (§8.4)
+      case 'escanear': this.scanT = PRUEBA_V2.scanSec; break;
     }
     if (ok) p.cds[id] = ABILITIES[id].cooldown;
   }
@@ -1022,16 +1069,51 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   useQuick() {
     const pref = this.settings.rapido;
     const other = pref === 'vendaje' ? 'botiquin' : 'vendaje';
-    this.useConsumable(this.hasItem(pref) ? pref : other);
+    this.useConsumable(this.hasItem(pref) ? pref : other, true);
   }
 
   private hasItem(id: string) { return countOf(this.snap.loadout.mochila, id) > 0 || this.snap.loadout.bolsillo?.def === id; }
 
-  useConsumable(id: string) {
+  /** Curación en curso (§8.8): se aplica al terminar; hold = desde el botón rápido (soltar cancela). */
+  applying: { id: string; t: number; total: number; hold: boolean; pointerId: number | null } | null = null;
+  /** QA: curaciones completadas / canceladas (y por qué). */
+  healStats = { done: 0, cancelHit: 0, cancelRelease: 0 };
+  private tapPointer: number | null = null;
+
+  cancelApply(why: 'golpe' | 'soltar') {
+    if (!this.applying) return;
+    this.applying = null;
+    if (why === 'golpe') this.healStats.cancelHit++; else this.healStats.cancelRelease++;
+    this.hud?.toast(why === 'golpe' ? 'Curación interrumpida por un golpe (no se gasta)' : 'Curación cancelada (no se gasta)', 1.2);
+  }
+
+  private updateApply(dt: number) {
+    const a = this.applying; if (!a) return;
+    a.t += dt;
+    if (a.t >= a.total) { this.applying = null; this.finishConsumable(a.id); }
+  }
+
+  /** Empieza a aplicar un consumible (no se gasta hasta terminar). */
+  useConsumable(id: string, hold = false) {
     if (this.ended || this.paused) return false;
+    if (this.applying) return false;
     const p = this.snap.player;
-    if (p.healLeft > 0) { this.hud?.toast('Ya te estás curando', 1); return false; }
-    if (p.hp >= PLAYER_MAX_HP) { this.hud?.toast('Vida al máximo', 1); return false; }
+    const S = PRUEBA_V2.status;
+    const cures = (S.curaSangrado.includes(id) && (p.bleed?.length ?? 0) > 0) || (S.curaVeneno.includes(id) && (p.poison?.length ?? 0) > 0);
+    if (p.healLeft > 0 && !cures) { this.hud?.toast('Ya te estás curando', 1); return false; }
+    if (p.hp >= PLAYER_MAX_HP && !cures) { this.hud?.toast('Vida al máximo', 1); return false; }
+    const h = ITEMS[id]?.heal;
+    if (!h) return false;
+    if (!this.hasItem(id)) { this.hud?.toast(`No tienes ${ITEMS[id].nombre.toLowerCase()}`, 1); return false; }
+    const total = PRUEBA_V2.applySec[id] ?? 0;
+    if (total <= 0) return this.finishConsumable(id);
+    this.applying = { id, t: 0, total, hold, pointerId: hold ? this.tapPointer : null };
+    this.pendingMelee = [];
+    return true;
+  }
+
+  private finishConsumable(id: string) {
+    const p = this.snap.player, S = PRUEBA_V2.status;
     const h = ITEMS[id]?.heal;
     if (!h) return false;
     const lo = this.snap.loadout;
@@ -1039,8 +1121,12 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       if (lo.bolsillo?.def === id) { lo.bolsillo.qty--; if (lo.bolsillo.qty <= 0) lo.bolsillo = null; }
       else { this.hud?.toast(`No tienes ${ITEMS[id].nombre.toLowerCase()}`, 1); return false; }
     }
+    this.healStats.done++;
     p.healLeft = h.amount; p.healRate = h.amount / h.seconds;
-    this.hud?.toast(`${ITEMS[id].nombre}: +${h.amount}`, 1.2);
+    const cured: string[] = [];
+    if (S.curaSangrado.includes(id) && p.bleed?.length) { p.bleed = []; cured.push('sangrado'); }
+    if (S.curaVeneno.includes(id) && p.poison?.length) { p.poison = []; cured.push('veneno'); }
+    this.hud?.toast(`${ITEMS[id].nombre}: +${h.amount}${cured.length ? ' · fuera ' + cured.join(' y ') : ''}`, 1.2);
     this.host.refreshInventory();
     return true;
   }
@@ -1048,7 +1134,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   private autoHeal() {
     const p = this.snap.player;
     const th = this.settings.curarUmbral;
-    if (th <= 0 || p.healLeft > 0 || (p.hp / PLAYER_MAX_HP) * 100 >= th) return;
+    if (th <= 0 || p.healLeft > 0 || this.applying || (p.hp / PLAYER_MAX_HP) * 100 >= th) return;
     const deficit = PLAYER_MAX_HP - p.hp;
     const order = deficit > 45 ? ['botiquin', 'vendaje'] : ['vendaje', 'botiquin'];
     for (const id of order) if (this.hasItem(id)) { this.useConsumable(id); return; }
@@ -1208,7 +1294,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     L.ring.clear();
     if (!can || !c) return;
     const need = c.snap.kind === 'cerrada' && !c.snap.opened ? LOCKED_CRATE_SEC : LOOT_RING_SEC;
-    if (L.t === 0 && L.pause <= 0 && c.snap.kind === 'cerrada' && !c.snap.opened) { this.noise(c.snap.x, c.snap.y, LOCKED_CRATE_NOISE); this.hud?.toast('La caja cerrada cruje… hace ruido', 1.5); }
+    if (L.t === 0 && L.pause <= 0 && c.snap.kind === 'cerrada' && !c.snap.opened) { this.noise(c.snap.x, c.snap.y, STEALTH.crateNoise); this.hud?.toast('La caja cerrada cruje… hace ruido', 1.5); }
     const paused = L.pause > 0;
     if (paused) L.pause -= dt; else L.t += dt;
     const k = Math.min(1, L.t / need);
@@ -1253,6 +1339,237 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   }
   seenExitList() { return [...this.seen].sort(); }
 
+  // ---------- Estados (veneno / sangrado) e indicadores ----------
+  /** Añade cargas (máx. 5 por tipo; si está lleno se renueva la más gastada). Cada carga lleva su temporizador. */
+  addStatus(kind: 'bleed' | 'poison', stacks: number) {
+    if (this.ended || this.god || stacks <= 0) return;
+    const S = PRUEBA_V2.status, p = this.snap.player;
+    const arr = (kind === 'bleed' ? (p.bleed ??= []) : (p.poison ??= []));
+    const dur = kind === 'bleed' ? S.bleedSec : S.poisonSec;
+    for (let i = 0; i < stacks; i++) {
+      if (arr.length < S.maxStacks) arr.push(dur);
+      else { let m = 0; for (let k = 1; k < arr.length; k++) if (arr[k] < arr[m]) m = k; arr[m] = dur; }
+    }
+  }
+
+  /** Cada carga hace 7,5 en total repartido en su duración (sangrado 1,25/s, veneno 1,9/s); se aplica cada 0,5 s sin hit-stop. */
+  private updateStatus(dt: number) {
+    const S = PRUEBA_V2.status, p = this.snap.player;
+    for (const kind of ['bleed', 'poison'] as const) {
+      const arr = kind === 'bleed' ? p.bleed : p.poison;
+      if (!arr || !arr.length) continue;
+      const dps = S.stackDmg / (kind === 'bleed' ? S.bleedSec : S.poisonSec);
+      for (let i = arr.length - 1; i >= 0; i--) {
+        const t = Math.min(dt, arr[i]);
+        this.statusAcc[kind] += dps * t;
+        arr[i] -= dt;
+        if (arr[i] <= 1e-6) arr.splice(i, 1);
+      }
+    }
+    this.statusTickT -= dt;
+    const empty = !(p.bleed?.length) && !(p.poison?.length);
+    if (this.statusTickT <= 0 || empty) {
+      this.statusTickT = S.tickSec;
+      for (const kind of ['bleed', 'poison'] as const) {
+        const n = this.statusAcc[kind];
+        if (n <= 0) continue;
+        this.statusAcc[kind] = 0;
+        this.statusDealt[kind] += n;
+        this.damagePlayer(n, kind === 'bleed' ? 'Sangrado' : 'Veneno', false);
+        this.hud?.pulseHp(kind === 'bleed' ? 0xff3b30 : 0x9fe03a);
+        this.miniFlashT = 0.25;
+      }
+    }
+  }
+  private miniFlashT = 0;
+  /** QA: ¿se ve la mini barra de vida? */
+  miniShown = false;
+
+  /** Iconos de habilidad activa (18 px, arco que se vacía), mini barra de vida (36×4) y estados (14 px con cargas). */
+  private drawPlayerMarks(dt: number) {
+    const g = this.markG ??= this.add.graphics().setDepth(32);
+    g.clear();
+    const P = PRUEBA_V2, p = this.snap.player, x = this.player.x, y = this.player.y;
+    const used = new Set<string>();
+    const img = (key: string, px: number, ix: number, iy: number) => {
+      let o = this.markImgs.get(key);
+      if (!o) { o = this.add.image(0, 0, key).setDepth(31.5); this.markImgs.set(key, o); }
+      o.setTexture(key).setDisplaySize(px, px).setPosition(ix, iy).setVisible(true);
+      used.add(key);
+      return o;
+    };
+    // habilidades activas en fila sobre la cabeza
+    const act = [
+      { key: 'hab_aguantar', left: p.aguantar, total: 3 },
+      { key: 'hab_escanear', left: this.scanT, total: P.scanSec },
+    ].filter(a => a.left > 0);
+    const ringOn = !!this.applying || this.swapT > 0 || p.reload > 0; // el anillo de progreso va justo encima de la cabeza: la fila sube
+    const s = P.abilityIconPx, gap = 4, ay = y - (ringOn ? 62 : 46);
+    act.forEach((a, i) => {
+      const ax = x + (i - (act.length - 1) / 2) * (s + gap);
+      img(a.key, s, ax, ay);
+      const k = Phaser.Math.Clamp(a.left / a.total, 0, 1);
+      g.lineStyle(2.5, 0x14110f, 0.8).strokeCircle(ax, ay, s / 2 + 2);
+      g.lineStyle(2, 0xffd23c, 1).beginPath().arc(ax, ay, s / 2 + 2, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2, false).strokePath();
+    });
+    // mini barra de vida bajo el personaje
+    const k = Phaser.Math.Clamp(p.hp / PLAYER_MAX_HP, 0, 1);
+    const showBar = k < P.miniHpLowPct || this.snap.elapsed < this.miniHpUntil;
+    this.miniShown = showBar;
+    if (this.miniFlashT > 0) this.miniFlashT -= dt;
+    const bw = P.miniHpW, bh = P.miniHpH, bx = x - bw / 2, by = y + 30;
+    if (showBar) {
+      // mismos colores y forma que barra_vida.svg de Basu
+      g.fillStyle(0x14110f, 0.9).fillRoundedRect(bx - 1, by - 1, bw + 2, bh + 2, 3);
+      g.fillStyle(this.miniFlashT > 0 ? 0xffffff : k < P.miniHpLowPct ? 0xff3b30 : 0x4cd964, 1).fillRoundedRect(bx, by, Math.max(1, bw * k), bh, 2);
+    }
+    // estados con número de cargas, al lado de la barra
+    const st = [
+      { key: 'estado_sangrado', n: p.bleed?.length ?? 0 },
+      { key: 'estado_veneno', n: p.poison?.length ?? 0 },
+    ].filter(a => a.n > 0);
+    st.forEach((a, i) => {
+      const ix = x + bw / 2 + 10 + i * 26, iy = by + bh / 2;
+      img(a.key, P.statusIconPx, ix, iy);
+      let t = this.markTxt.get(a.key);
+      if (!t) { t = this.add.text(0, 0, '', { fontFamily: 'system-ui, sans-serif', fontSize: '11px', fontStyle: 'bold', color: '#fff', stroke: '#000', strokeThickness: 3 }).setOrigin(0, 0.5).setDepth(31.6); this.markTxt.set(a.key, t); }
+      t.setText(String(a.n)).setPosition(ix + 7, iy + 2).setVisible(true);
+    });
+    for (const [k2, o] of this.markImgs) if (!used.has(k2)) o.setVisible(false);
+    for (const [k2, t] of this.markTxt) if (!st.some(a => a.key === k2)) t.setVisible(false);
+  }
+
+  // ---------- Sigilo ----------
+  private setupStealth() {
+    this.makeDebrisTextures();
+    const ringKey = this.textures.exists('ui_anillo_ruido') ? 'ui_anillo_ruido' : null;
+    if (ringKey) this.noiseRing = this.add.image(this.player.x, this.player.y, ringKey).setDepth(4.6).setAlpha(0).setBlendMode(Phaser.BlendModes.ADD);
+    this.conesGfx = this.add.graphics().setDepth(4.4);
+    // cristales y latas: reproducibles por semilla (no hace falta guardarlos)
+    const rng = seeded((this.snap.seed ^ 0x5eed1e) >>> 0);
+    const floors = this.map.floors;
+    const sp = this.map.spawn;
+    for (let i = 0, tries = 0; i < STEALTH.debrisCount && tries < STEALTH.debrisCount * 20; tries++) {
+      let x: number, y: number;
+      if (floors.length && rng() < 0.7) { const f = floors[Math.floor(rng() * floors.length)]; x = f.x + TILE * 0.5 + rng() * Math.max(1, f.w - TILE); y = f.y + TILE * 0.5 + rng() * Math.max(1, f.h - TILE); }
+      else { x = TILE * 2 + rng() * (WORLD - TILE * 4); y = TILE * 2 + rng() * (WORLD - TILE * 4); }
+      if (pointInWalls(this.walls, x, y, TILE * 0.4) || Math.hypot(x - sp.x, y - sp.y) < TILE * 5) continue;
+      const lata = rng() < 0.4;
+      const img = this.add.image(x, y, lata ? 'suelo_lata' : 'suelo_cristal').setDepth(4.3).setRotation(rng() * Math.PI * 2).setVisible(false);
+      this.debris.push({ x, y, img, cd: 0 });
+      i++;
+    }
+  }
+
+  /** Texturas de suelo hechas a mano (no son arte de Basu): cristales rotos y lata aplastada. */
+  private makeDebrisTextures() {
+    if (!this.textures.exists('suelo_cristal')) {
+      const g = this.make.graphics({ x: 0, y: 0 }, false);
+      g.fillStyle(0xbfe6ff, 0.85);
+      g.fillTriangle(4, 14, 12, 3, 15, 12); g.fillTriangle(17, 18, 26, 9, 25, 20); g.fillTriangle(9, 24, 15, 19, 18, 28); g.fillTriangle(22, 4, 28, 3, 26, 8);
+      g.lineStyle(1, 0xffffff, 0.9); g.lineBetween(12, 3, 15, 12); g.lineBetween(26, 9, 25, 20);
+      g.generateTexture('suelo_cristal', 32, 32); g.destroy();
+    }
+    if (!this.textures.exists('suelo_lata')) {
+      const g = this.make.graphics({ x: 0, y: 0 }, false);
+      g.fillStyle(0x8a8f96, 1).fillRoundedRect(6, 10, 20, 12, 3);
+      g.fillStyle(0xc8473a, 1).fillRect(11, 10, 8, 12);
+      g.fillStyle(0xd8dde2, 1).fillEllipse(6, 16, 5, 12);
+      g.lineStyle(1, 0x2a2420, 0.9).strokeRoundedRect(6, 10, 20, 12, 3);
+      g.generateTexture('suelo_lata', 32, 32); g.destroy();
+    }
+  }
+
+  /** Radio de ruido del paso actual (casillas): sigilo 1, andar 3, correr 6; chaleco militar +1. */
+  footNoise() {
+    const sp = this.vel.length();
+    if (this.moveTier === 'quieto' || sp < 12) return 0;
+    const base = this.moveTier === 'sigilo' ? STEALTH.sigiloNoise : this.moveTier === 'andar' ? STEALTH.andarNoise : STEALTH.correrNoise;
+    return base + (this.snap.loadout.torso?.def === 'chaleco' ? STEALTH.heavyArmorNoise : 0);
+  }
+
+  private updateStealth(dt: number) {
+    const px = this.player.x, py = this.player.y;
+    // pasos: ruido cada 0,25 s (no atrae hordas: solo el ruido fuerte puntual)
+    this.noiseTiles = this.footNoise();
+    this.stepT -= dt;
+    if (this.stepT <= 0) { this.stepT = STEALTH.stepEverySec; if (this.noiseTiles > 0) this.enemies.noise(px, py, this.noiseTiles); }
+    // anillo de ruido (arte de Basu: anillo de radio 60 en 128)
+    const want = this.noiseTiles * TILE;
+    this.ringR += (want - this.ringR) * Math.min(1, dt * 10);
+    if (this.noiseRing) {
+      const vis = this.ringR > 4;
+      this.noiseRing.setVisible(vis).setPosition(px, py);
+      if (vis) this.noiseRing.setDisplaySize(this.ringR * 2 * 128 / 120, this.ringR * 2 * 128 / 120).setAlpha(0.22 + 0.25 * Math.min(1, this.noiseTiles / STEALTH.correrNoise));
+    }
+    // cristales y latas
+    for (const d of this.debris) {
+      if (d.cd > 0) d.cd -= dt;
+      if (Math.abs(d.x - px) > TILE || Math.abs(d.y - py) > TILE) continue;
+      if (d.cd > 0 || this.vel.length() < 12 || Math.hypot(d.x - px, d.y - py) > STEALTH.debrisStepTiles * TILE + this.playerRadius) continue;
+      d.cd = STEALTH.debrisCooldownSec;
+      this.stats.debrisSteps++;
+      this.noise(d.x, d.y, STEALTH.debrisNoise);
+      this.tweens.add({ targets: d.img, angle: d.img.angle + 25, duration: 90, yoyo: true });
+      this.hud?.toast(d.img.texture.key === 'suelo_lata' ? '¡Clonc! Has pisado una lata' : '¡Crac! Has pisado cristales', 1);
+    }
+    this.execTarget = this.findExecTarget();
+    this.drawCones();
+  }
+
+  /** Enemigo desprevenido, de espaldas, a alcance cuerpo a cuerpo y sin pared en medio (el más cercano). */
+  findExecTarget(): Enemy | null {
+    const ws = weaponStats(this.snap.loadout.arma);
+    if (!ws.melee || this.swapT > 0 || this.applying) return null;
+    const px = this.player.x, py = this.player.y;
+    const range = ws.rangeTiles * TILE + this.playerRadius;
+    let best: Enemy | null = null, bd = Infinity;
+    for (const e of this.enemies.list) {
+      if (!e.targetable || !isUnaware(e)) continue;
+      const d = Math.hypot(e.x - px, e.y - py) - e.def.size * 0.3;
+      if (d > range || d >= bd) continue;
+      if (!this.enemies.behind(e, px, py) || !lineClear(this.walls, px, py, e.x, e.y)) continue;
+      best = e; bd = d;
+    }
+    return best;
+  }
+
+  /** "Ejecutar": golpe por la espalda a propósito. x2,5 y crítico; si muere, nadie se entera. */
+  execute() {
+    const e = this.execTarget;
+    if (!e || e.dead || this.paused || this.ended || this.swapT > 0 || this.applying || this.attackT > 0 || !isUnaware(e)) return false;
+    const ws = weaponStats(this.snap.loadout.arma);
+    this.attackT = 1 / ws.aps;
+    const ang = Math.atan2(e.y - this.player.y, e.x - this.player.x);
+    this.facing = ang;
+    this.rig.swing();
+    this.stats.executes++;
+    const arc = this.add.graphics().setDepth(11);
+    arc.lineStyle(7, 0xff4a3c, 0.95).beginPath().arc(this.player.x, this.player.y, TILE * 0.9, ang - 0.7, ang + 0.7).strokePath();
+    this.tweens.add({ targets: arc, alpha: 0, duration: 200, onComplete: () => arc.destroy() });
+    const killed = this.dealDamage(e, ws.dmg * STEALTH.backstabMult, ang, this.weaponId(), true, JUICE.hitStopHeavyMs, true);
+    this.execTarget = null;
+    return killed;
+  }
+
+  /** Conos tenues de vista en el suelo de los enemigos que ves (ajuste "Conos de visión"). */
+  private drawCones() {
+    const g = this.conesGfx; if (!g) return;
+    g.clear();
+    if (this.settings.conosEnemigos === false) return;
+    const half = Phaser.Math.DegToRad(STEALTH.coneDeg / 2);
+    const max = STEALTH.conesMaxTiles * TILE;
+    for (const e of this.enemies.list) {
+      if (e.dead || !e.visibleNow || e.state === 'swell') continue;
+      if (Math.abs(e.x - this.player.x) > max || Math.abs(e.y - this.player.y) > max) continue;
+      const r = (STEALTH.sightTiles[e.def.type] ?? 6) * TILE;
+      const unaware = isUnaware(e);
+      const col = !unaware ? 0xff3b30 : e.state === 'investigate' || e.meter > 0.01 ? 0xffc83c : 0xe8e2d0;
+      const a = !unaware ? 0.07 : e.state === 'investigate' || e.meter > 0.01 ? 0.11 : 0.07;
+      g.fillStyle(col, a).slice(e.x, e.y, r, e.facing - half, e.facing + half, false).fillPath();
+    }
+  }
+
   // ---------- Movimiento / mirada ----------
   /** Inercia: 0 → máx en 0,25 s, frenada en 0,18 s; cada punto de peso alarga ambos un 2 %. Derrape suave al girar. */
   private move(dt: number) {
@@ -1264,9 +1581,13 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     if (v.length() > 1) v.normalize();
     const ranged = !weaponStats(lo.arma).melee;
     const aiming = !!this.aim?.aiming && ranged;
-    const max = PLAYER_SPEED_TILES * TILE * speedMult(lo) * (aiming ? MOVE.aimSpeedMult : 1);
+    const max = PLAYER_SPEED_TILES * TILE * speedMult(lo) * (aiming ? MOVE.aimSpeedMult : 1) * (this.applying ? PRUEBA_V2.applyMoveMult : 1);
     const wk = 1 + MOVE.weightTimePct * totalWeight(lo);
-    const target = v.clone().scale(max);
+    // sigilo: tres pasos según cuánto empujas el joystick (teclado = correr)
+    const mag = Math.min(1, v.length());
+    this.moveTier = mag < 0.02 ? 'quieto' : mag < STEALTH.sigiloStick ? 'sigilo' : mag < STEALTH.andarStick ? 'andar' : 'correr';
+    const tierK = this.moveTier === 'sigilo' ? STEALTH.sigiloSpeed : this.moveTier === 'andar' ? STEALTH.andarSpeed : 1;
+    const target = mag < 0.02 ? new Phaser.Math.Vector2() : v.clone().normalize().scale(max * tierK);
     const accel = (PLAYER_SPEED_TILES * TILE) / (MOVE.accelSec * wk);
     const decel = (PLAYER_SPEED_TILES * TILE) / (MOVE.decelSec * wk);
     const dvx = target.x - this.vel.x, dvy = target.y - this.vel.y;
@@ -1398,6 +1719,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     }
 
     this.flow.compute(this.player.x, this.player.y);
+    this.updateStealth(dt);
     this.enemies.update(dt);
     if (this.ended) return;
 
@@ -1405,6 +1727,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     for (const id of Object.keys(p.cds) as AbilityId[]) { p.cds[id] = Math.max(0, (p.cds[id] ?? 0) - dt); }
     if (p.aguantar > 0) p.aguantar -= dt;
     if (p.healLeft > 0) { const h = Math.min(p.healLeft, p.healRate * dt); p.healLeft -= h; p.hp = Math.min(PLAYER_MAX_HP, p.hp + h); if (p.hp >= PLAYER_MAX_HP) p.healLeft = 0; }
+    this.updateApply(dt);
     this.autoHeal();
     this.combat(dt);
     this.updatePendingMelee(dt);
@@ -1415,13 +1738,20 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
 
     // ácido
     const g = this.acidGfx!.clear();
+    let inAcid = false;
     for (let i = s.acid.length - 1; i >= 0; i--) {
       const a = s.acid[i]; a.t -= dt;
       if (a.t <= 0) { s.acid.splice(i, 1); continue; }
       g.fillStyle(COLORS.toxico, 0.25 * Math.min(1, a.t)).fillCircle(a.x, a.y, TILE * 1.4).lineStyle(2, COLORS.toxico, 0.6).strokeCircle(a.x, a.y, TILE * 1.4);
-      if (Math.hypot(a.x - this.player.x, a.y - this.player.y) < TILE * 1.4) this.damagePlayer(6 * dt, 'Ácido', false);
+      if (Math.hypot(a.x - this.player.x, a.y - this.player.y) < TILE * 1.4) inAcid = true;
       for (const e of [...this.enemies.list]) if (Math.hypot(a.x - e.x, a.y - e.y) < TILE * 1.4) this.enemies.damageTick(e, 6 * dt);
     }
+
+    // charco de ácido: 1 carga de veneno por segundo dentro (§8.7)
+    this.acidStackT -= dt;
+    if (inAcid && this.acidStackT <= 0) { this.acidStackT = PRUEBA_V2.status.acidStackEverySec; this.addStatus('poison', 1); }
+    this.updateStatus(dt);
+    if (this.ended) return;
 
     // niebla tóxica
     if (s.elapsed >= DIFFICULTY.fogWarningSeconds && !this.warned13) { this.warned13 = true; this.hud.toast('⚠ La niebla tóxica llega en 2 minutos', 4); }
@@ -1448,7 +1778,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const sg = this.scanGfx!.clear();
     if (this.scanT > 0) {
       this.scanT -= dt;
-      const R = TILE * 10;
+      const R = TILE * PRUEBA_V2.scanTiles;
       sg.lineStyle(2, 0x3c8cff, 0.5).strokeCircle(this.player.x, this.player.y, R);
       for (const e of this.enemies.list) if (Math.hypot(e.x - this.player.x, e.y - this.player.y) < R) sg.lineStyle(3, COLORS.peligro, 0.9).strokeCircle(e.x, e.y, e.def.size * 0.6);
       for (const c of this.containers) if (c.snap.items.length && Math.hypot(c.snap.x - this.player.x, c.snap.y - this.player.y) < R) {
@@ -1458,6 +1788,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     }
 
     this.updateBehind(dt);
+    this.drawPlayerMarks(dt);
 
     // HUD
     this.refreshAbilities();
@@ -1467,7 +1798,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.hud.timer.setText(remain > 0 ? `${Math.floor(remain / 60)}:${String(Math.floor(remain % 60)).padStart(2, '0')}` : 'NIEBLA').setColor(remain < 120 ? '#ff3cc8' : '#e8e2d0');
     const ammo = ws.mag && lo.arma ? `  ·  ${p.reload > 0 ? 'recargando' : lo.arma.mag ?? 0}/${countOf(lo.mochila, 'municion')}` : this.isBow() ? `  ·  flechas ${this.arrowsLeft()}` : '';
     const sm = speedMult(lo);
-    this.hud.info.setText(`${lo.arma ? def(lo.arma).nombre : 'Puños'}${ammo}  ·  min ${Math.floor(minute)}${sm < 0.999 ? `  ·  vel ${Math.round(sm * 100)}%` : ''}${p.aguantar > 0 ? '  ·  AGUANTAR' : ''}${p.healLeft > 0 ? '  ·  curando' : ''}`);
+    this.hud.info.setText(`${lo.arma ? def(lo.arma).nombre : 'Puños'}${ammo}  ·  min ${Math.floor(minute)}${sm < 0.999 ? `  ·  vel ${Math.round(sm * 100)}%` : ''}${p.healLeft > 0 ? '  ·  curando' : ''}`);
     this.abilityIds.forEach((id, i) => {
       const b = this.hud!.abilities[i];
       if (!id) b.set({ icon: null, label: '', cd: 0, maxCd: 0, enabled: false });
@@ -1477,7 +1808,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const qn = countOf(lo.mochila, qid) + (lo.bolsillo?.def === qid ? lo.bolsillo.qty : 0);
     this.hud.quick.set({ icon: ITEMS[qid].icon, label: ITEMS[qid].nombre, cd: p.healLeft > 0 ? p.healLeft : 0, maxCd: ITEMS[qid].heal!.amount, enabled: qn > 0, badge: String(qn) });
     const rv = lo.reserva ?? null;
-    this.hud.swap.set({ icon: rv ? ITEMS[rv.def].icon ?? null : null, label: rv ? 'Cambiar' : '', cd: this.swapT, maxCd: SWAP.sec, enabled: !!rv, badge: rv ? '⇄' : undefined });
+    if (this.execTarget) this.hud.swap.set({ icon: 'ui_ejecutar', label: 'Ejecutar', cd: 0, maxCd: 0, enabled: this.attackT <= 0 });
+    else this.hud.swap.set({ icon: rv ? ITEMS[rv.def].icon ?? null : null, label: rv ? 'Cambiar' : '', cd: this.swapT, maxCd: SWAP.sec, enabled: !!rv, badge: rv ? '⇄' : undefined });
     this.hud.bagBtn.set({ icon: 'caja', label: '', cd: 0, maxCd: 0, enabled: true });
     this.hud.pauseBtn.set({ icon: null, label: '', cd: 0, maxCd: 0, enabled: true });
     // salidas: solo las vistas alguna vez en este mapa (o a la vista ahora); flechas de borde solo de las activas vistas
@@ -1488,7 +1820,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const threats = this.enemies.list.filter(e => hasDetected(e) && !(this.onScreen(e.x, e.y) && e.visibleNow)).map(e => ({ x: e.x, y: e.y, type: e.def.type as string }));
     this.hud.drawThreats(this.cameras.main, this.player, threats, s.elapsed);
     const closed = this.map.exitLocs.filter((_, i) => known(i) && !s.exits.some(e => e.loc === i));
-    this.hud.drawMinimap(this.player.x, this.player.y, exitsView, closed, this.scanT > 0 ? this.enemies.list.map(e => ({ x: e.x, y: e.y, color: COLORS.peligro })) : [], this.cameras.main.worldView);
+    this.hud.drawMinimap(this.player.x, this.player.y, exitsView, closed, this.scanT > 0 ? this.enemies.list.filter(e => Math.hypot(e.x - this.player.x, e.y - this.player.y) < TILE * PRUEBA_V2.scanTiles).map(e => ({ x: e.x, y: e.y, color: COLORS.peligro })) : [], this.cameras.main.worldView);
     this.hud.drawVignette(this.behind);
     this.hud.update(dt);
 

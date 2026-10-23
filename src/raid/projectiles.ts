@@ -8,6 +8,8 @@ export type ProjKind = 'flecha' | 'bala';
 export interface Proj {
   kind: ProjKind; x: number; y: number; vx: number; vy: number; ang: number;
   travelled: number; max: number; dmg: number; crit: boolean; weapon: string;
+  /** Disparado a propósito con el joystick derecho (sigilo: x2,5 a un desprevenido). */
+  aimed: boolean;
   img: Phaser.GameObjects.Image | null; trail: Phaser.GameObjects.Graphics | null; dead: boolean;
 }
 
@@ -30,9 +32,9 @@ export class Projectiles {
   fired: { kind: ProjKind; speed: number }[] = [];
   constructor(private sc: Phaser.Scene, private h: ProjHooks) {}
 
-  fire(kind: ProjKind, x: number, y: number, ang: number, rangePx: number, dmg: number, crit: boolean, weapon: string) {
+  fire(kind: ProjKind, x: number, y: number, ang: number, rangePx: number, dmg: number, crit: boolean, weapon: string, aimed = false) {
     const sp = (kind === 'flecha' ? PROJECTILE.arrowTilesPerSec : PROJECTILE.bulletTilesPerSec) * TILE;
-    const p: Proj = { kind, x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, ang, travelled: 0, max: rangePx, dmg, crit, weapon, img: null, trail: null, dead: false };
+    const p: Proj = { kind, x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, ang, travelled: 0, max: rangePx, dmg, crit, weapon, aimed, img: null, trail: null, dead: false };
     const key = kind === 'flecha' ? 'proyectil_flecha' : 'proyectil_bala';
     if (this.sc.textures.exists(key)) {
       p.img = this.sc.add.image(x, y, key).setRotation(ang + Math.PI / 2).setDepth(12.5);

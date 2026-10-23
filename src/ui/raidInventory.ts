@@ -4,6 +4,7 @@ import { RARITIES } from '../data/rarity';
 import { armorProtection, canPocket, def, ItemInst, itemLabel, itemWeight, speedMult, totalWeight, weaponStats } from '../game/inventory';
 import type { RaidScene } from '../raid/RaidScene';
 import { h, itemCell, itemMeta } from './dom';
+import { PRUEBA_V2 } from '../config/v2';
 
 const LONG_PRESS_MS = 450;
 type From = 'yo' | 'cerca';
@@ -23,6 +24,14 @@ export class RaidInventory {
   /** Pulsación larga: en la instancia (no en la celda) para sobrevivir a un redibujado a mitad de pulsación (p. ej. al recargar). */
   private lpT: number | undefined;
   private lpLong = false;
+  /** Toque vs arrastre (§8.1): inicio del dedo y scroll de referencia del menú abierto. */
+  private down: { x: number; y: number; t: number; uid: string } | null = null;
+  private menuScroll = 0;
+  /** QA: toques reconocidos. */
+  taps = 0;
+  private tapHandled = false;
+  /** El menú se abre en el pointerup: el click sintético que llega justo después caería sobre un botón del menú recién pintado. */
+  private openedAt = -1e9;
   constructor(private root: HTMLElement, private scene: () => RaidScene | null) {}
 
   get isOpen() { return !!this.el; }
@@ -56,21 +65,39 @@ export class RaidInventory {
       const r = cur.getBoundingClientRect(), p = this.el!.getBoundingClientRect();
       this.anchor = { x: r.left - p.left, y: r.top - p.top, w: r.width, h: r.height };
     };
-    el.addEventListener('pointerdown', () => {
+    const open = () => {
+      anchorOf();
+      this.sel = this.sel?.uid === it.uid && this.sel.mode === 'menu' ? null : { uid: it.uid, from, mode: 'menu' };
+      this.taps++; this.openedAt = performance.now();
+      this.render();
+    };
+    el.addEventListener('pointerdown', (ev: PointerEvent) => {
+      this.down = { x: ev.clientX, y: ev.clientY, t: performance.now(), uid: it.uid };
+      this.tapHandled = false;
       this.lpLong = false; clearTimeout(this.lpT);
       this.lpT = window.setTimeout(() => { this.lpLong = true; anchorOf(); this.sel = { uid: it.uid, from, mode: 'compare' }; this.render(); }, LONG_PRESS_MS);
     });
     const cancel = () => clearTimeout(this.lpT);
-    el.addEventListener('pointerup', cancel); el.addEventListener('pointercancel', cancel);
+    // es toque si el dedo se mueve < 8 px y dura < 300 ms (vale también justo después de hacer scroll)
+    el.addEventListener('pointermove', (ev: PointerEvent) => { const d = this.down; if (d && Math.hypot(ev.clientX - d.x, ev.clientY - d.y) >= PRUEBA_V2.tapMovePx) { this.down = null; cancel(); } });
+    el.addEventListener('pointerup', (ev: PointerEvent) => {
+      cancel();
+      this.tapHandled = true; // el click sintético que sigue a este dedo no cuenta: decide solo la regla del toque
+      const d = this.down; this.down = null;
+      if (!d || d.uid !== it.uid || this.lpLong) return;
+      if (Math.hypot(ev.clientX - d.x, ev.clientY - d.y) >= PRUEBA_V2.tapMovePx || performance.now() - d.t >= PRUEBA_V2.tapMaxMs) return;
+      open();
+    });
+    el.addEventListener('pointercancel', () => { this.down = null; cancel(); });
     // si la celda se ha redibujado bajo el dedo no cuenta como "salir"
     el.addEventListener('pointerleave', () => { if (el.isConnected) cancel(); });
     el.addEventListener('contextmenu', e => e.preventDefault());
+    // el click que sigue a un toque ya tratado se ignora; sin puntero (teclado/accesibilidad) abre el menú
     el.addEventListener('click', () => {
       clearTimeout(this.lpT);
       if (this.lpLong) { this.lpLong = false; return; }
-      anchorOf();
-      this.sel = this.sel?.uid === it.uid && this.sel.mode === 'menu' ? null : { uid: it.uid, from, mode: 'menu' };
-      this.render();
+      if (this.tapHandled) { this.tapHandled = false; return; }
+      open();
     });
     return el;
   }
@@ -115,7 +142,15 @@ export class RaidInventory {
       this.root.append(el);
       this.el = el;
     }
-    const sc2 = this.el.querySelector('.scroll'); if (sc2) { sc2.scrollTop = keepScroll; sc2.addEventListener('scroll', () => { if (this.sel) { this.sel = null; this.el?.querySelector('.ctx')?.remove(); } }, { passive: true }); }
+    const sc2 = this.el.querySelector('.scroll');
+    if (sc2) {
+      // al redibujar se restaura el scroll: ese evento «scroll» (programático) NO debe cerrar el menú recién abierto
+      // (era el fallo: tras hacer scroll, tocar un objeto abría el menú y el propio redibujado lo cerraba al instante)
+      sc2.scrollTop = keepScroll; this.menuScroll = sc2.scrollTop;
+      sc2.addEventListener('scroll', () => {
+        if (this.sel && Math.abs(sc2.scrollTop - this.menuScroll) >= PRUEBA_V2.tapMovePx) { this.sel = null; this.el?.querySelector('.ctx')?.remove(); }
+      }, { passive: true });
+    }
     this.popup(sc, near?.id ?? null);
   }
 
@@ -154,7 +189,7 @@ export class RaidInventory {
 
   private menu(sc: RaidScene, it: ItemInst, nearId: number | null) {
     const acts: HTMLElement[] = [];
-    const a = (label: string, fn: () => void, cls = '') => acts.push(h('button', { class: 'btn ' + cls, onclick: (e: Event) => { e.stopPropagation(); fn(); this.sel = null; this.render(); } }, label));
+    const a = (label: string, fn: () => void, cls = '') => acts.push(h('button', { class: 'btn ' + cls, onclick: (e: Event) => { e.stopPropagation(); if (e.isTrusted && performance.now() - this.openedAt < 400) return; fn(); this.sel = null; this.render(); } }, label));
     const uid = it.uid;
     const d = ITEMS[it.def];
     if (this.sel!.from === 'cerca') { if (nearId !== null) a('Coger', () => sc.invTake(nearId, uid)); }

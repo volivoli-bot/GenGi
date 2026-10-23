@@ -10,8 +10,11 @@ import { lineClear, Rect, WallIndex, segRect } from './map';
  */
 export class Vision {
   poly: Phaser.Math.Vector2[] = [];
-  private fog: Phaser.GameObjects.Rectangle;
-  private maskG: Phaser.GameObjects.Graphics;
+  /** Niebla en capas (diseno-v3 §8.5): oscurece al 45 % con un borde difuminado de 1,5 casillas. */
+  private fogs: Phaser.GameObjects.Rectangle[] = [];
+  private masks: Phaser.GameObjects.Graphics[] = [];
+  private polys: Phaser.Math.Vector2[][] = [];
+  private rays: { ang: number; d: number; back: boolean }[] = [];
   private last = { x: NaN, y: NaN, a: NaN, v: -1 };
   private near: Rect[] = [];
   version = 0;
@@ -23,18 +26,24 @@ export class Vision {
   readonly half = Phaser.Math.DegToRad(VISION.coneDeg / 2);
 
   constructor(private sc: Phaser.Scene, private walls: () => Rect[], private index: () => WallIndex) {
-    this.maskG = sc.make.graphics({}, false);
-    this.fog = sc.add.rectangle(0, 0, 10, 10, 0x05060a, VISION.fogAlpha).setOrigin(0).setDepth(14);
-    const m = this.maskG.createGeometryMask();
-    m.setInvertAlpha(true);
-    this.fog.setMask(m);
+    // n capas iguales cuya suma da fogAlpha: 1-(1-a)^n = fogAlpha
+    const n = Math.max(1, VISION.fogLayers);
+    const a = 1 - Math.pow(1 - VISION.fogAlpha, 1 / n);
+    for (let i = 0; i < n; i++) {
+      const g = sc.make.graphics({}, false);
+      const f = sc.add.rectangle(0, 0, 10, 10, 0x05060a, a).setOrigin(0).setDepth(14);
+      const m = g.createGeometryMask();
+      m.setInvertAlpha(true);
+      f.setMask(m);
+      this.masks.push(g); this.fogs.push(f); this.polys.push([]);
+    }
   }
 
   /** Recalcula el polígono si el jugador se movió o giró (o cambiaron las paredes: puertas). */
   update(x: number, y: number, facing: number, wallsVersion: number) {
     this.facing = facing; this.ox = x; this.oy = y;
     const v = this.sc.cameras.main.worldView;
-    this.fog.setPosition(v.x - 40, v.y - 40).setSize(v.width + 80, v.height + 80).setVisible(this.enabled);
+    for (const f of this.fogs) f.setPosition(v.x - 40, v.y - 40).setSize(v.width + 80, v.height + 80).setVisible(this.enabled);
     if (!this.enabled) return;
     const L = this.last;
     if (Math.abs(L.x - x) < 2 && Math.abs(L.y - y) < 2 && Math.abs(Phaser.Math.Angle.Wrap(L.a - facing)) < 0.012 && L.v === wallsVersion) return;
@@ -56,6 +65,8 @@ export class Vision {
       const d = Math.min(len, best * len + (best < 1 ? 14 : 0));
       if (!pts[n]) pts[n] = new Phaser.Math.Vector2();
       pts[n++].set(x + Math.cos(ang) * d, y + Math.sin(ang) * d);
+      const rr = this.rays[n - 1] ?? (this.rays[n - 1] = { ang: 0, d: 0, back: false });
+      rr.ang = ang; rr.d = d; rr.back = len < R;
     };
     const steps = Math.ceil(VISION.coneDeg * VISION.raysPerDeg);
     const a0 = facing - this.half;
@@ -63,8 +74,22 @@ export class Vision {
     // por detrás: solo el radio cercano
     const back = Math.PI * 2 - this.half * 2, bs = 16;
     for (let i = 1; i < bs; i++) ray(facing + this.half + (back * i) / bs, this.nearR);
-    pts.length = n;
-    this.maskG.clear().fillStyle(0xffffff, 1).fillPoints(pts, true, true);
+    pts.length = n; this.rays.length = n;
+    // capa 0 = polígono exacto; las interiores se encogen (distancia y bordes del cono) para el degradado
+    const NL = this.masks.length, step = (VISION.fogFeatherTiles * TILE) / NL;
+    for (let k = 0; k < NL; k++) {
+      const poly = this.polys[k]; poly.length = n;
+      const shrink = step * k, edge = this.half - (shrink / (R * 0.35));
+      for (let i = 0; i < n; i++) {
+        const r = this.rays[i];
+        const off = Math.abs(Phaser.Math.Angle.Wrap(r.ang - facing));
+        let d = r.back ? Math.max(this.nearR * 0.5, r.d - shrink * 0.4) : Math.max(this.nearR * 0.5, r.d - shrink);
+        if (!r.back && off > edge) d = Math.min(d, Math.max(this.nearR * 0.5, this.nearR - shrink * 0.4));
+        if (!poly[i]) poly[i] = new Phaser.Math.Vector2();
+        poly[i].set(x + Math.cos(r.ang) * d, y + Math.sin(r.ang) * d);
+      }
+      this.masks[k].clear().fillStyle(0xffffff, 1).fillPoints(poly, true, true);
+    }
   }
 
   /** ¿El jugador ve este punto? (mismo criterio que el polígono: cono + línea de visión, o radio cercano). */
@@ -85,6 +110,8 @@ export class Vision {
     return Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(py - this.oy, px - this.ox) - this.facing)) > this.half;
   }
 
-  setEnabled(v: boolean) { this.enabled = v; this.last.v = -1; this.fog.setVisible(v); }
-  destroy() { this.fog.destroy(); this.maskG.destroy(); }
+  setEnabled(v: boolean) { this.enabled = v; this.last.v = -1; for (const f of this.fogs) f.setVisible(v); }
+  /** QA: opacidad total de la niebla y número de capas. */
+  fogInfo() { const a = this.fogs[0]?.fillAlpha ?? 0; return { layers: this.fogs.length, layerAlpha: a, total: 1 - Math.pow(1 - a, this.fogs.length) }; }
+  destroy() { for (const f of this.fogs) f.destroy(); for (const g of this.masks) g.destroy(); }
 }

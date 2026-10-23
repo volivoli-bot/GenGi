@@ -2,7 +2,7 @@
 import puppeteer from 'puppeteer-core';
 const URL='http://localhost:4173/?debug=1';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-const res=[]; const ok=(n,c,i='')=>{res.push(`${c?'PASS':'FAIL'} ${n} ${i}`);};
+const res=[]; const ok=(n,c,i='')=>{res.push(`${c?'PASS':'FAIL'} ${n} ${i}`);console.log(`${c?'PASS':'FAIL'} ${n} ${i}`);};
 const b=await puppeteer.launch({executablePath:'/usr/bin/google-chrome',headless:'new',args:['--no-sandbox','--use-gl=swiftshader','--enable-unsafe-swiftshader','--window-size=390,844']});
 const errs=[];
 async function page(ios=false){
@@ -74,8 +74,11 @@ await E(()=>gengi.start()); await sleep(1500); await E(setup); await E(()=>__cal
  const n0=await E(()=>gengi.raid().snap.loadout.mochila.filter(i=>i.def==='vendaje').reduce((n,i)=>n+i.qty,0));
  await E(()=>{gengi.god(false);gengi.hurt(30);gengi.god(true);});
  await E(()=>[...document.querySelectorAll('.ctx button')].find(b=>b.textContent==='Usar').click()); await sleep(150);
+ const nMid=await E(()=>gengi.raid().snap.loadout.mochila.filter(i=>i.def==='vendaje').reduce((n,i)=>n+i.qty,0));
+ const closed=await E(()=>!document.querySelector('.ctx'));
+ await E(()=>new Promise(r=>{const s=gengi.raid(),t0=s.snap.elapsed;const f=()=>s.snap.elapsed-t0>=1.7?r():setTimeout(f,30);f();})); // v3 §8.8: la venda tarda 1,5 s
  const n1=await E(()=>gengi.raid().snap.loadout.mochila.filter(i=>i.def==='vendaje').reduce((n,i)=>n+i.qty,0));
- ok('3 «Usar» del menú consume el objeto y cierra el menú', n1===n0-1 && await E(()=>!document.querySelector('.ctx')), `${n0}→${n1}`);
+ ok('3 «Usar» del menú cierra el menú y gasta el objeto al terminar de aplicarlo (1,5 s)', nMid===n0 && n1===n0-1 && closed, `${n0}→${nMid} (aplicando)→${n1}`);
  // mantener pulsado = comparar
  const m2=await E(()=>{const el=[...document.querySelectorAll('.sheet [data-uid]')].find(e=>e.querySelector('img')?.alt==='Machete');const r=el.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}});
  await p.touchscreen.touchStart(m2.x,m2.y); for(let i=0;i<20&&!(await E(()=>!!document.querySelector('.ctx.cmp')));i++) await sleep(100); await sleep(100); await p.touchscreen.touchEnd(); await sleep(150);
@@ -97,10 +100,10 @@ await E(()=>gengi.start()); await sleep(1500); await E(setup); await E(()=>__cal
    const after={arma:lo.arma?.def,reserva:lo.reserva?.def,w:s.inertia().weight};
    lo.arma.mag=12;
    const icon=s.hud.swap.icon?.texture?.key ?? s.hud.swap.iconKey ?? null;
-   const shots0=s.stats.shots; s.swapWeapon(); const t0=performance.now();
+   const shots0=s.stats.shots; s.swapWeapon(); const t0=s.snap.elapsed; // tiempo de juego (no depende de la carga de la máquina)
    gengi.aim(0.95,0); let during=[];
    while(s.swapT>0){during.push({sh:s.stats.shots,arma:lo.arma?.def});await __frames(1);}
-   const dur=(performance.now()-t0)/1000; gengi.aim(null);
+   const dur=s.snap.elapsed-t0; gengi.aim(null);
    return {after,w0,icon,dur,shotsDuring:during.at(-1)?.sh-shots0,armaDuring:during[0]?.arma,end:{arma:lo.arma?.def,reserva:lo.reserva?.def},blocked:s.stats.attacksDuringSwap,swaps:s.stats.swaps};});
  ok('R equipar arma nueva manda la anterior a la reserva', r.after.arma==='pistola'&&r.after.reserva==='machete', JSON.stringify(r.after));
  ok('R las dos armas pesan', Math.abs(r.after.w-r.w0)<0.001, `peso con machete en mochila ${r.w0} = con machete en reserva ${r.after.w}`);
@@ -117,20 +120,20 @@ await E(()=>gengi.start()); await sleep(1500); await E(setup); await E(()=>__cal
    // estabilización: dispersión menor tras 0,4 s quieto
    gengi.aim(0.6,0);await __frames(2);const sp0=s.spreadDeg();await __wait(500);const sp1=s.spreadDeg();
    // pasar del 85 % = dispara; mantener = sigue a su cadencia (pistola)
-   gengi.aim(0.95,0);await __wait(1300);const shHold=st.shots-sh0;gengi.aim(null);await __wait(100);
+   gengi.aim(0.95,0);await new Promise(r=>{const t0=s.snap.elapsed;const f=()=>s.snap.elapsed-t0>=1.3?r():setTimeout(f,20);f();});const shHold=st.shots-sh0;gengi.aim(null);await __wait(100);
    const fired=s.proj.fired.slice(-3);
    return {lineDrawn,shBelow,shCancel,sp0,sp1,shHold,fired,mag:lo.arma.mag};});
  ok('5 apuntar dibuja la línea y no dispara por debajo del 85 %', r.lineDrawn && r.shBelow===0, JSON.stringify({linea:r.lineDrawn,disparos:r.shBelow}));
  ok('5 soltar antes del umbral cancela', r.shCancel===0);
  ok('5 la línea tiembla al principio y se estabiliza tras 0,4 s', r.sp1<r.sp0*0.5, `${r.sp0.toFixed(1)}° → ${r.sp1.toFixed(1)}°`);
- ok('5 pistola: pasar el umbral dispara y mantener sigue a su cadencia', r.shHold>=3, `disparos en 1,3 s = ${r.shHold}`);
+ ok('5 pistola: pasar el umbral dispara y mantener sigue a su cadencia (1,34/s desde la prueba v3)', r.shHold===2, `disparos en 1,3 s = ${r.shHold} (antes 3 con 2/s)`);
  ok('5 bala a 40 casillas/s con trazo', r.fired.length && r.fired.every(f=>f.kind==='bala'&&Math.abs(f.speed-40*48)<1), JSON.stringify(r.fired[0]));
  // 60 % de velocidad apuntando
  const mv=await E(async()=>{const s=gengi.raid();__open(8);const k=s.keys.D;k.isDown=true;await __wait(500);const v1=s.vel.length();gengi.aim(0,-0.5);await __wait(500);const v2=s.vel.length();gengi.aim(null);k.isDown=false;await __wait(300);return {v1,v2};});
  ok('5 al apuntar te mueves al 60 %', Math.abs(mv.v2/mv.v1-0.6)<0.03, `${mv.v1.toFixed(0)} → ${mv.v2.toFixed(0)} px/s`);
  // arco: un disparo por cruce del umbral; flecha 480 px/s, recuperable
  const bow=await E(async()=>{const s=gengi.raid();__calm();__open(8);gengi.give('arco','comun');gengi.give('flechas','comun',10);const lo=s.snap.loadout;const a=lo.mochila.find(i=>i.def==='arco');s.invEquip(a.uid);
-   await __wait(200);const sh0=s.stats.shots;gengi.aim(0.95,0);await __wait(1500);const one=s.stats.shots-sh0;gengi.aim(0.5,0);await __frames(3);gengi.aim(0.95,0);await __wait(200);const two=s.stats.shots-sh0;gengi.aim(null);
+   await __wait(200);const sh0=s.stats.shots;gengi.aim(0.95,0);await __wait(1500);const one=s.stats.shots-sh0;await new Promise(r=>{const f=()=>s.attackT<=0?r():setTimeout(f,20);f();}); /* arco 0,536/s: 1,87 s entre flechas */gengi.aim(0.5,0);await __frames(3);gengi.aim(0.95,0);await __wait(200);const two=s.stats.shots-sh0;gengi.aim(null);
    const f=s.proj.fired.at(-1);await __wait(1500);const flechas=lo.mochila.filter(i=>i.def==='flechas').reduce((n,i)=>n+i.qty,0);const ground=s.snap.arrows?.length??0;return {one,two,f,flechas,ground};});
  ok('5 arco: un disparo por cada vez que cruzas el umbral', bow.one===1&&bow.two===2, JSON.stringify({one:bow.one,two:bow.two}));
  ok('5 flecha a 480 px/s', bow.f?.kind==='flecha'&&Math.abs(bow.f.speed-480)<1, JSON.stringify(bow.f));
