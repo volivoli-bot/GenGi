@@ -899,6 +899,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       if (a.t <= 0) { s.acid.splice(i, 1); continue; }
       g.fillStyle(COLORS.toxico, 0.25 * Math.min(1, a.t)).fillCircle(a.x, a.y, TILE * 1.4).lineStyle(2, COLORS.toxico, 0.6).strokeCircle(a.x, a.y, TILE * 1.4);
       if (Math.hypot(a.x - this.player.x, a.y - this.player.y) < TILE * 1.4) this.damagePlayer(6 * dt, 'Ácido', false);
+      for (const e of [...this.enemies.list]) if (Math.hypot(a.x - e.x, a.y - e.y) < TILE * 1.4) this.enemies.damageTick(e, 6 * dt);
     }
 
     // niebla tóxica

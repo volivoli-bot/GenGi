@@ -45,12 +45,32 @@ const C=await E(async(T)=>{const s=gengi.raid();gengi.give('pistola','reforzado'
 ok('ataque a distancia ignora enemigos fuera de pantalla', !C.pickOff && C.mag0===C.magOff && C.hpOff===C.max, JSON.stringify(C));
 ok('control: en pantalla la pistola sí dispara', C.magOn<C.magOff || C.dead, `mag ${C.magOff}→${C.magOn}`);
 await E(()=>{window.__pins.clear();gengi.clearEnemies();});
+// E) Hinchado muerto FUERA de pantalla: explota igual (sin aviso previo exigido), daña a otros enemigos (cadena con otro Hinchado
+//    y charco de ácido) y no puede tocar al jugador (fuera de la vista está a >1,8 casillas)
+const E5=await E(async(T)=>{const s=gengi.raid();gengi.god(false);const p=s.snap.player;p.hp=100;
+  const mk=(k,dx)=>{const e=s.spawnAt(k,s.player.x+dx*T,s.player.y);e.state='idle';e.sees=false;e.sightT=1e9;window.__pins.set(e,{dx:dx*T,dy:0});return e;};
+  const h1=mk('hinchado',5), er1=mk('errante',5.8), h2=mk('hinchado',6.5), er2=mk('errante',8); h2.hp=15; // herido: la explosión (20) lo remata → cadena
+  await new Promise(r=>setTimeout(r,100));
+  const off=!s.onScreen(h1.x,h1.y,0)&&!s.onScreen(h2.x,h2.y,0);const hp0=p.hp, er1max=er1.hp, er2max=er2.hp;
+  const n0=s.enemies.explosions.length; s.enemies.damage(h1,9999);
+  const t0=performance.now();let swell1=false;
+  while(performance.now()-t0<1400){if(h1.state==='swell')swell1=true;await new Promise(r=>requestAnimationFrame(r));}
+  const er1AfterBlast=er1.hp, h2State=h2.state;
+  await new Promise(r=>setTimeout(r,1000)); const er1Later=er1.hp;   // charco de ácido sigue restando
+  await new Promise(r=>setTimeout(r,900));
+  const ex=s.enemies.explosions.slice(n0);
+  const res={off,swell1,h1dead:h1.dead,exps:ex.length,expOn:ex.map(x=>x.on),hits:ex.map(x=>x.hit),er1:[er1max,er1AfterBlast,er1Later],h2State,h2dead:h2.dead,er2:[er2max,er2.dead?0:er2.hp],hp:[hp0,p.hp],acid:s.snap.acid.length};
+  window.__pins.clear();gengi.clearEnemies();gengi.god(true);s.snap.acid.length=0;return res;},T);
+ok('Hinchado muerto fuera de pantalla explota igual', E5.off && E5.swell1 && E5.h1dead && E5.exps>=1 && E5.expOn[0]===false, JSON.stringify({off:E5.off,swell:E5.swell1,exps:E5.exps,expOn:E5.expOn}));
+ok('la explosión daña a otros enemigos y encadena otro Hinchado', E5.er1[1]<=E5.er1[0]-20 && E5.h2dead && E5.exps>=2 && E5.er2[1]<E5.er2[0], JSON.stringify({er1:E5.er1,er2:E5.er2,h2:E5.h2State,hits:E5.hits}));
+ok('el charco de ácido daña a enemigos', E5.er1[2]<E5.er1[1], JSON.stringify(E5.er1));
+ok('jugador fuera del radio no recibe daño', E5.hp[0]===E5.hp[1], JSON.stringify(E5.hp));
 // D) invariante con multitud real: ningún aviso (carga, embestida, círculo, cono, hinchazón) empieza fuera de pantalla
-const D=await E(async(T)=>{const s=gengi.raid();s.walls.length=0;gengi.minute(6);const st=s.enemies.teleStats;st.on=0;st.off=0;
+const D=await E(async(T)=>{const s=gengi.raid();s.walls.length=0;gengi.minute(6);const st=s.enemies.teleStats;st.on=0;st.off=0;const ds=s.enemies.deathSwell;ds.on=0;ds.off=0;
   const kinds=['errante','errante','errante','corredor','corredor','hinchado','errante','corredor','hinchado','errante','errante','corredor'];
   kinds.forEach((k,i)=>{const a=i/kinds.length*Math.PI*2,r=(4+i%5)*T;const e=s.spawnAt(k,s.player.x+Math.cos(a)*r,s.player.y+Math.sin(a)*r);e.state='chase';});
   const ab=s.spawnAt('abominacion',s.player.x,s.player.y-9*T);ab.gx=s.player.x;ab.gy=s.player.y;ab.state='chase';
-  await new Promise(r=>setTimeout(r,9000));return {...st};},T);
-ok('multitud 9 s: 0 avisos iniciados fuera de pantalla', D.off===0 && D.on>0, JSON.stringify(D));
+  await new Promise(r=>setTimeout(r,9000));return {...st,deathSwell:{...ds}};},T);
+ok('multitud 9 s: 0 avisos iniciados fuera de pantalla (las explosiones de muerte no cuentan como aviso)', D.off===0 && D.on>0, JSON.stringify(D));
 console.log(res.join('\n'));console.log('ERRORES:',errs);
 await b.close();

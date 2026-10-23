@@ -77,3 +77,4 @@ Velocidad: -2 % por punto de peso total (máx -40 %).
 - Ningún enemigo inicia su aviso de ataque (destello, agachada, círculo) fuera de la pantalla.
 - Flecha roja en el borde de la pantalla por cada enemigo que te ha detectado y está fuera de la vista; parpadea si es un Corredor.
 - Principio: difícil pero nunca injusto, todo golpe se ha podido ver venir.
+- Hinchado: explota siempre, también fuera de pantalla (a esa distancia no puede alcanzar al jugador). La explosión y el charco de ácido también dañan a otros enemigos.

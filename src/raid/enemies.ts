@@ -65,6 +65,10 @@ export class EnemyManager {
   group: Phaser.Physics.Arcade.Group;
   /** Diagnóstico QA: avisos de ataque iniciados dentro/fuera de pantalla (fuera debe ser siempre 0). */
   teleStats = { on: 0, off: 0 };
+  /** Hinchazones de muerte (no son avisos de ataque: no se limitan a pantalla). */
+  deathSwell = { on: 0, off: 0 };
+  /** Explosiones de Hinchado: posición y si estaba en pantalla (QA). */
+  explosions: { x: number; y: number; on: boolean; hit: number }[] = [];
   /** Margen interior para que el aviso se lea entero: un poco más que el cuerpo del enemigo. */
   private teleMargin(e: Enemy) { return Math.max(TILE * 0.75, e.def.size * 0.6); }
   /** Regla de diseño: ningún aviso de ataque empieza fuera de la pantalla. */
@@ -127,8 +131,7 @@ export class EnemyManager {
     if (e.state === 'idle' || e.state === 'investigate') e.state = 'chase';
     if (e.hp <= 0) {
       if (e.def.type === 'hinchado') {
-        // fuera de pantalla no hay hinchazón ni explosión: revienta sin daño (nunca un golpe que no se pudo ver)
-        if (!this.canTelegraph(e)) { this.kill(e); return true; }
+        // explota siempre, también fuera de pantalla (diseño: fuera de la vista está a >1,8 casillas y no alcanza al jugador)
         this.startSwell(e); return false;
       }
       this.kill(e);
@@ -138,7 +141,7 @@ export class EnemyManager {
   }
 
   private startSwell(e: Enemy, restoring = false) {
-    if (!restoring) this.countTele(e);
+    if (!restoring) { if (this.c.onScreen(e.x, e.y, 0)) this.deathSwell.on++; else this.deathSwell.off++; }
     e.state = 'swell'; e.t = ATTACKS.hinchado.swell; e.hp = 0;
     e.body.setVelocity(0, 0);
     this.clearTele(e);
@@ -170,7 +173,10 @@ export class EnemyManager {
     const r = A.radiusTiles * TILE;
     const px = this.c.px(), py = this.c.py();
     if (Math.hypot(px - e.x, py - e.y) <= r + this.c.playerRadius * 0.5) this.c.damagePlayer(A.dmg, 'Explosión de Hinchado');
-    for (const o of [...this.list]) if (o !== e && Math.hypot(o.x - e.x, o.y - e.y) <= r) this.damage(o, A.dmg);
+    let hit = 0;
+    for (const o of [...this.list]) if (o !== e && !o.dead && Math.hypot(o.x - e.x, o.y - e.y) <= r) { if (o.targetable) hit++; this.damage(o, A.dmg); }
+    this.explosions.push({ x: e.x, y: e.y, on: this.c.onScreen(e.x, e.y, 0), hit });
+    if (this.explosions.length > 20) this.explosions.shift();
     this.c.addAcid(e.x, e.y, r * 0.8);
     const fx = this.c.world.add.circle(e.x, e.y, r, 0xb6ff3c, 0.5).setDepth(20);
     this.c.world.tweens.add({ targets: fx, alpha: 0, scale: 1.2, duration: 350, onComplete: () => fx.destroy() });
@@ -251,9 +257,11 @@ export class EnemyManager {
     }
   }
 
-  private damageTick(e: Enemy, n: number) {
+  /** Daño continuo (sangrado, charco de ácido). */
+  damageTick(e: Enemy, n: number) {
+    if (e.dead || e.state === 'swell') return;
     e.hp -= n;
-    if (e.hp <= 0) { if (e.def.type === 'hinchado' && this.canTelegraph(e)) this.startSwell(e); else this.kill(e); }
+    if (e.hp <= 0) { if (e.def.type === 'hinchado') this.startSwell(e); else this.kill(e); }
   }
 
   private moveTo(e: Enemy, x: number, y: number, speed: number, stopDist = 0) {
