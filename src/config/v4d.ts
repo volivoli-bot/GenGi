@@ -54,6 +54,8 @@ export const SHOTGUN = {
   falloffMult: 0.6,
   mag: 4,
   reloadPerShellSec: 0.5,
+  /** v4e (Basu): la recarga solo empieza tras este tiempo sin apuntar ni disparar; apuntar o disparar la corta. */
+  reloadDelaySec: 0.8,
   noiseTiles: 9,
   /** Peso del arma (kg): en items.ts. */
   weight: 4,

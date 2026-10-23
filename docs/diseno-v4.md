@@ -201,7 +201,7 @@ Rareza nueva para el final: **Reliquia**, con 1 efecto único por objeto (por ej
 - **Escopeta (nueva):**
   - 1,2 s entre disparos. 6 perdigones en un cono de 25°, con un alcance de 4,5 casillas.
   - 7 de daño por perdigón, que baja al 60 % a partir de 3 casillas. Si aciertan todos de cerca, 42 (unos 35 de daño por segundo, el doble que la pistola), pero solo a corta distancia.
-  - Cargador de 4 cartuchos. Recarga de 0,5 s por cartucho, que se puede cortar disparando.
+  - Cargador de 4 cartuchos. La recarga solo empieza tras 0,8 s sin apuntar ni disparar y luego mete 1 cartucho cada 0,5 s; apuntar o disparar la corta. En combate seguido (1,2 s entre tiros) no entra ninguno, así que hay que buscar un respiro para recargar (Dott).
   - Ruido de 9 casillas. Peso 4. Tambaleo fuerte.
   - Una sola tirada de crítico por disparo, que se aplica a todos los perdigones (Dott).
   - Contra la Matriarca (2.000 de vida) harían falta unos 48 disparos perfectos a bocajarro. Es buena para jefes, pero obliga a ponerse muy cerca.

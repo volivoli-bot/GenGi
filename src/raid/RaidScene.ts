@@ -147,7 +147,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   stats = { shots: 0, swaps: 0, attacksDuringSwap: 0, behindWarn: 0, behindVibes: 0, hitStops: 0, crits: 0, critsTaken: 0, doorsOpened: 0, arrowsRecovered: 0, impactNoises: 0, clavarShots: 0, lootPaused: 0, iosKick: 0, backstabs: 0, executes: 0, debrisSteps: 0, autoSkippedUnaware: 0, ...RaidScene.v4dStats() };
   /** v4d: estadísticas de QA (disparos, escopeta, perdigones, cazadores, habilidades temporales). */
   static v4dStats() {
-    return { autoShots: 0, pierceShots: 0, shellsLoaded: 0, hunters: 0, buffsUsed: 0,
+    return { autoShots: 0, pierceShots: 0, shellsLoaded: 0, shellCuts: 0, hunters: 0, buffsUsed: 0,
       fireLog: [] as { t: number; w: string; auto: boolean }[],
       shotgun: [] as { t: number; crit: boolean; dmg: number; coneDeg: number; rangeTiles: number; angs: number[] }[],
       pellets: [] as { t: number; d: number; dmg: number; raw: number; crit: boolean; far: boolean }[],
@@ -237,7 +237,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.paused = false; this.ended = false; this.containers = []; this.doors = []; this.hud = null; this.joy = null; this.aim = null;
     this.loot = { c: null, t: 0, done: new Set(), ring: null, pause: 0 };
     this.warned13 = d.snap.elapsed >= DIFFICULTY.fogWarningSeconds;
-    this.attackT = 0; this.autosaveT = 0; this.idleT = 0; this.scanT = 0; this.god = false; this.markG = null; this.markImgs = new Map(); this.markTxt = new Map(); this.hitTimes = []; this.miniHpUntil = -1; this.acidStackT = 0; this.statusAcc = { bleed: 0, poison: 0 }; this.statusDealt = { bleed: 0, poison: 0 }; this.applying = null; this.healStats = { done: 0, cancelHit: 0, cancelRelease: 0 }; this.noiseRing = null; this.conesGfx = null; this.debris = []; this.execTarget = null; this.ringR = 0; this.stepT = 0; this.noAmmoWarned = false; this.fpsMin1215 = Infinity; this.fpsFrames = 0; this.fpsWin = 0; this.fpsWarm = 0; this.fpsNow = 0; this.peekTxt = new Map(); this.lvlWarned = 0; this.chill = { k: 0, t: 0 }; this.chillTinted = false;
+    this.attackT = 0; this.shellIdleT = 0; this.autosaveT = 0; this.idleT = 0; this.scanT = 0; this.god = false; this.markG = null; this.markImgs = new Map(); this.markTxt = new Map(); this.hitTimes = []; this.miniHpUntil = -1; this.acidStackT = 0; this.statusAcc = { bleed: 0, poison: 0 }; this.statusDealt = { bleed: 0, poison: 0 }; this.applying = null; this.healStats = { done: 0, cancelHit: 0, cancelRelease: 0 }; this.noiseRing = null; this.conesGfx = null; this.debris = []; this.execTarget = null; this.ringR = 0; this.stepT = 0; this.noAmmoWarned = false; this.fpsMin1215 = Infinity; this.fpsFrames = 0; this.fpsWin = 0; this.fpsWarm = 0; this.fpsNow = 0; this.peekTxt = new Map(); this.lvlWarned = 0; this.chill = { k: 0, t: 0 }; this.chillTinted = false;
     this.swapT = 0; this.glanceT = 0; this.steadyT = 0; this.hitStopT = 0; this.vel.set(0, 0); this.kick.set(0, 0);
     this.stuck = new Map(); this.clavarArmed = false; this.groundArrows = []; this.arrowsCulled = 0; this.pendingMelee = []; this.behind = [];
     this.sewers = []; this.sewerImgs = []; this.grenades = []; this.estimGfx = null; this.radioDot = null;
@@ -1384,17 +1384,23 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     return pool[0].e;
   }
 
+  /** v4e: segundos seguidos sin apuntar ni disparar (escopeta: la recarga empieza a los SHOTGUN.reloadDelaySec). */
+  shellIdleT = 0;
   private weaponId() { return this.snap.loadout.arma?.def ?? 'punos'; }
   /** Arco o ballesta (proyectil físico recuperable, munición propia). */
   private isBow() { const d = this.snap.loadout.arma?.def; return d === 'arco' || d === 'ballesta'; }
   /** v4d §7: arco y ballesta comparten flechas (ya no hay virotes). */
   private bowAmmo() { return 'flechas'; }
-  private arrowsLeft() { const lo = this.snap.loadout, id = this.bowAmmo(); return countOf(lo.mochila, id) + this.pocketCount(id); }
-  private takeArrow() {
-    const lo = this.snap.loadout, id = this.bowAmmo();
-    if (consume(lo.mochila, id, 1) > 0) return true;
-    return this.pocketTake(id);
+  /** v4e: munición disponible de un tipo = mochila + bolsillo seguro (lo mismo que enseña el HUD). */
+  ammoLeft(id: string) { return countOf(this.snap.loadout.mochila, id) + this.pocketCount(id); }
+  /** v4e: saca hasta n de munición: primero de la mochila y luego del bolsillo seguro. Devuelve cuántas. */
+  takeAmmo(id: string, n: number) {
+    let got = n > 0 ? consume(this.snap.loadout.mochila, id, n) : 0;
+    while (got < n && this.pocketTake(id)) got++;
+    return got;
   }
+  private arrowsLeft() { return this.ammoLeft(this.bowAmmo()); }
+  private takeArrow() { return this.takeAmmo(this.bowAmmo(), 1) > 0; }
   private noAmmoText() { return 'Sin flechas'; }
   /** v3: bolsillo seguro con varias casillas (bolsillo + bolsilloExtra). */
   pocketList(): ItemInst[] { const lo = this.snap.loadout; return [lo.bolsillo ?? null, ...(lo.bolsilloExtra ?? [])].filter((x): x is ItemInst => !!x); }
@@ -1413,27 +1419,39 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   private readyRanged(dt: number): boolean {
     const lo = this.snap.loadout, ws = weaponStats(lo.arma), p = this.snap.player;
     const ammoId = magAmmo(ws), shells = lo.arma?.def === 'escopeta';
+    if (shells) {
+      // v4e (Basu): apuntar corta la recarga de la escopeta; el reloj de reposo cuenta mientras no apuntas ni disparas
+      if (this.aim?.aiming) { this.shellIdleT = 0; if (p.reload > 0) { p.reload = 0; this.stats.shellCuts++; } }
+      else this.shellIdleT += dt;
+    }
     if (p.reload > 0) {
       p.reload -= dt;
       if (p.reload <= 0 && lo.arma) {
+        p.reload = 0;
         if (shells) {
-          // v4d: la escopeta recarga cartucho a cartucho (0,5 s cada uno) mientras falten y te queden
-          lo.arma.mag = (lo.arma.mag ?? 0) + consume(lo.mochila, ammoId, 1);
-          p.reload = (lo.arma.mag ?? 0) < (ws.mag ?? 0) && countOf(lo.mochila, ammoId) > 0 ? this.shellReloadSec() : 0;
-          this.stats.shellsLoaded++;
-        } else { const need = (ws.mag ?? 0) - (lo.arma.mag ?? 0); lo.arma.mag = (lo.arma.mag ?? 0) + consume(lo.mochila, ammoId, need); }
+          // v4d: la escopeta recarga cartucho a cartucho (0,5 s cada uno); el siguiente lo decide el reposo de abajo
+          const got = this.takeAmmo(ammoId, 1);
+          lo.arma.mag = (lo.arma.mag ?? 0) + got;
+          if (got) this.stats.shellsLoaded++;
+        } else { const need = (ws.mag ?? 0) - (lo.arma.mag ?? 0); lo.arma.mag = (lo.arma.mag ?? 0) + this.takeAmmo(ammoId, need); }
         this.host.refreshInventory();
       }
-      // escopeta: con algún cartucho dentro se puede disparar (corta la recarga)
-      if (!(shells && (lo.arma?.mag ?? 0) > 0)) return false;
+      if (!shells && p.reload > 0) return false;
+    }
+    if (shells && lo.arma) {
+      // v4e: tras reloadDelaySec sin apuntar ni disparar, mete cartuchos de uno en uno mientras falten y te queden
+      if (p.reload <= 0 && this.shellIdleT >= SHOTGUN.reloadDelaySec && (lo.arma.mag ?? 0) < (ws.mag ?? 0) && this.ammoLeft(ammoId) > 0) p.reload = this.shellReloadSec();
+      if ((lo.arma.mag ?? 0) <= 0) {
+        if (this.ammoLeft(ammoId) <= 0 && !this.noAmmoWarned) { this.noAmmoWarned = true; this.hud?.toast('¡Sin cartuchos!'); }
+        return false;
+      }
+      return true; // con algún cartucho dentro se puede disparar (y disparar corta la recarga)
     }
     if (ws.mag && lo.arma && (lo.arma.mag ?? 0) <= 0) {
-      if (countOf(lo.mochila, ammoId) > 0) p.reload = shells ? this.shellReloadSec() : (ws.reloadSec ?? 1.5) * (1 - this.att('pulso', 'reload'));
-      else if (!this.noAmmoWarned) { this.noAmmoWarned = true; this.hud?.toast(shells ? '¡Sin cartuchos!' : '¡Sin munición!'); }
+      if (this.ammoLeft(ammoId) > 0) p.reload = (ws.reloadSec ?? 1.5) * (1 - this.att('pulso', 'reload'));
+      else if (!this.noAmmoWarned) { this.noAmmoWarned = true; this.hud?.toast('¡Sin munición!'); }
       return false;
     }
-    // escopeta: sin apuntar y con hueco en el cargador, va metiendo cartuchos
-    if (shells && lo.arma && p.reload <= 0 && !this.aim?.aiming && (lo.arma.mag ?? 0) < (ws.mag ?? 0) && countOf(lo.mochila, ammoId) > 0) p.reload = this.shellReloadSec();
     if (this.isBow() && this.arrowsLeft() <= 0) {
       if (!this.noAmmoWarned) { this.noAmmoWarned = true; this.hud?.toast(this.noAmmoText()); }
       return false;
@@ -1447,8 +1465,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const ws = weaponStats(w);
     if (ws.melee) return null;
     const lo = this.snap.loadout;
-    if (ws.mag) { const id = magAmmo(ws), reserve = countOf(lo.mochila, id) + this.pocketCount(id), mag = w.mag ?? 0; return { text: `${mag} / ${reserve}`, mag, reserve, total: mag + reserve }; }
-    const n = countOf(lo.mochila, 'flechas') + this.pocketCount('flechas');
+    if (ws.mag) { const id = magAmmo(ws), reserve = this.ammoLeft(id), mag = w.mag ?? 0; return { text: `${mag} / ${reserve}`, mag, reserve, total: mag + reserve }; }
+    const n = this.ammoLeft('flechas');
     return { text: String(n), mag: null, reserve: n, total: n };
   }
   /** v4d: recarga de un cartucho de escopeta (s). */
@@ -1471,6 +1489,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     if (this.swapT > 0) { this.stats.attacksDuringSwap++; return; }
     if (ws.mag && lo.arma) { lo.arma.mag!--; }
     if (this.isBow() && !this.takeArrow()) return;
+    if (lo.arma?.def === 'escopeta') { this.shellIdleT = 0; if (this.snap.player.reload > 0) { this.snap.player.reload = 0; this.stats.shellCuts++; } } // v4e: disparar corta la recarga
     this.noAmmoWarned = false;
     this.attackT = this.rangedInterval(auto);
     this.stats.fireLog.push({ t: this.snap.elapsed, w: this.weaponId(), auto }); if (this.stats.fireLog.length > 60) this.stats.fireLog.shift();
@@ -2625,7 +2644,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     { const pr = this.host?.saveData?.()?.prog; if (pr) this.hud.setLevel(pr.level, pr.free, s.elapsed); }
     const remain = Math.max(0, DIFFICULTY.raidSeconds - (s.fogT ?? s.elapsed)) / this.fogRate();
     this.hud.timer.setText(remain > 0 ? `${Math.floor(remain / 60)}:${String(Math.floor(remain % 60)).padStart(2, '0')}` : 'NIEBLA').setColor(remain < 120 ? '#ff3cc8' : '#e8e2d0');
-    const ammo = ws.mag && lo.arma ? `  ·  ${p.reload > 0 ? 'recargando' : lo.arma.mag ?? 0}/${countOf(lo.mochila, magAmmo(ws))}` : this.isBow() ? `  ·  ${this.bowAmmo()} ${this.arrowsLeft()}${this.clavarArmed ? ' · Clavar' : ''}` : '';
+    const ammo = ws.mag && lo.arma ? `  ·  ${p.reload > 0 ? 'recargando' : lo.arma.mag ?? 0}/${this.ammoLeft(magAmmo(ws))}` : this.isBow() ? `  ·  ${this.bowAmmo()} ${this.arrowsLeft()}${this.clavarArmed ? ' · Clavar' : ''}` : '';
     const sm = this.spd(lo);
     this.hud.info.setText(`${lo.arma ? def(lo.arma).nombre : 'Puños'}${ammo}  ·  min ${Math.floor(minute)}${sm < 0.999 ? `  ·  vel ${Math.round(sm * 100)}%` : ''}${p.healLeft > 0 ? '  ·  curando' : ''}`);
     this.abilityIds.forEach((id, i) => {

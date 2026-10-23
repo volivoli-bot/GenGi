@@ -127,14 +127,15 @@ await newRaid(6161);
     nearR:[...new Set(nearP.slice(0,40).map(q=>+ratio(q).toFixed(2)))],farR:[...new Set(farP.slice(0,40).map(q=>+ratio(q).toFixed(2)))],outHit:hp0-out.hp,noise:s.noiseLog.at(-1).r};});
  ok('S2 un disparo = 6 perdigones en un cono de 25° (alcance 4,5 casillas) con UNA tirada de crítico para todos', r.groups===r.shots+16&&r.per.every(n=>n===6)&&r.mixed===0&&r.cone===25&&Math.abs(r.range-4.5)<1e-9&&r.maxAng<=12.5+0.01&&r.crits>0&&r.crits<r.shots, JSON.stringify({groups:r.groups,shots:r.shots,per:r.per,mixed:r.mixed,crits:r.crits,cone:r.cone,range:r.range,maxAng:+r.maxAng.toFixed(2)}));
  ok('S3 a partir de 3 casillas los perdigones hacen el 60 %; más allá de 4,5 no llegan; ruido 9', r.nearN>0&&r.farN>0&&r.nearR.every(x=>x===1)&&r.farR.every(x=>x===0.6)&&r.outHit===0&&r.noise===9, JSON.stringify({nearN:r.nearN,farN:r.farN,nearR:r.nearR,farR:r.farR,outHit:r.outHit,noise:r.noise}));}
-{const r=await E(async()=>{const s=gengi.raid();__calm();__open(9);__arm('escopeta','cartuchos',10);const lo=s.snap.loadout,p=s.snap.player;lo.arma.mag=0;s.attackT=0;
-  const t0=__gt();const mags=[];for(let k=0;k<5;k++){await __waitGame(0.25);mags.push([+(__gt()-t0).toFixed(2),lo.arma.mag]);}
+{const r=await E(async()=>{const s=gengi.raid();__calm();__open(9);__arm('escopeta','cartuchos',10);const lo=s.snap.loadout,p=s.snap.player;lo.arma.mag=0;s.attackT=0;s.shellIdleT=0;
+  const t0=__gt();const mags=[];for(let k=0;k<8;k++){await __waitGame(0.25);mags.push([+(__gt()-t0).toFixed(2),lo.arma.mag]);}
   await __waitGame(1.4);const full=lo.arma.mag,res=lo.mochila.filter(i=>i.def==='cartuchos').reduce((a,i)=>a+i.qty,0);
   // interrumpir: con 1 cartucho dentro y recargando, se puede disparar y corta la recarga
   lo.arma.mag=1;p.reload=0.3;const can=s.readyRanged(0.016);s.fireRanged(-Math.PI/2,false);const after={mag:lo.arma.mag,reload:p.reload};
   return {mags,full,res,can,after};});
- const m1=r.mags.find(x=>x[0]>=0.5&&x[0]<0.75);
- ok('S4 recarga cartucho a cartucho (0,5 s cada uno) y disparar la interrumpe', r.mags[0][1]===0&&m1&&m1[1]===1&&r.full===4&&r.res===6&&r.can&&r.after.mag===0&&r.after.reload===0, JSON.stringify(r));}
+ // v4e (Basu): la recarga empieza tras 0,8 s sin apuntar ni disparar → 1.er cartucho a ~1,3 s
+ const m0=r.mags.filter(x=>x[0]<1.2),m1=r.mags.find(x=>x[0]>=1.35&&x[0]<1.75);
+ ok('S4 recarga cartucho a cartucho (tras 0,8 s de reposo, 0,5 s cada uno) y disparar la interrumpe', m0.length>0&&m0.every(x=>x[1]===0)&&m1&&m1[1]===1&&r.full===4&&r.res===6&&r.can&&r.after.mag===0&&r.after.reload===0, JSON.stringify(r));}
 
 // ---------- A: habilidades temporales del arma ----------
 {const r=await E(async()=>{const s=gengi.raid();__calm();__open(9);const out={};const W=gengi.v4d().cfg.WEAPON_BUFFS;

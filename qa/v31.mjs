@@ -17,7 +17,7 @@ const E=(f,...a)=>p.evaluate(f,...a);
 const T=48;
 const setup=`
 window.T=48;
-window.__calm=()=>{const s=gengi.raid();gengi.god(true);gengi.clearEnemies();s.snap.stream=null;s.snap.spawnTimer=-1e9;gengi.move(0,0);gengi.aim(null);gengi.cfg31.ELITE.chance=0;
+window.__calm=()=>{const s=gengi.raid();/* v4e: suite anterior a la nieve, como sigilo.mjs: con mapa al azar a veces caía en la Zona Helada (Errante → Congelado con caparazón ×0,5 en el 1.er golpe = fallo de B5; enemigos ×1,3 = fallo de E2) */const N=gengi.cfg42,V4=gengi.v4().cfg;N.SNOW_ENEMIES.enabled=false;N.SNOW_RULES.muffle=1;N.SNOW_RULES.prints.enabled=false;N.SNOW_RULES.ventisca.enabled=false;V4.SNOW.enemyMult=1;if(s.snowR){for(const q of s.snowR.plates)q.img?.destroy();s.snowR.plates=[];}gengi.god(true);gengi.clearEnemies();s.snap.stream=null;s.snap.spawnTimer=-1e9;gengi.move(0,0);gengi.aim(null);gengi.cfg31.ELITE.chance=0;
   if(!window.__hooked||window.__hookedScene!==s){window.__hooked=true;window.__hookedScene=s;window.__pins=new Map();s.events.on('update',()=>{s.idleT=0;if(!window.__natural)s.snap.spawnTimer=Math.min(s.snap.spawnTimer,-1e6);for(const [e,pos] of window.__pins){if(!e.dead&&e.body){e.body.reset(pos.x,pos.y);}}});}
   window.__pins.clear();};
 window.__gt=()=>gengi.raid().snap.elapsed;
@@ -98,11 +98,13 @@ const D=await E(()=>gengi.defs());
   s.dealDamage(e,10,0,'x',false);out.n=s.fx.shown[s.fx.shown.length-1];s.dealDamage(e,10,0,'x',true);out.c=s.fx.shown[s.fx.shown.length-1];
   // puñalada / disparo apuntado a un desprevenido: base × 2,5, siempre crítico, sin variación
   __calm();__open(8);const d=__dummy('errante',3,0,0,1e6,'idle');await __waitGame(0.1);const vals=[];
-  for(let i=0;i<40;i++){const h=d.hp;d.state='idle';d.meter=0;s.onProjHit({kind:'flecha',pierce:1,pierced:new Set(),aimed:true,dmg:20,base:20,crit:false,weapon:'arco',vx:1,vy:0},d);vals.push(+(h-d.hp).toFixed(2));}
+  const rnd=Math.random;let a=12345;Math.random=()=>{a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}; // semilla fija: resultado determinista
+  try{for(let i=0;i<40;i++){const h=d.hp;d.state='idle';d.meter=0;s.onProjHit({kind:'flecha',pierce:1,pierced:new Set(),aimed:true,dmg:20,base:20,crit:false,weapon:'arco',vx:1,vy:0},d);vals.push(+(h-d.hp).toFixed(2));}}finally{Math.random=rnd;}
+  const D=gengi.cfg31.DAMAGE;out.rolls=!!D.backstabRolls;out.lo=20*D.player.minFrac*2.5;out.hi=20*D.player.maxFrac*2.5;out.type=d.def.type;out.vals=vals;
   out.bs=[...new Set(vals)];out.bsNum=s.fx.shown[s.fx.shown.length-1];
   return out;});
  ok('B4 número normal blanco 17 px; crítico #ffb02e 1,35× (23 px) con «!»', r.n.color==='#ffffff'&&r.n.size===17&&!r.n.text.endsWith('!')&&r.c.color==='#ffb02e'&&r.c.size===23&&r.c.text.endsWith('!'), JSON.stringify({n:r.n,c:r.c}));
- ok('B5 puñalada/disparo a desprevenido: ×2,5 exacto y siempre crítico', r.bs.length===1&&r.bs[0]===50&&r.bsNum.crit, JSON.stringify({vals:r.bs,num:r.bsNum}));}
+ ok('B5 puñalada/disparo a desprevenido: ×2,5 y siempre crítico (sin variación: 50 exacto; con DAMAGE.backstabRolls: 0,72-1,04 × 2,5)', r.type==='errante'&&(r.rolls?r.vals.every(v=>v>=r.lo-0.01&&v<=r.hi+0.01):(r.bs.length===1&&r.bs[0]===50))&&r.bsNum.crit, JSON.stringify({tipo:r.type,variacion:r.rolls,vals:r.bs.slice(0,8),num:r.bsNum}));}
 // TTK (antes: daño fijo y crítico 10 % × 1,8; ahora: [0,72;1,04] y 25 % × 1,5) — Monte Carlo
 {const W=['puños','bate','machete','arco','ballesta','pistola','escopeta','rifle'].filter(w=>D.weapons[w]);const EN=['errante','corredor','bruto','escupidor','chillon'].filter(t=>D.enemies[t]);
  const rnd=()=>Math.random();

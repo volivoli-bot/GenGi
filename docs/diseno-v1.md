@@ -602,3 +602,48 @@ Números en `PRUEBA_V2.applySec` (vendaje 1,5 s, botiquín 2,5 s) y `PRUEBA_V2.a
 - v32 13/13 · v4 51/51 · levels 36/36 · v42 16/16 · v4b 26/26 · v4c 7/7 · **v4d 31/31**
 - Capturas: `shots/v4d-hud-armas.png`, `v4d-hud-pistola-arco.png`, `v4d-municion-baja.png`, `v4d-escopeta-disparo.png`, `v4d-aviso-cazadores.png`, `v4d-niebla-antes-quieto.png`, `v4d-niebla-antes-girando.png`, `v4d-niebla-despues-quieto.png` y `v4d-niebla-despues-girando.png`.
 - Paquetes: `/workspace/gengi-v4d.tar.gz` (copiado también a `gengi-v1.tar.gz`) y `/workspace/gengi-docs-v4d.tar.gz`. No se ha subido nada a GitHub.
+
+## v4e (B5 inestable, munición del bolsillo seguro, recarga de la escopeta)
+
+### B5 de qa/v31 (golpe por la espalda ×2,5) a veces hacía la mitad
+- **Causa (de la prueba, no del juego):** cuando la incursión ponía al jugador en la Zona Helada, el muñeco de prueba (`__dummy('errante', …)`) salía como **Congelado**. Lo hace `SNOW_ENEMIES` en `spawnAt`. Su caparazón de hielo hace ×0,5 en el primer golpe, así que salían 25 en vez de 50. Caso reproducido: `{"n":50,"loss":25,"ice0":true,"type":"congelado"}`.
+- La misma causa afectaba a la E2: la vida ×1,3 de la nieve (`V4.SNOW.enemyMult`).
+- **Arreglo, solo en la prueba:**
+  - `__calm` de `qa/v31.mjs` apaga la nieve como hace `sigilo.mjs`: `SNOW_ENEMIES`, sonido amortiguado, huellas, ventisca, `enemyMult = 1` y placas.
+  - La B5 siembra `Math.random` (mulberry32, semilla 12345) y lo restaura al terminar.
+  - La B5 acepta los dos modos de `DAMAGE.backstabRolls`:
+    - `false` (lo actual): exactamente 20 × 2,5 = 50;
+    - `true`: cada golpe entre 20 × 0,72 × 2,5 y 20 × 1,04 × 2,5.
+  - Comprueba también que el blanco es un Errante y que no hay crítico ×1,5 encima.
+- **Aviso:** la nota de Basu dice que la variación 0,72-1,04 se aplica al ×2,5, pero `config/v31.ts` tiene `backstabRolls: false`. No se ha tocado; hay que decidirlo.
+- Resultado: v31 10 de 10 seguidas a 48/48 (`qa-run/o42_v31_r1..10.log`) y sigilo 25/25.
+
+### Munición del bolsillo seguro (fallo del juego)
+- **Antes:** el HUD sumaba mochila + bolsillo seguro, pero la recarga de pistola y escopeta solo sacaba de la mochila. Salía «0 / 24» junto a «¡Sin munición!».
+- **Ahora todas las municiones van por el mismo camino** (`RaidScene.ammoLeft(id)` / `takeAmmo(id, n)`):
+  - se saca primero de la mochila y luego del bolsillo seguro (y del bolsillo extra);
+  - flechas, balas y cartuchos lo usan igual, y también el HUD y la línea de depuración;
+  - el número del HUD es exactamente lo que se puede recargar.
+
+### Recarga de la escopeta (Basu, diseno-v4 §7)
+- La recarga empieza solo tras `SHOTGUN.reloadDelaySec` (0,8 s) sin apuntar ni disparar.
+- Luego mete 1 cartucho cada `reloadPerShellSec` (0,5 s).
+- Apuntar o disparar la corta (`stats.shellCuts`), y el reloj de reposo vuelve a empezar.
+- Sin cambios: cargador de 4, daño 6 × 7 y el tiempo por cartucho.
+- Con algún cartucho dentro se puede disparar siempre.
+- «¡Sin cartuchos!» solo sale cuando no quedan en la mochila ni en el bolsillo.
+
+### QA v4e
+- Suite nueva `qa/v4e.mjs`, 11/11:
+  - K1-K5: la pistola y la escopeta recargan del bolsillo; mochila 3 + bolsillo 5 da «0 / 8» y entran las 8; sin nada, «0 / 0» y el aviso; el número del HUD coincide con lo que se recarga (16 → 12 + 4).
+  - G1-G5:
+    - valores en config;
+    - fuego seguido (1,2 s) vacía el cargador sin meter ningún cartucho;
+    - el 1.er cartucho entra a ~1,31 s de soltar;
+    - apuntar corta la recarga y vuelve a esperar 0,8 s;
+    - disparar la corta.
+- v4d S4 se ha actualizado: el 1.er cartucho ya no entra a los 0,5 s, sino tras 0,8 s de reposo.
+- Pasada completa (`qa-run/runv4e_full.out`, un solo ejecutor, `dist-v42` en el 4178):
+  - qa 23/23 · offscreen 11/11 · fog sin fallos · v2 50/50 · sigilo 25/25 · prueba 36/36 · v3 42/42 · v31 48/48
+  - v32 13/13 · v4 51/51 · levels 36/36 · v42 16/16 · v4b 26/26 · v4c 7/7 · v4d 31/31 · **v4e 11/11**
+- Paquetes: `/workspace/gengi-v4e.tar.gz` (copiado a `gengi-v1.tar.gz`) y `/workspace/gengi-docs-v4e.tar.gz`. No se ha subido nada.
