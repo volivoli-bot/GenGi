@@ -4,7 +4,7 @@ import { equip, locate, Place, toBackpack, toPocket, toStash, ensureFreeGear, se
 import { backpackSlots, canPocket, canSell, gearValue, ItemInst, itemLabel, makeItem, speedMult, totalWeight } from '../game/inventory';
 import { bestBuyback, buybackPrice } from '../game/prices';
 import { addTrait, costText, craft, craftBlock, deliverCrafts, have, materialCounts, pocketSlots, recipesFor, stashSlots, stationLevel, traitBlock, upgrade, upgradeBlock } from '../game/refugio';
-import { abandonMission, acceptMission, buyStock, deliverMission, missionDef, missionProgress, raidsToRestock, refreshAll, rep, repProgress, sellTo, stockPrice, vstate } from '../game/vendors';
+import { abandonMission, acceptMission, buyXpLeft, buyStock, deliverMission, missionDef, missionProgress, raidsToRestock, refreshAll, rep, repProgress, sellTo, stockPrice, vstate } from '../game/vendors';
 import { CRAFT_RAIDS, MISSIONS, RECIPES, STATION_IDS, STATIONS, TRAIT_UPGRADE_COST, VENDOR_IDS, VENDORS, VendorId } from '../config/v3';
 import type { SaveManager } from '../save/SaveManager';
 import { h, itemCell, itemIcon, itemMeta, toast } from './dom';
@@ -130,7 +130,7 @@ export class Hub {
   }
   private refugio() {
     const d = this.d;
-    return h('div', { class: 'refugio' },
+    return h('div', { class: 'refugio', style: "background:linear-gradient(#0009,#0009),url('art/v3/refugio/suelo_refugio.svg') repeat;background-size:auto,64px 64px" },
       h('h3', {}, h('span', {}, 'Materiales'), h('span', {}, 'del alijo')),
       h('div', { class: 'mats' }, ...materialCounts(d).map(m => h('div', { class: 'mat' }, h('img', { src: `art/${ITEMS[m.id].icon}.svg`, alt: '' }), h('b', {}, String(m.n)), h('small', {}, ITEMS[m.id].nombre)))),
       h('p', { class: 'hint' }, 'Los materiales salen de cajas, maleteros de coches y cadáveres. El Generador limita el nivel del resto de estaciones.'),
@@ -166,7 +166,7 @@ export class Hub {
 
   // ---------------------------------------------------------------- v3: Tiendas (diseno-v3 §3)
   private tiendas() {
-    const d = this.d, v = this.vendor, def = VENDORS.defs[v], s = vstate(d, v), lv = rep(d, v), pr = repProgress(s.xp);
+    const d = this.d, v = this.vendor, def = VENDORS.defs[v], s = vstate(d, v), lv = rep(d, v), pr = repProgress(s);
     const sellable = [...d.stash, ...d.overflow, ...d.loadout.mochila].filter(it => canSell(it));
     const active = missionDef(s.active);
     return h('div', { class: 'tiendas' },
@@ -174,8 +174,10 @@ export class Hub {
         h('img', { src: `art/v3/${VENDORS.defs[id].retrato}.svg`, alt: '' }), h('span', {}, VENDORS.defs[id].nombre), h('small', {}, `Rep. ${rep(d, id)}`)))),
       h('div', { class: 'vhead' },
         h('div', {}, h('b', {}, def.nombre), h('div', { class: 'hint' }, def.desc + ` · compra lo suyo al ${VENDORS.buyOwn * 100} %, lo demás al ${VENDORS.buyOther * 100} %`)),
-        h('div', { class: 'rep' }, `Reputación ${lv}/4`, h('div', { class: 'bar' }, h('i', { style: `width:${pr ? Math.round(pr[0] / pr[1] * 100) : 100}%` })),
-          h('small', {}, pr ? `${pr[0]}/${pr[1]} · -${Math.round((lv - 1) * VENDORS.discountPerLevel * 100)} % precio` : 'Máxima · -15 % precio')),
+        h('div', { class: 'rep' }, `Reputación ${lv}/4`, h('div', { class: 'bar' }, h('i', { style: `width:${pr ? Math.round(pr.cur / pr.need * 100) : 100}%` })),
+          h('small', {}, pr ? `${pr.cur}/${pr.need} · -${Math.round((lv - 1) * VENDORS.discountPerLevel * 100)} % precio` : 'Máxima · -15 % precio'),
+          pr && pr.mission > 0 ? h('small', { class: 'hint' }, `Nivel ${lv + 1}: cumple ${pr.mission === 1 ? 'una misión' : pr.mission + ' misiones'} de ${def.nombre}`) : null,
+          h('small', { class: 'hint' }, `Comprando: +${buyXpLeft(d, v)} rep. más hasta la renovación · vender no da reputación`)),
       ),
       h('h3', {}, h('span', {}, 'Misiones'), h('span', {}, 'elige una')),
       h('div', { class: 'missions' }, ...s.offers.map(id => {

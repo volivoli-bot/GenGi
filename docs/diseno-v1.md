@@ -268,3 +268,39 @@ Números en `PRUEBA_V2.applySec` (vendaje 1,5 s, botiquín 2,5 s) y `PRUEBA_V2.a
 - v3: la granada no tiene botón rápido; solo se lanza desde el inventario.
 - v3: el Escupidor y el Chillón se acercan hasta entrar en pantalla antes de atacar. En vertical solo se ven ~4 casillas a los lados y, si no, nunca podrían avisar en pantalla.
 - v3: arreglado un fallo antiguo: `hitStop(0)` dejaba el mundo congelado.
+
+### Implementación v3.1 (diseno-v3.md §9, reputación y jugador nuevo; números en `src/config/v31.ts`)
+- **Arco y ballesta silenciosos**: disparar no hace ruido. Al caer, el proyectil hace un ruido de 1,5 casillas donde cae (distrae: van a mirar). La flecha va a 7 casillas/s (336 px/s, antes 480) y el virote a 10 (480 px/s).
+- **Ballesta** (botín de cajas, con 5 virotes, y en la tienda de Chispas): 24 de daño, 0,4 disparos/s efectivos (0,6 × 0,67 a distancia), alcance 8, peso 3. Usa virotes. Su habilidad «Clavar» (8 s) hace que el siguiente virote atraviese a 2 enemigos y se pare en el 3.º.
+- **Recuperar munición**: lo que falla se queda en el suelo con un brillo tenue. De lo que acierta, el 60 % cae junto al cuerpo al morir. Se recoge pasando por encima, sin anillo de saqueo.
+- **Daño variable**: cada golpe directo hace entre ×0,72 y ×1,04 de su daño. Crítico ×1,5: 25 % del jugador, 10 % de los enemigos (configurable por lado).
+  - No tiran: sangrado, veneno, ácido, niebla, el agarre del Reptante, ni la puñalada/Ejecutar/disparo a un desprevenido (×2,5 fijo y siempre crítico).
+  - Números: normal blanco 17 px. Crítico #ffb02e 1,35× (23 px) con «!» y rebote.
+  - Daño recibido en rojo (#ff4d4d). El crítico recibido sale naranja rojizo y hace temblar la pantalla.
+  - Media: jugador ×0,99 (en la v2 ×1,08 con 10 % × 1,8, así que unos 8 % menos de daño medio). Enemigos ×0,924 (antes ×1,00).
+- **Memoria de visión**: lo que sale del cono sigue visible 0,6 s y se apaga. El enemigo que dejas de ver deja una silueta fantasma quieta en su última posición, que se desvanece en 0,6 s y nunca avisa de ataques. La mirada gira como mucho 540°/s.
+- **El Trapero**:
+  - Aparece en el 50 % de las incursiones, a ≥14 casillas del inicio y oculto hasta que lo ves.
+  - Compra solo materiales saqueados en esa incursión, al 70 % de su valor, en vales. Los vales solo valen en su caseta y se pierden al salir o al morir.
+  - Vende 3 objetos (Reforzado, Militar y un consumible), 1 unidad de cada uno, al −20 % sobre el precio de reputación 1. Pagas con vales, luego con las chapas que llevas encima y luego con las del refugio.
+  - Cierra en el minuto 10 o si hay un enemigo en alerta a ≤4 casillas.
+  - La prueba anti-arbitraje incluye su descuento: lo que le compras se revende como mucho al 40 % del precio más bajo.
+- **Élites**: el 5 % de las apariciones (nunca la Abominación ni el Enjambre). Vida ×2, daño ×2, tamaño ×1,1 y aura dorada. Sueltan 2 objetos extra, uno de equipo una rareza por encima (tope Militar). Como mucho 3 vivos y 6 por incursión. Se guardan y se restauran en el guardado de la incursión.
+- **Reputación** (corrección de Dott/Basu): vender no da reputación. Comprar da como mucho 150 por cada renovación de la tienda. Los niveles 3 y 4 piden 1 y 2 misiones completadas de ese vendedor. Guardado v4: se conserva la XP, pero sin misiones el nivel se queda en 2. La tienda muestra «Comprando: +N rep. más hasta la renovación · vender no da reputación» y la misión que falta.
+- **Jugador nuevo de Basu** (`public/art/v3/jugador3_*.svg`): capucha, gafas de soldador, chaqueta, mochila y bufanda naranja.
+  - Orden de capas: sombra, pies, bufanda, mochila, torso, brazos, arma, cabeza.
+  - La bufanda ondea ±8° a 1,5 ciclos/s, hasta ×1,8 al correr, y se queda quieta en sigilo (cambio suave).
+  - La mochila se mueve 1 px al andar, a contrafase del torso.
+  - Las gafas destellan 1 fotograma al disparar o al hacer crítico.
+  - El jugador anterior sigue disponible con `PLAYER_ART.version = 'v2'`.
+
+### QA v3.1
+- Nuevo `qa/v31.mjs`: 48 comprobaciones de arco/ballesta, daño y críticos, memoria de visión, Trapero, élites, reputación, migración, jugador nuevo y una incursión simulada de 15 min. También informa del TTK.
+- Las suites anteriores se han actualizado a los números nuevos (flecha 336 px/s, crítico #ffb02e 1,35×, golpes con variación, guardado v4, reputación 4 con misiones). Usan `?noelite` para que los élites aleatorios no cambien sus medidas.
+- Capturas: nuevo `qa/shots_v32.mjs` → `shots/v3_1-*.png`.
+
+### Problemas conocidos v3.1
+- La caseta del Trapero no es sólida, y los contenedores y las flechas del suelo no tienen memoria de visión (solo el cono y los enemigos).
+- El cuerpo del jugador sigue girando al instante; solo la mirada (cono) tiene el tope de 540°/s.
+- Ruta material → vales → objeto → revender: ≈0,28 × valor frente a 0,216 × valor vendiendo el material a un vendedor. Mejor cambio, pero no es un bucle: necesita materiales nuevos en cada incursión.
+- Rendimiento (stress.mjs en la caja con renderizado por software, 390x844): novato quieto 26 → 19 fps con 65-90 enemigos (v3: 28 → 19); minuto 12 con ~100 enemigos 16 → 10 fps (v3: 18 → 16). El sprite nuevo no es la causa: con el jugador anterior sale casi igual (16 → 12). Parece ruido de la caja (carga ≈7), pero conviene medirlo en un móvil real.

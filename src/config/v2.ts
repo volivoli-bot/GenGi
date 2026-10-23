@@ -59,7 +59,7 @@ export const JUICE = {
   /** Sacudida de cámara: intensidad por punto de daño, con tope. */
   shakePerDmg: 0.00025,
   shakeMax: 0.009,
-  /** Críticos. */
+  /** Críticos de la v2 (10 %, ×1,8): YA NO SE USAN; los sustituye DAMAGE en config/v31.ts (§9.2). */
   critChance: 0.1,
   critMult: 1.8,
   /** Números de daño: salto (px), duración (s). Crítico amarillo y 1,4× más grande. */
@@ -76,7 +76,7 @@ export const STAGGER = {
   /** Masa relativa por tipo (divide el impulso). */
   weight: { errante: 1, corredor: 0.8, hinchado: 1.7, abominacion: 7, escupidor: 0.9, chillon: 0.9, acechador: 1, bruto: 4, reptante: 3, enjambre: 0.3 } as Record<string, number>,
   /** Fuerza del arma (px/s de impulso para masa 1) y duración del tambaleo (s). */
-  weapon: { punos: [140, 0.12], bate: [330, 0.35], machete: [170, 0.16], arco: [220, 0.18], pistola: [180, 0.14] } as Record<string, [number, number]>,
+  weapon: { punos: [140, 0.12], bate: [330, 0.35], machete: [170, 0.16], arco: [220, 0.18], ballesta: [280, 0.22], pistola: [180, 0.14] } as Record<string, [number, number]>,
   impulseSec: 0.12,
   /** Un tambaleo de al menos esto (s) interrumpe un aviso de ataque. */
   interruptSec: 0.3,

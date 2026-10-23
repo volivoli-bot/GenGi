@@ -2,7 +2,7 @@
 // enemigos nuevos con sus reglas de justicia, mutaciones, consumibles nuevos y migraciones v1/v2 → v3.
 // node qa/v3.mjs (con `npx vite preview --port 4173` en marcha)
 import puppeteer from 'puppeteer-core';
-const URL='http://localhost:4173/?debug=1';
+const URL='http://localhost:4173/?debug=1&noelite';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const res=[]; const ok=(n,c,i='')=>{res.push(`${c?'PASS':'FAIL'} ${n} ${i}`);console.log(`${c?'PASS':'FAIL'} ${n} ${i}`);};
 const b=await puppeteer.launch({executablePath:'/usr/bin/google-chrome',headless:'new',args:['--no-sandbox','--use-gl=swiftshader','--enable-unsafe-swiftshader','--window-size=390,844']});
@@ -38,8 +38,8 @@ window.__resetStats=()=>{const s=gengi.raid();const st=s.enemies.v3.stats;for(co
   let loss=[];for(const v of ['doc','chispas','hierro']){for(let i=0;i<gengi.state().vendors[v].stock.length&&i<4;i++){const c0=gengi.state().chapas;const b=gengi.op('buyStock',v,i);if(!b.ok)continue;const c1=gengi.state().chapas;const st=gengi.state().stash;const it=st[st.length-1];let best=0;for(const w of ['doc','chispas','hierro']){const before=gengi.state().chapas;const s2=gengi.op('sellTo',w,it.uid);if(s2.ok){best=gengi.state().chapas-before;break;}}loss.push({v,id:it.def,paid:c0-c1,got:best});}}
   out.loss=loss;
   // reputación: subir XP baja precios y amplía stock
-  const p1=gengi.state().vendors.doc.stock.length;gengi.repXp('doc',1700);const s4=gengi.state().vendors.doc;out.docStock=[p1,s4.stock.length];out.rep4Level=s4.stockLevel;
-  gengi.repXp('chispas',1700);out.chispasMil=gengi.state().vendors.chispas.stock.filter(e=>e.rarity==='militar').map(e=>e.traits?.length??0);
+  const p1=gengi.state().vendors.doc.stock.length;gengi.repXp('doc',1700);gengi.missions('doc',2);const s4=gengi.state().vendors.doc;out.docStock=[p1,s4.stock.length];out.rep4Level=s4.stockLevel;
+  gengi.repXp('chispas',1700);gengi.missions('chispas',2);out.chispasMil=gengi.state().vendors.chispas.stock.filter(e=>e.rarity==='militar').map(e=>e.traits?.length??0);
   return out;});
  ok('A2 comprar y revender siempre pierde chapas (los 3 vendedores)', r.loss.length>=6&&r.loss.every(x=>x.got<x.paid&&x.got<=0.4*x.paid+1), JSON.stringify(r.loss.slice(0,6)));
  ok('A2 reputación 4: stock de Doc más amplio (antídoto/estimulante) y renovado al subir', r.docStock[1]>r.docStock[0]&&r.rep4Level===4, JSON.stringify(r.docStock));
@@ -128,12 +128,13 @@ window.__resetStats=()=>{const s=gengi.raid();const st=s.enemies.v3.stats;for(co
  ok('D3 Bruto: golpes/cargas con aviso, nunca fuera de pantalla', r.st.slams+r.st.charges>0&&r.tele.off===0, JSON.stringify({s:r.st.slams,c:r.st.charges,tele:r.tele}));}
 // D4 Reptante: agarre 2 s, inmunidad 4 s, mientras te agarra los demás hacen la mitad
 {const r=await E(async()=>{const s=gengi.raid();__calm();__open(8);__resetStats();gengi.god(false);s.snap.player.hp=100;
+  const __D=gengi.cfg31.DAMAGE.enemy,__bk={...__D};Object.assign(__D,{minFrac:1,maxFrac:1,critChance:0});
   gengi.reptante(1.2,0);const t0=__gt();let grabbedAt=null,releasedAt=null;
   while(__gt()-t0<6){const g=s.enemies.v3.grab;if(g&&grabbedAt===null){grabbedAt=__gt();
       // otro golpe mientras te agarra: mitad
       const h=s.snap.player.hp;s.damagePlayer(20,'Errante');window.__half=h-s.snap.player.hp;s.snap.player.hp=100;}
     if(!g&&grabbedAt!==null&&releasedAt===null){releasedAt=__gt();window.__imm=s.enemies.v3.grabImm;}await new Promise(r=>setTimeout(r,20));}
-  const h=s.snap.player.hp;s.damagePlayer(20,'Errante');const full=h-s.snap.player.hp;s.snap.player.hp=100;
+  const h=s.snap.player.hp;s.damagePlayer(20,'Errante');const full=h-s.snap.player.hp;s.snap.player.hp=100;Object.assign(__D,__bk);
   const imm=window.__imm;
   // con inmunidad, un Reptante al lado no agarra (se pone justo tras soltarte)
   s.enemies.v3.grabImm=4;gengi.reptante(-1.2,0);await __waitGame(3.2);
@@ -192,7 +193,7 @@ window.__resetStats=()=>{const s=gengi.raid();const st=s.enemies.v3.stats;for(co
  ok('F1 Antídoto: inmune al veneno', r.poisonImmune);
  ok('F1 Adrenalina: +25 % velocidad y -30 % daño', Math.abs(r.adr-1.25)<0.06&&r.adrDmg<20*0.75, JSON.stringify({v:r.adr,dmg:r.adrDmg}));
  ok('F1 Estimulante activo 25 s', r.estim);
- ok('F1 Granada: aviso, mecha 1 s y 45 de daño en área', r.grenades===1&&(r.gren>=40||r.grenDead), JSON.stringify({d:r.gren,dead:r.grenDead}));}
+ ok('F1 Granada: aviso, mecha 1 s y 45 de daño en área (×variación v3.1 0,72-1,04, crítico ×1,5)', r.grenades===1&&(r.gren>=45*0.72-0.5||r.grenDead), JSON.stringify({d:r.gren,dead:r.grenDead}));}
 
 // ================= G. Misiones (registro de la raid) =================
 {const r=await E(async()=>{const s=gengi.raid();__calm();__open(8);
@@ -206,10 +207,10 @@ window.__resetStats=()=>{const s=gengi.raid();const st=s.enemies.v3.stats;for(co
 await p.close(); p=await page();
 {await E(()=>gengi.loadLegacy()).catch(()=>{}); await sleep(1500); await p.waitForFunction(()=>window.gengi);
  const r=await E(()=>{const d=gengi.state();return {v:d.saveVersion,chapas:d.chapas,stash:d.stash.map(i=>i.def),ref:d.refugio?.levels,vend:Object.keys(d.vendors||{}),esp:d.loadout.espalda,ex:d.loadout.bolsilloExtra};});
- ok('H1 v1 (prototipo) → v3: conserva chapas y alijo, refugio a nivel 1 y vendedores', r.v===3&&r.chapas>=77&&r.stash.includes('machete')&&r.ref?.alijo===1&&r.vend.length===3&&r.esp===null&&Array.isArray(r.ex), JSON.stringify(r));}
+ ok('H1 v1 (prototipo) → v4: conserva chapas y alijo, refugio a nivel 1 y vendedores', r.v===4&&r.chapas>=77&&r.stash.includes('machete')&&r.ref?.alijo===1&&r.vend.length===3&&r.esp===null&&Array.isArray(r.ex), JSON.stringify(r));}
 {await E(()=>gengi.loadV2()).catch(()=>{}); await sleep(1500); await p.waitForFunction(()=>window.gengi);
  const r=await E(()=>{const d=gengi.state();return {v:d.saveVersion,chapas:d.chapas,stash:d.stash.map(i=>i.def+'/'+i.rarity),arma:d.loadout.arma?.def,bol:d.loadout.bolsillo?.def,seen:d.seenExits,log:d.raidLog.length,raids:d.stats.raids,ref:d.refugio?.levels,vend:Object.keys(d.vendors||{})};});
- ok('H2 v2 → v3: conserva todo (chapas, alijo, equipo, bolsillo, salidas vistas, historial, estadísticas)', r.v===3&&r.chapas>=345&&r.stash.includes('pistola/militar')&&r.arma==='machete'&&r.bol==='botiquin'&&r.seen.m1?.length===2&&r.log===1&&r.raids===7&&r.ref?.bolsillo===1&&r.vend.length===3, JSON.stringify(r));}
+ ok('H2 v2 → v4: conserva todo (chapas, alijo, equipo, bolsillo, salidas vistas, historial, estadísticas)', r.v===4&&r.chapas>=345&&r.stash.includes('pistola/militar')&&r.arma==='machete'&&r.bol==='botiquin'&&r.seen.m1?.length===2&&r.log===1&&r.raids===7&&r.ref?.bolsillo===1&&r.vend.length===3, JSON.stringify(r));}
 
 ok('Z sin errores de página', errs.length===0, errs.slice(0,5).join(' | '));
 await b.close();

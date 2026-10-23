@@ -35,10 +35,12 @@ const TABLE: { id: string; w: number; qty?: [number, number] }[] = [
   { id: 'botiquin', w: 6 },
   { id: 'municion', w: 5, qty: [4, 10] },
   { id: 'flechas', w: 5, qty: [3, 8] },
+  { id: 'virotes', w: 3, qty: [3, 6] },
   { id: 'bengala', w: 4 },
   { id: 'bate', w: 6 },
   { id: 'machete', w: 6 },
   { id: 'arco', w: 4 },
+  { id: 'ballesta', w: 3 },
   { id: 'pistola', w: 3 },
   { id: 'tablas', w: 6 },
   { id: 'chaleco', w: 2.5 },
@@ -74,6 +76,14 @@ export function rollItem(rng: Rng, bonus = 0, forceRarity?: Rarity, gearOnly = f
   return makeItem(pick.id, 'comun', q);
 }
 
+/** v3.1 §9.5: botín de élite = 2 objetos; uno de equipo una rareza por encima de la tirada normal (tope: Militar). */
+export function rollEliteDrops(rng: Rng): ItemInst[] {
+  const normal = rollRarity(rng, 0);
+  const i = V1_DROP_RARITIES.indexOf(normal);
+  const up = V1_DROP_RARITIES[Math.min(V1_DROP_RARITIES.length - 1, i + 1)];
+  return [rollItem(rng, 0, up, true), rollItem(rng, 0)];
+}
+
 export type ContainerKind = 'caja' | 'cerrada' | 'elite' | 'cadaver';
 
 export function rollContainer(rng: Rng, kind: ContainerKind, bonus: number): ItemInst[] {
@@ -88,6 +98,7 @@ export function rollContainer(rng: Rng, kind: ContainerKind, bonus: number): Ite
   for (let i = 0; i < n; i++) out.push(rollItem(rng, b));
   // un arco encontrado viene con unas flechas
   if (out.some(i => i.def === 'arco')) out.push(makeItem('flechas', 'comun', 6));
+  if (out.some(i => i.def === 'ballesta')) out.push(makeItem('virotes', 'comun', 5));
   return out;
 }
 

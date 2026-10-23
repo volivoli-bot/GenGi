@@ -6,7 +6,7 @@ import type { ContainerKind } from '../game/loot';
 import type { MutationId, StationId, VendorId } from '../config/v3';
 
 /** Versión actual del formato de guardado. Súbela y añade una migración en migrations.ts al cambiar el formato. */
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 
 export type TargetPriority = 'cercano' | 'debil' | 'peligroso';
 
@@ -55,6 +55,14 @@ export interface ExitState {
   flareAt: number | null;
 }
 
+export interface TraperoSnap {
+  x: number; y: number;
+  /** Visto alguna vez (aparece en el minimapa). */
+  found: boolean;
+  vales: number;
+  stock: { item: ItemInst; price: number; sold: boolean }[];
+}
+
 export interface EnemySnap {
   type: EnemyType; x: number; y: number; hp: number; maxHp: number; dmg: number;
   /** Abominación: punto que guarda. */
@@ -66,6 +74,8 @@ export interface EnemySnap {
   mut?: MutationId;
   group?: number;
   sewer?: number;
+  /** v3.1: élite (vida/daño ya multiplicados en hp/dmg). */
+  elite?: boolean;
 }
 
 export interface ContainerSnap { id: number; x: number; y: number; kind: ContainerKind; items: ItemInst[]; opened: boolean }
@@ -97,7 +107,11 @@ export interface RaidSnapshot {
   /** v2: guardado antiguo (mapa v1) que hay que repoblar en el mapa nuevo al reanudar. */
   repopulate?: boolean;
   /** v2: flechas clavadas/caídas por el suelo, recuperables. */
-  arrows?: { x: number; y: number; qty: number }[];
+  arrows?: { x: number; y: number; qty: number; def?: string }[];
+  /** v3.1: élites aparecidos en esta incursión (tope ELITE.maxPerRaid). */
+  elites?: number;
+  /** v3.1 §9.4: el Trapero de esta incursión (null = no hay). Los vales viven aquí: se pierden al acabar la incursión. */
+  trapero?: TraperoSnap | null;
   /** v3: casillas del bolsillo seguro y nivel de radio con que se entró (estaciones del refugio). */
   pocketSlots?: number;
   radio?: number;
@@ -129,6 +143,9 @@ export interface VendorState {
   active: string | null;
   /** Progreso de la misión activa (acumulativas). */
   progress: number;
+  /** v3.1: misiones cumplidas de este vendedor (niveles 3-4) y reputación ganada comprando en la renovación actual (tope). */
+  missionsDone?: number;
+  buyXp?: number;
 }
 export interface CraftJob { recipe: string; readyAt: number }
 export interface Refugio { levels: Record<StationId, number>; crafts: CraftJob[] }

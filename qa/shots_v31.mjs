@@ -6,7 +6,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const b=await puppeteer.launch({executablePath:'/usr/bin/google-chrome',headless:'new',args:['--no-sandbox','--use-gl=swiftshader','--enable-unsafe-swiftshader']});
 const p=await b.newPage(); await p.setViewport({width:390,height:844,isMobile:true,hasTouch:true,deviceScaleFactor:1});
 const errs=[]; p.on('pageerror',e=>errs.push(e.message));
-await p.goto('http://localhost:4173/?debug=1'); await p.waitForFunction(()=>window.gengi);
+await p.goto('http://localhost:4173/?debug=1&noelite'); await p.waitForFunction(()=>window.gengi);
 await p.evaluate(()=>gengi.reset()).catch(()=>{}); await sleep(700); await p.waitForFunction(()=>window.gengi);
 const E=(f,...a)=>p.evaluate(f,...a);
 const shot=async n=>{await p.screenshot({path:`${dir}/${n}.png`});console.log('ok',n);};
@@ -15,7 +15,7 @@ await E(()=>{for(const [id,q] of [['mat_chatarra',20],['mat_tela',14],['mat_comp
 await E(()=>gengi.tab('refugio')); await sleep(400); await shot('v31-refugio');
 await E(()=>{const el=document.querySelector('.hub .scroll, .scroll');if(el)el.scrollTop=520;}); await sleep(200); await shot('v31-refugio-fabricar');
 await E(()=>{gengi.repXp('doc',850);gengi.tab('tiendas','doc');}); await sleep(400); await shot('v31-tienda-doc');
-await E(()=>{gengi.repXp('chispas',1700);gengi.tab('tiendas','chispas');}); await sleep(400); await E(()=>{const el=document.querySelector('.scroll');if(el)el.scrollTop=0;}); await sleep(200); await shot('v31-tienda-chispas-rep4');
+await E(()=>{gengi.repXp('chispas',1700);gengi.missions('chispas',2);gengi.tab('tiendas','chispas');}); await sleep(400); await E(()=>{const el=document.querySelector('.scroll');if(el)el.scrollTop=0;}); await sleep(200); await shot('v31-tienda-chispas-rep4');
 await E(()=>{const m=document.querySelector('.tiendas .vhead');if(m)m.scrollIntoView({block:'start'});}); await sleep(200); await shot('v31-misiones');
 await E(()=>gengi.tab('equipo')); await sleep(300); await E(()=>{const el=document.querySelector('.scroll');if(el)el.scrollTop=0;}); await sleep(200); await shot('v31-equipo-bolsillos');
 // ---- raid ----

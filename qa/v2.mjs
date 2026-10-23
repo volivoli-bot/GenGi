@@ -1,6 +1,6 @@
 // QA de la v2 (7 puntos + arma de reserva): node qa/v2.mjs (con `npx vite preview --port 4173` en marcha)
 import puppeteer from 'puppeteer-core';
-const URL='http://localhost:4173/?debug=1';
+const URL='http://localhost:4173/?debug=1&noelite';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const res=[]; const ok=(n,c,i='')=>{res.push(`${c?'PASS':'FAIL'} ${n} ${i}`);console.log(`${c?'PASS':'FAIL'} ${n} ${i}`);};
 const b=await puppeteer.launch({executablePath:'/usr/bin/google-chrome',headless:'new',args:['--no-sandbox','--use-gl=swiftshader','--enable-unsafe-swiftshader','--window-size=390,844']});
@@ -136,7 +136,7 @@ await E(()=>gengi.start()); await sleep(1500); await E(setup); await E(()=>__cal
    await __wait(200);const sh0=s.stats.shots;gengi.aim(0.95,0);await __wait(1500);const one=s.stats.shots-sh0;await new Promise(r=>{const f=()=>s.attackT<=0?r():setTimeout(f,20);f();}); /* arco 0,536/s: 1,87 s entre flechas */gengi.aim(0.5,0);await __frames(3);gengi.aim(0.95,0);await __wait(200);const two=s.stats.shots-sh0;gengi.aim(null);
    const f=s.proj.fired.at(-1);await __wait(1500);const flechas=lo.mochila.filter(i=>i.def==='flechas').reduce((n,i)=>n+i.qty,0);const ground=s.snap.arrows?.length??0;return {one,two,f,flechas,ground};});
  ok('5 arco: un disparo por cada vez que cruzas el umbral', bow.one===1&&bow.two===2, JSON.stringify({one:bow.one,two:bow.two}));
- ok('5 flecha a 480 px/s', bow.f?.kind==='flecha'&&Math.abs(bow.f.speed-480)<1, JSON.stringify(bow.f));
+ ok('5 flecha a 336 px/s (v3.1: 7 casillas/s)', bow.f?.kind==='flecha'&&Math.abs(bow.f.speed-336)<1, JSON.stringify(bow.f));
  const rec=await E(async()=>{const s=gengi.raid();s.syncArrows?.();const g=s.groundArrows??[];const n=(s.snap.arrows??[]).length;if(!n)return {n:0};const a=s.snap.arrows[0];const before=s.snap.loadout.mochila.filter(i=>i.def==='flechas').reduce((n,i)=>n+i.qty,0);s.player.setPosition(a.x,a.y);s.player.body.reset(a.x,a.y);await __wait(400);const after=s.snap.loadout.mochila.filter(i=>i.def==='flechas').reduce((n,i)=>n+i.qty,0);return {n,before,after,stat:s.stats.arrowsRecovered};});
  ok('5 las flechas caídas se pueden recoger', rec.n===0 ? true : rec.after>rec.before, JSON.stringify(rec)+(rec.n===0?' (ninguna sobrevivió al 70 %: sin flechas en el suelo esta vez)':''));
  // jugo: números de daño, crítico, sangre/manchas, hit-stop, tambaleo
@@ -152,7 +152,7 @@ await E(()=>gengi.start()); await sleep(1500); await E(setup); await E(()=>__cal
    s.dealDamage(ab,6,-Math.PI/2,'bate',false,55);await __wait(200);const abMoved=Math.hypot(ab.x-ax,ab.y-ay);
    if(!e.dead)s.enemies.kill(e);await __wait(100);const st1=s.fx.stainCount;gengi.clearEnemies();
    return {inStop,hs:s.stats.hitStops-hs0,moved,abMoved,stag,shown,st0,st1};});
- ok('5 número de daño blanco con contorno; crítico #ffd27a 1,4×', j.shown.length===2 && !j.shown[0].crit && j.shown[1].crit && j.shown[1].color==='#ffd27a' && Math.abs(j.shown[1].size/j.shown[0].size-1.4)<0.05, JSON.stringify(j.shown));
+ ok('5 número de daño blanco con contorno; crítico #ffb02e 1,35× con «!» (v3.1)', j.shown.length===2 && !j.shown[0].crit && j.shown[1].crit && j.shown[1].color==='#ffb02e' && Math.abs(j.shown[1].size/j.shown[0].size-1.35)<0.05 && j.shown[1].text.endsWith('!'), JSON.stringify(j.shown));
  ok('5 hit-stop al golpear', j.inStop && j.hs>=1, `parones=${j.hs}`);
  ok('5 retroceso/tambaleo = fuerza del arma / peso del enemigo', j.moved>4 && j.abMoved<j.moved*0.5 && j.stag>0, JSON.stringify({errante:j.moved.toFixed(1),abominacion:j.abMoved.toFixed(1)}));
  ok('5 manchas de sangre que se quedan', j.st1>j.st0, `${j.st0}→${j.st1}`);}

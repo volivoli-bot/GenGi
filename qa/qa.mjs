@@ -1,5 +1,5 @@
 import puppeteer from 'puppeteer-core';
-const URL='http://localhost:4173/?debug=1';
+const URL='http://localhost:4173/?debug=1&noelite';
 const res=[]; const ok=(name,cond,info='')=>{res.push(`${cond?'PASS':'FAIL'} ${name} ${info}`);};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const b=await puppeteer.launch({executablePath:'/usr/bin/google-chrome',headless:'new',args:['--no-sandbox','--use-gl=swiftshader','--enable-unsafe-swiftshader','--window-size=390,844']});

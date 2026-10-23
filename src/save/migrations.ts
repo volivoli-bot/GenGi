@@ -53,6 +53,18 @@ export const MIGRATIONS: Record<number, (d: AnySave) => AnySave> = {
     // refugio y vendedores: los rellena normalize() con valores por defecto (nivel 1, rep. 1, sin stock: se genera al abrir la tienda)
     return out;
   },
+  /**
+   * 3 → 4 (v3.1, corrección de reputación): se conserva la XP de cada vendedor, pero los niveles 3 y 4 exigen ahora
+   * misiones de ese vendedor. Las misiones cumplidas antes no se guardaban → cuentan 0 y el nivel se queda en 2 como máximo
+   * hasta cumplir las que falten (la XP sigue ahí: al cumplirlas se recupera el nivel). El stock se regenera al nivel nuevo.
+   */
+  3: (d) => {
+    const out = { ...d, saveVersion: 4 };
+    if (out.vendors) {
+      out.vendors = Object.fromEntries(Object.entries(out.vendors as Record<string, AnySave>).map(([k, v]) => [k, { ...v, missionsDone: v.missionsDone ?? 0, buyXp: 0, stockLevel: -1 }]));
+    }
+    return out;
+  },
 };
 
 export function migrate(raw: AnySave): AnySave {

@@ -9,16 +9,26 @@ import { buybackPrice, buyPrice } from './prices';
 import { takeForSale } from './hubOps';
 import { stashSlots } from './refugio';
 import { TRAITS } from '../data/items';
+import { REP } from '../config/v31';
 
 /** Vendedores v3 (diseno-v3 §3): reputación 1-4, stock que se renueva cada 3 raids, misiones. */
 export function vstate(d: SaveData, v: VendorId): VendorState { return (d.vendors[v] ??= newVendor()); }
+/** Nivel solo por XP (sin contar las misiones). */
 export function repLevel(xp: number) { let lv = 1; VENDORS.repXp.forEach((t, i) => { if (xp >= t) lv = i + 1; }); return lv; }
-export const rep = (d: SaveData, v: VendorId) => repLevel(vstate(d, v).xp);
-/** Progreso hacia el siguiente nivel: [xp en el nivel, xp necesaria] o null si es el máximo. */
-export function repProgress(xp: number): [number, number] | null {
-  const lv = repLevel(xp); const next = VENDORS.repXp[lv]; if (next === undefined) return null;
-  return [xp - VENDORS.repXp[lv - 1], next - VENDORS.repXp[lv - 1]];
+/** v3.1: nivel máximo que permiten las misiones cumplidas (niveles 3 y 4 exigen misiones de ese vendedor). */
+export function missionCap(done: number) { let lv = 1; REP.missionsForLevel.forEach((n, i) => { if (done >= n) lv = i + 1; }); return lv; }
+/** Nivel real: XP y misiones. */
+export function repLevelOf(s: VendorState) { return Math.min(repLevel(s.xp), missionCap(s.missionsDone ?? 0)); }
+export const rep = (d: SaveData, v: VendorId) => repLevelOf(vstate(d, v));
+/** Progreso hacia el siguiente nivel ([xp en el nivel, xp necesaria]) o null si es el máximo; `mission` = le falta una misión. */
+export function repProgress(s: VendorState): { cur: number; need: number; mission: number } | null {
+  const lv = repLevelOf(s); const next = VENDORS.repXp[lv]; if (next === undefined) return null;
+  const base = VENDORS.repXp[lv - 1];
+  const mission = Math.max(0, (REP.missionsForLevel[lv] ?? 0) - (s.missionsDone ?? 0));
+  return { cur: Math.min(s.xp, next) - base, need: next - base, mission };
 }
+/** Reputación que aún se puede ganar comprando en esta renovación. */
+export const buyXpLeft = (d: SaveData, v: VendorId) => Math.max(0, REP.buyXpCapPerRestock - (vstate(d, v).buyXp ?? 0));
 
 function hash(s: string) { let h = 2166136261; for (const c of s) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
 
@@ -53,9 +63,12 @@ export function genStock(d: SaveData, v: VendorId, lv: number): StockEntry[] {
 /** Renueva stock y ofertas de misión si toca (cada N raids o al subir de nivel). */
 export function refreshVendor(d: SaveData, v: VendorId, force = false) {
   const s = vstate(d, v);
-  const lv = repLevel(s.xp);
-  const due = force || s.stockAt < 0 || d.stats.raids - s.stockAt >= VENDORS.restockRaids || s.stockLevel !== lv;
+  const lv = repLevelOf(s);
+  const periodic = s.stockAt < 0 || d.stats.raids - s.stockAt >= VENDORS.restockRaids;
+  const due = force || periodic || s.stockLevel !== lv;
   if (!due) return false;
+  // el tope de reputación por compras se renueva con la tienda (no al subir de nivel: no se puede encadenar)
+  if (periodic) s.buyXp = 0;
   s.stock = genStock(d, v, lv);
   s.stockAt = d.stats.raids; s.stockLevel = lv;
   // ofertas: 3 misiones del vendedor (la activa se mantiene)
@@ -71,10 +84,13 @@ export const raidsToRestock = (d: SaveData, v: VendorId) => Math.max(0, VENDORS.
 
 type R = { ok: true; msg?: string } | { ok: false; msg: string };
 
-function gainXp(d: SaveData, v: VendorId, xp: number): string | undefined {
-  const s = vstate(d, v); const before = repLevel(s.xp);
-  s.xp += Math.max(0, Math.round(xp));
-  const after = repLevel(s.xp);
+function gainXp(d: SaveData, v: VendorId, xp: number, src: 'compra' | 'venta' | 'mision'): string | undefined {
+  const s = vstate(d, v); const before = repLevelOf(s);
+  let add = Math.max(0, Math.round(xp));
+  if (src === 'venta') add = 0; // v3.1: vender no da reputación
+  if (src === 'compra') { add = Math.min(add, buyXpLeft(d, v)); s.buyXp = (s.buyXp ?? 0) + add; }
+  s.xp += add;
+  const after = repLevelOf(s);
   if (after > before) { refreshVendor(d, v, true); return `¡${VENDORS.defs[v].nombre}: reputación ${after}! Stock nuevo.`; }
   return undefined;
 }
@@ -90,7 +106,7 @@ export function buyStock(d: SaveData, v: VendorId, idx: number): R {
   const left = addToList(d.stash, it, stashSlots(d));
   if (left) { if (left.qty === e.qty) return { ok: false, msg: 'Alijo lleno' }; d.overflow.push(left); }
   d.chapas -= price; e.left--;
-  return { ok: true, msg: gainXp(d, v, price * VENDORS.xpPerBuyChapa) };
+  return { ok: true, msg: gainXp(d, v, price * VENDORS.xpPerBuyChapa, 'compra') };
 }
 
 export function sellTo(d: SaveData, v: VendorId, uid: string): R {
@@ -102,7 +118,7 @@ export function sellTo(d: SaveData, v: VendorId, uid: string): R {
   if (price <= 0) return { ok: false, msg: 'No te da nada por eso' };
   const it = takeForSale(d, uid); if (!it) return { ok: false, msg: 'No se puede vender' };
   d.chapas += price;
-  return { ok: true, msg: gainXp(d, v, price * VENDORS.xpPerSellChapa) };
+  return { ok: true, msg: gainXp(d, v, price * REP.sellXpPerChapa, 'venta') };
 }
 
 // ---------------------------------------------------------------- misiones
@@ -129,7 +145,8 @@ function reward(d: SaveData, m: MissionDef): string {
   if (m.item) { const it = makeItem(m.item[0], m.item[1] as Rarity, m.item[2], rollTraits(Math.random, m.item[0], m.item[1] as Rarity)); const left = addToList(d.stash, it, stashSlots(d)); if (left) d.overflow.push(left); }
   s.active = null; s.progress = 0;
   s.offers = s.offers.filter(o => o !== m.id);
-  const up = gainXp(d, m.vendor, m.xp);
+  s.missionsDone = (s.missionsDone ?? 0) + 1;
+  const up = gainXp(d, m.vendor, m.xp, 'mision');
   return `Misión de ${VENDORS.defs[m.vendor].nombre} cumplida: +${m.chapas} chapas${m.item ? ` + ${ITEMS[m.item[0]].nombre}` : ''}` + (up ? `. ${up}` : '');
 }
 

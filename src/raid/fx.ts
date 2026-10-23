@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { JUICE } from '../config/v2';
+import { DAMAGE } from '../config/v31';
 
 const FONT = 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
 
@@ -9,7 +10,7 @@ export class Fx {
   private stains: Phaser.GameObjects.Image[] = [];
   corpses: { destroy(): void }[] = [];
   /** QA: últimos números de daño mostrados. */
-  shown: { n: number; crit: boolean; color: string; size: number }[] = [];
+  shown: { n: number; crit: boolean; color: string; size: number; text?: string; hurt?: boolean }[] = [];
   stainCount = 0;
 
   constructor(private sc: Phaser.Scene) {}
@@ -17,25 +18,32 @@ export class Fx {
   private tex(k: string) { return this.sc.textures.exists(k); }
 
   /** Número de daño: blanco con contorno #14110f 3 px; crítico amarillo 1,4×; salta 20 px con curva y se desvanece en 0,6 s. */
-  damageNumber(x: number, y: number, n: number, crit: boolean) {
+  /**
+   * v3.1 §9.2: número normal blanco; crítico #ffb02e, 1,35× más grande, con «!» y rebote (estilo ui_num_critico:
+   * contorno #14110f de 4). `hurt` = daño recibido (rojo; crítico recibido naranja rojizo).
+   */
+  damageNumber(x: number, y: number, n: number, crit: boolean, hurt = false) {
     let t = this.nums.find(o => !o.active);
-    const size = crit ? Math.round(17 * 1.4) : 17;
-    const color = crit ? JUICE.critColor : '#ffffff';
+    const size = crit ? Math.round(17 * DAMAGE.critSize) : 17;
+    const color = hurt ? (crit ? DAMAGE.hurtCritColor : DAMAGE.hurtColor) : crit ? DAMAGE.critColor : DAMAGE.numColor;
     if (!t) {
       t = this.sc.add.text(0, 0, '', { fontFamily: FONT, fontStyle: '900', fontSize: '17px', color: '#fff', stroke: '#14110f', strokeThickness: 3 }).setOrigin(0.5).setDepth(31);
       this.nums.push(t);
     }
-    t.setActive(true).setVisible(true).setAlpha(1).setText(String(Math.max(1, Math.round(n)))).setFontSize(size).setColor(color).setPosition(x, y - 18).setScale(1);
-    this.shown.push({ n: Math.round(n), crit, color, size }); if (this.shown.length > 30) this.shown.shift();
+    const txt = String(Math.max(1, Math.round(n))) + (crit ? '!' : '');
+    t.setActive(true).setVisible(true).setAlpha(1).setText(txt).setFontSize(size).setColor(color).setStroke('#14110f', crit ? 4 : 3).setPosition(x, y - 18).setScale(1);
+    this.shown.push({ n: Math.round(n), crit, color, size, text: txt, hurt }); if (this.shown.length > 30) this.shown.shift();
     const side = (Math.random() - 0.5) * 24;
     const x0 = x, y0 = y - 18;
     const o = { k: 0 };
     this.sc.tweens.add({
-      targets: o, k: 1, duration: JUICE.dmgNumSec * 1000, ease: 'Linear',
+      targets: o, k: 1, duration: JUICE.dmgNumSec * 1000 * (crit ? 1.15 : 1), ease: 'Linear',
       onUpdate: () => {
         const k = o.k;
         t!.setPosition(x0 + side * k, y0 - JUICE.dmgNumRise * Math.sin(k * Math.PI * 0.6) / Math.sin(Math.PI * 0.6));
-        t!.setAlpha(k < 0.5 ? 1 : 1 - (k - 0.5) / 0.5).setScale(k < 0.15 ? 1 + (0.15 - k) * 2 : 1);
+        // crítico: pequeño rebote (sale grande, se encoge por debajo de 1 y vuelve)
+        const sc = crit ? (k < 0.12 ? 1.45 - k * 3.75 : k < 0.24 ? 1 - Math.sin((k - 0.12) / 0.12 * Math.PI) * 0.12 : 1) : (k < 0.15 ? 1 + (0.15 - k) * 2 : 1);
+        t!.setAlpha(k < 0.5 ? 1 : 1 - (k - 0.5) / 0.5).setScale(sc);
       },
       onComplete: () => t!.setActive(false).setVisible(false),
     });

@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { TILE } from '../config/constants';
 import { VISION } from '../config/v2';
+import { LINGER } from '../config/v31';
 import { lineClear, Rect, WallIndex, segRect } from './map';
 
 /**
@@ -16,6 +17,11 @@ export class Vision {
   private polys: Phaser.Math.Vector2[][] = [];
   private rays: { ang: number; d: number; back: boolean }[] = [];
   private last = { x: NaN, y: NaN, a: NaN, v: -1 };
+  /** v3.1 §9.3: «fotos» recientes del polígono (por capa) que siguen visibles LINGER.sec y se apagan por capas. */
+  private hist: { t: number; layers: Float32Array[] }[] = [];
+  private lastSample = -1e9;
+  /** QA: redibujos por memoria y fotos vivas. */
+  lingerStats = { redraws: 0, samples: 0 };
   private near: Rect[] = [];
   version = 0;
   enabled = true;
@@ -40,13 +46,19 @@ export class Vision {
   }
 
   /** Recalcula el polígono si el jugador se movió o giró (o cambiaron las paredes: puertas). */
-  update(x: number, y: number, facing: number, wallsVersion: number) {
+  update(x: number, y: number, facing: number, wallsVersion: number, now = 0) {
     this.facing = facing; this.ox = x; this.oy = y;
     const v = this.sc.cameras.main.worldView;
     for (const f of this.fogs) f.setPosition(v.x - 40, v.y - 40).setSize(v.width + 80, v.height + 80).setVisible(this.enabled);
-    if (!this.enabled) return;
+    if (!this.enabled) { this.hist.length = 0; return; }
     const L = this.last;
-    if (Math.abs(L.x - x) < 2 && Math.abs(L.y - y) < 2 && Math.abs(Phaser.Math.Angle.Wrap(L.a - facing)) < 0.012 && L.v === wallsVersion) return;
+    const had = this.hist.length > 0;
+    while (this.hist.length && now - this.hist[0].t >= LINGER.sec) this.hist.shift();
+    if (Math.abs(L.x - x) < 2 && Math.abs(L.y - y) < 2 && Math.abs(Phaser.Math.Angle.Wrap(L.a - facing)) < 0.012 && L.v === wallsVersion) {
+      // quieto: solo se redibuja mientras se apaga la memoria
+      if (had) { this.drawMasks(now); this.lingerStats.redraws++; }
+      return;
+    }
     L.x = x; L.y = y; L.a = facing; L.v = wallsVersion;
     this.version++;
     const R = this.R;
@@ -88,9 +100,39 @@ export class Vision {
         if (!poly[i]) poly[i] = new Phaser.Math.Vector2();
         poly[i].set(x + Math.cos(r.ang) * d, y + Math.sin(r.ang) * d);
       }
-      this.masks[k].clear().fillStyle(0xffffff, 1).fillPoints(poly, true, true);
+    }
+    this.drawMasks(now);
+    // foto para la memoria (si no se repite demasiado seguido)
+    if (LINGER.sec > 0 && now - this.lastSample >= LINGER.sampleSec) {
+      this.lastSample = now; this.lingerStats.samples++;
+      this.hist.push({ t: now, layers: this.polys.map(pl => { const a = new Float32Array(pl.length * 2); pl.forEach((p, i) => { a[i * 2] = p.x; a[i * 2 + 1] = p.y; }); return a; }) });
     }
   }
+
+  /** Máscaras = polígono actual ∪ fotos recientes. La capa k guarda una foto mientras edad < sec·(NL-k)/NL: se apaga por pasos. */
+  private drawMasks(now: number) {
+    const NL = this.masks.length;
+    for (let k = 0; k < NL; k++) {
+      const g = this.masks[k].clear().fillStyle(0xffffff, 1);
+      g.fillPoints(this.polys[k], true, true);
+      const keep = LINGER.sec * (NL - k) / NL;
+      for (const h of this.hist) {
+        if (now - h.t >= keep) continue;
+        const a = h.layers[k];
+        if (!a || a.length < 6) continue;
+        g.beginPath(); g.moveTo(a[0], a[1]);
+        for (let i = 2; i < a.length; i += 2) g.lineTo(a[i], a[i + 1]);
+        g.closePath(); g.fillPath();
+      }
+    }
+  }
+
+  /** ¿Sigue este punto en la memoria de visión (fuera del cono actual pero visto hace < LINGER.sec)? */
+  lingering(px: number, py: number) {
+    for (const h of this.hist) { const a = h.layers[0]; if (a && pointInPoly(a, px, py)) return true; }
+    return false;
+  }
+  lingerCount() { return this.hist.length; }
 
   /** ¿El jugador ve este punto? (mismo criterio que el polígono: cono + línea de visión, o radio cercano). */
   sees(px: number, py: number, pad = 0) {
@@ -114,4 +156,14 @@ export class Vision {
   /** QA: opacidad total de la niebla y número de capas. */
   fogInfo() { const a = this.fogs[0]?.fillAlpha ?? 0; return { layers: this.fogs.length, layerAlpha: a, total: 1 - Math.pow(1 - a, this.fogs.length) }; }
   destroy() { for (const f of this.fogs) f.destroy(); for (const g of this.masks) g.destroy(); }
+}
+
+function pointInPoly(a: Float32Array, x: number, y: number) {
+  let inside = false;
+  const n = a.length / 2;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = a[i * 2], yi = a[i * 2 + 1], xj = a[j * 2], yj = a[j * 2 + 1];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
 }

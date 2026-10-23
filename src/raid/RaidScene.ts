@@ -14,7 +14,7 @@ import {
   backpackAdd, backpackSlots, canPocket, consume, countOf, def, ItemInst, itemLabel, itemValue, makeItem, slotOf,
   speedMult, totalProtection, totalWeight, weaponStats,
 } from '../game/inventory';
-import { rollContainer, rollItem, rollMaterial, seeded } from '../game/loot';
+import { rollContainer, rollEliteDrops, rollItem, rollMaterial, seeded } from '../game/loot';
 import type { ContainerSnap, ExitState, RaidSnapshot, Settings } from '../save/types';
 import { AimStick } from './aim';
 import { Enemy, EnemyManager, hasDetected, isUnaware, RaidCtx } from './enemies';
@@ -24,9 +24,12 @@ import { Fx } from './fx';
 import { Hud } from './hud';
 import { Joystick } from './Joystick';
 import { Door, generateMap, lineClear, MapData, pointInWalls, rayHit, Rect, setWallIndex, WallIndex, zoneAt } from './map';
-import { Proj, Projectiles } from './projectiles';
+import { Proj, Projectiles, isPhysical } from './projectiles';
+import { BOWS, DAMAGE, ELITE, LINGER, PLAYER_ART, TRAPERO } from '../config/v31';
+import { rollDamage } from '../game/damage';
 import { Rig } from './rig';
 import { Vision } from './vision';
+import { genTrapero, traperoRejects, valesFor } from './trapero';
 
 export interface RaidHost {
   persist(): void;
@@ -41,6 +44,9 @@ export interface RaidHost {
   /** v2: salidas ya vistas en este mapa (persisten entre raids). */
   seenExits(mapId: string): number[];
   markExitSeen(mapId: string, loc: number): void;
+  /** v3.1 (Trapero): chapas del refugio y gastarlas (se guarda con la incursión). */
+  bankChapas(): number;
+  spendBankChapas(n: number): boolean;
 }
 
 export interface RaidInit { snap: RaidSnapshot; settings: Settings; fresh: boolean; host: RaidHost; debug: boolean }
@@ -110,7 +116,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   /** Cambio de arma en curso (s restantes): no se ataca. */
   swapT = 0;
   /** QA / diagnóstico v2. */
-  stats = { shots: 0, swaps: 0, attacksDuringSwap: 0, behindWarn: 0, behindVibes: 0, hitStops: 0, crits: 0, doorsOpened: 0, arrowsRecovered: 0, lootPaused: 0, iosKick: 0, backstabs: 0, executes: 0, debrisSteps: 0, autoSkippedUnaware: 0 };
+  stats = { shots: 0, swaps: 0, attacksDuringSwap: 0, behindWarn: 0, behindVibes: 0, hitStops: 0, crits: 0, critsTaken: 0, doorsOpened: 0, arrowsRecovered: 0, impactNoises: 0, clavarShots: 0, lootPaused: 0, iosKick: 0, backstabs: 0, executes: 0, debrisSteps: 0, autoSkippedUnaware: 0 };
   private attackT = 0;
   private autosaveT = 0;
   private idleT = 0;
@@ -155,8 +161,13 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   private exitCheckT = 0;
   private visT = 0;
   private seen = new Set<number>();
-  private stuck = new Map<Enemy, number>();
-  private groundArrows: { x: number; y: number; qty: number; img: Phaser.GameObjects.Image }[] = [];
+  /** Flechas/virotes clavados en un enemigo (caen junto a él al morir). */
+  private stuck = new Map<Enemy, Record<string, number>>();
+  /** «Clavar»: el siguiente virote atraviesa. */
+  private clavarArmed = false;
+  /** Dirección del cono de visión (sigue a `facing` con el giro limitado). */
+  viewFacing = -Math.PI / 2;
+  private groundArrows: { x: number; y: number; qty: number; def: string; img: Phaser.GameObjects.Image; glow: Phaser.GameObjects.Arc | null }[] = [];
   private kick = new Phaser.Math.Vector2();
   private behind: { ang: number; k: number }[] = [];
   private pendingMelee: { t: number; e: Enemy; dmg: number; crit: boolean; weapon: string; range: number; heavy: boolean }[] = [];
@@ -172,6 +183,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   private radioDot: { x: number; y: number } | null = null;
   /** QA v3. */
   v3s = { mats: 0, trunks: 0, muestras: 0, grenades: 0, grenadeHits: 0, mutated: 0, screamsSpawned: 0 };
+  v31s = { eliteKills: 0, eliteDrops: 0, traperoSold: 0, traperoBought: 0 };
 
   constructor() { super('Raid'); }
 
@@ -182,11 +194,12 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.warned13 = d.snap.elapsed >= DIFFICULTY.fogWarningSeconds;
     this.attackT = 0; this.autosaveT = 0; this.idleT = 0; this.scanT = 0; this.god = false; this.markG = null; this.markImgs = new Map(); this.markTxt = new Map(); this.hitTimes = []; this.miniHpUntil = -1; this.acidStackT = 0; this.statusAcc = { bleed: 0, poison: 0 }; this.statusDealt = { bleed: 0, poison: 0 }; this.applying = null; this.healStats = { done: 0, cancelHit: 0, cancelRelease: 0 }; this.noiseRing = null; this.conesGfx = null; this.debris = []; this.execTarget = null; this.ringR = 0; this.stepT = 0; this.noAmmoWarned = false;
     this.swapT = 0; this.glanceT = 0; this.steadyT = 0; this.hitStopT = 0; this.vel.set(0, 0); this.kick.set(0, 0);
-    this.stuck = new Map(); this.groundArrows = []; this.pendingMelee = []; this.behind = [];
+    this.stuck = new Map(); this.clavarArmed = false; this.groundArrows = []; this.pendingMelee = []; this.behind = [];
     this.sewers = []; this.sewerImgs = []; this.grenades = []; this.estimGfx = null; this.radioDot = null;
     this.warnedMut = d.snap.elapsed >= MUTATIONS.fromMinute * 60;
     this.v3s = { mats: 0, trunks: 0, muestras: 0, grenades: 0, grenadeHits: 0, mutated: 0, screamsSpawned: 0 };
-    this.stats = { shots: 0, swaps: 0, attacksDuringSwap: 0, behindWarn: 0, behindVibes: 0, hitStops: 0, crits: 0, doorsOpened: 0, arrowsRecovered: 0, lootPaused: 0, iosKick: 0, backstabs: 0, executes: 0, debrisSteps: 0, autoSkippedUnaware: 0 };
+    this.v31s = { eliteKills: 0, eliteDrops: 0, traperoSold: 0, traperoBought: 0 };
+    this.stats = { shots: 0, swaps: 0, attacksDuringSwap: 0, behindWarn: 0, behindVibes: 0, hitStops: 0, crits: 0, critsTaken: 0, doorsOpened: 0, arrowsRecovered: 0, impactNoises: 0, clavarShots: 0, lootPaused: 0, iosKick: 0, backstabs: 0, executes: 0, debrisSteps: 0, autoSkippedUnaware: 0 };
   }
 
   // ---------- RaidCtx ----------
@@ -267,7 +280,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const pr = tw * 0.3;
     (this.player.body as Phaser.Physics.Arcade.Body).setCircle(pr, tw / 2 - pr, tw / 2 - pr).setCollideWorldBounds(true);
     this.playerRadius = 44 * 0.3;
-    this.rig = new Rig(this, p.x, p.y, { base: 'jugador', size: 44, depth: 10, weapon: s.loadout.arma?.def ?? null, v1Size: 44 });
+    this.rig = new Rig(this, p.x, p.y, { base: PLAYER_ART.version === 'v3' && this.textures.exists('jugador3_torso') ? 'jugador3' : 'jugador', size: 44, depth: 10, weapon: s.loadout.arma?.def ?? null, v1Size: 44 });
     this.physics.add.collider(this.player, wallGroup);
     const doorHit = (_a: unknown, z: unknown) => { const id = (z as Phaser.GameObjects.Zone).getData('door') as number; const o = this.doors.find(x => x.d.id === id); if (o && !o.open) this.openDoor(o, _a === this.player); };
     this.physics.add.collider(this.player, doorGroup, doorHit as Phaser.Types.Physics.Arcade.ArcadePhysicsCallback);
@@ -280,7 +293,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.proj = new Projectiles(this, {
       walls: () => this.walls, enemies: () => this.enemies.list,
       onHit: (pj, e) => this.onProjHit(pj, e),
-      onLand: (pj, x, y) => { if (Math.random() < PROJECTILE.arrowRecoverChance) this.dropArrow(x, y, 1); void pj; },
+      // v3.1 §9.1: el fallo se queda SIEMPRE en el suelo y hace un ruido pequeño donde cae (distrae)
+      onLand: (pj, x, y) => { this.dropArrow(x, y, 1, pj.kind === 'virote' ? 'virotes' : 'flechas'); if (BOWS.impactNoiseTiles > 0) { this.noise(x, y, BOWS.impactNoiseTiles); this.stats.impactNoises++; } },
       onWall: (pj, x, y) => { if (pj.kind === 'bala') this.fx.impact(x, y); },
     });
 
@@ -290,8 +304,9 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.enemies.v3.grabImm = s.fx.grabImm ?? 0;
     for (const c of s.containers) this.addContainerObj(c);
     this.nextContainerId = Math.max(0, ...s.containers.map(c => c.id)) + 1;
-    for (const a of s.arrows!) this.addGroundArrow(a.x, a.y, a.qty, false);
+    for (const a of s.arrows!) this.addGroundArrow(a.x, a.y, a.qty, false, a.def ?? 'flechas');
     this.setupStealth();
+    this.setupTrapero();
 
     for (const i of this.host.seenExits(this.map.id)) this.seen.add(i);
     this.applyRadio();
@@ -320,8 +335,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.applyZoom();
     this.scale.on('resize', this.onResize, this);
     this.vision = new Vision(this, () => this.walls, () => this.wallIndex);
-    this.facing = -Math.PI / 2;
-    this.vision.update(this.player.x, this.player.y, this.facing, this.wallsVersion);
+    this.facing = -Math.PI / 2; this.viewFacing = this.facing;
+    this.vision.update(this.player.x, this.player.y, this.facing, this.wallsVersion, this.snap.elapsed);
 
     this.scene.launch('RaidUI', { ready: (ui: Phaser.Scene) => this.buildUi(ui) });
 
@@ -572,6 +587,93 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       this.snap.containers.push({ id: this.nextContainerId++, x: c.x, y: c.y, kind: c.kind, items: rollContainer(rng, c.kind, c.bonus), opened: false });
     }
     this.addMaterials();
+    // v3.1 §9.4: el Trapero (50 %), con su propio generador
+    this.snap.trapero = genTrapero(seeded((this.snap.seed ^ 0x74726170) >>> 0), this.walls, spawn, this.snap.exits.map(e => ({ x: e.x, y: e.y })));
+  }
+
+  /** v3.1: marca un objeto como saqueado en ESTA incursión (lo único que compra el Trapero). */
+  tagRaid(it: ItemInst) { if (ITEMS[it.def].kind === 'material') it.raid = this.snap.id; return it; }
+
+  // ---------- v3.1 §9.4: el Trapero ----------
+  private trapImg: Phaser.GameObjects.Image | null = null;
+  private trapNearToast = false;
+  traperoStats = { closedByAlert: 0, closedByTime: 0, rejected: 0 };
+
+  private setupTrapero() {
+    const t = this.snap.trapero;
+    if (!t) return;
+    const key = this.textures.exists('caseta_trapero') ? 'caseta_trapero' : 'caja';
+    this.trapImg = this.add.image(t.x, t.y, key).setDisplaySize(TRAPERO.size, TRAPERO.size).setDepth(4.6).setVisible(false);
+  }
+
+  /** Estado actual: ¿abierto?, motivo si está cerrado y si estás al lado. */
+  traperoState(): { t: NonNullable<RaidSnapshot['trapero']>; open: boolean; why: string | null; near: boolean } | null {
+    const t = this.snap.trapero;
+    if (!t || !t.found) return null;
+    const near = Math.hypot(this.player.x - t.x, this.player.y - t.y) <= TRAPERO.talkTiles * TILE + TRAPERO.size / 2;
+    let why: string | null = null;
+    if (this.minute() >= TRAPERO.closeMinute) why = 'El Trapero ya ha recogido la caseta';
+    else if (this.enemies.list.some(e => hasDetected(e) && Math.hypot(e.x - t.x, e.y - t.y) <= TRAPERO.closeAlertTiles * TILE)) why = '¡Hay un enemigo en alerta cerca! El Trapero ha cerrado';
+    return { t, open: !why, why, near };
+  }
+
+  private updateTrapero() {
+    const t = this.snap.trapero;
+    if (!t || !this.trapImg) return;
+    const v = this.visible(t.x, t.y, TRAPERO.size * 0.45);
+    this.trapImg.setVisible(v || t.found && Math.hypot(this.player.x - t.x, this.player.y - t.y) < TILE * 2);
+    if (v && !t.found) { t.found = true; this.hud?.toast('Has encontrado al Trapero', 1.6); }
+    const st = this.traperoState();
+    this.trapImg.setAlpha(st && !st.open ? 0.6 : 1);
+    if (st?.near && !this.trapNearToast) { this.trapNearToast = true; this.hud?.toast(st.open ? 'El Trapero: abre la mochila para comerciar' : st.why!, 1.6); }
+    if (!st?.near) this.trapNearToast = false;
+  }
+
+  /** Vende una pila de materiales saqueados en esta incursión a cambio de vales. */
+  traperoSell(uid: string): { ok: boolean; msg: string } {
+    const st = this.traperoState();
+    if (!st?.near) return { ok: false, msg: 'El Trapero no está aquí' };
+    if (!st.open) return { ok: false, msg: st.why! };
+    const lo = this.snap.loadout;
+    const i = lo.mochila.findIndex(x => x.uid === uid);
+    if (i < 0) return { ok: false, msg: 'Solo desde la mochila' };
+    const it = lo.mochila[i];
+    const no = traperoRejects(it, this.snap.id);
+    if (no) { this.traperoStats.rejected++; return { ok: false, msg: no }; }
+    const v = valesFor(it);
+    lo.mochila.splice(i, 1);
+    st.t.vales += v; this.v31s.traperoSold++;
+    this.host.persist(); this.host.refreshInventory();
+    return { ok: true, msg: `+${v} vales` };
+  }
+
+  /** Chapas que llevas encima (pilas de chapas en mochila y bolsillos) + las del refugio. */
+  private carriedChapas() { return countOf(this.snap.loadout.mochila, 'chapas') + this.pocketCount('chapas'); }
+  traperoFunds() { const t = this.snap.trapero; return { vales: t?.vales ?? 0, carried: this.carriedChapas(), bank: this.host.bankChapas() }; }
+
+  /** Compra: primero vales, luego chapas que llevas encima y por último las del refugio. */
+  traperoBuy(idx: number): { ok: boolean; msg: string } {
+    const st = this.traperoState();
+    if (!st?.near) return { ok: false, msg: 'El Trapero no está aquí' };
+    if (!st.open) return { ok: false, msg: st.why! };
+    const e = st.t.stock[idx];
+    if (!e || e.sold) return { ok: false, msg: 'Agotado' };
+    const f = this.traperoFunds();
+    if (f.vales + f.carried + f.bank < e.price) return { ok: false, msg: 'No te llega' };
+    const lo = this.snap.loadout;
+    const it: ItemInst = { ...e.item, uid: e.item.uid + '-' + Date.now().toString(36) };
+    const left = backpackAdd(lo, it);
+    if (left) return { ok: false, msg: 'Mochila llena' };
+    let rest = e.price;
+    const fromVales = Math.min(st.t.vales, rest); st.t.vales -= fromVales; rest -= fromVales;
+    let fromCarried = Math.min(rest, f.carried);
+    rest -= fromCarried;
+    fromCarried -= consume(lo.mochila, 'chapas', fromCarried);
+    while (fromCarried > 0) { const pk = this.pocketList().find(x => x.def === 'chapas'); if (!pk) break; const k = Math.min(pk.qty, fromCarried); pk.qty -= k; fromCarried -= k; if (pk.qty <= 0) { if (lo.bolsillo === pk) lo.bolsillo = null; else lo.bolsilloExtra = (lo.bolsilloExtra ?? []).filter(x => x !== pk); } }
+    if (rest > 0) this.host.spendBankChapas(rest);
+    e.sold = true; this.v31s.traperoBought++;
+    this.host.persist(); this.host.refreshInventory();
+    return { ok: true, msg: `Comprado: ${ITEMS[it.def].nombre}` };
   }
 
   /**
@@ -583,7 +685,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const L = MATERIAL_LOOT;
     for (const c of this.snap.containers) {
       if (rng() >= (L.chance[c.kind] ?? 0)) continue;
-      c.items.push(rollMaterial(rng, zoneAt(this.map, c.x, c.y).name)); this.v3s.mats++;
+      c.items.push(this.tagRaid(rollMaterial(rng, zoneAt(this.map, c.x, c.y).name))); this.v3s.mats++;
     }
     for (const car of this.map.cars) {
       if (rng() >= L.carTrunkChance) continue;
@@ -593,8 +695,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
         : [{ x: car.x - TILE * 0.55, y: car.y + car.h / 2 }, { x: car.x + car.w + TILE * 0.55, y: car.y + car.h / 2 }];
       const p = cands.find(q => !pointInWalls(this.walls, q.x, q.y, 12));
       if (!p) continue;
-      const items = [rollMaterial(rng, 'Coche')];
-      if (rng() < L.chance.coche - 0.5) items.push(rollMaterial(rng, 'Coche'));
+      const items = [this.tagRaid(rollMaterial(rng, 'Coche'))];
+      if (rng() < L.chance.coche - 0.5) items.push(this.tagRaid(rollMaterial(rng, 'Coche')));
       this.snap.containers.push({ id: this.nextContainerId++, x: p.x, y: p.y, kind: 'caja', items, opened: false });
       this.v3s.trunks++; this.v3s.mats += items.length;
     }
@@ -642,7 +744,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     }
   }
 
-  spawnAt(type: EnemyType, x: number, y: number, group?: number) {
+  /** `elite`: true = fuerza élite (depuración), false = nunca (depuración), undefined = tirada normal. */
+  spawnAt(type: EnemyType, x: number, y: number, group?: number, elite?: boolean) {
     x = Phaser.Math.Clamp(x, TILE, WORLD - TILE); y = Phaser.Math.Clamp(y, TILE, WORLD - TILE);
     if (type !== 'reptante' && pointInWalls(this.walls, x, y, 20)) { y += TILE * 1.5; }
     const e = this.enemies.spawn(type, x, y, scaling(this.minute()).stats, type === 'enjambre' ? { group: group ?? this.newGroup() } : undefined);
@@ -653,8 +756,12 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       const ch = Math.min(MUTATIONS.maxChance, MUTATIONS.chance + MUTATIONS.chancePerMinute * (m - MUTATIONS.fromMinute));
       if (Math.random() < ch && this.enemies.mutate(e, MUTATION_IDS[Math.floor(Math.random() * MUTATION_IDS.length)])) this.v3s.mutated++;
     }
+    // v3.1 §9.5: élite (5 %), con tope de vivos y por incursión
+    if (elite) this.forceElite(e);
+    else if (elite === undefined && !ELITE.exclude.includes(type) && (this.snap.elites ?? 0) < ELITE.maxPerRaid && this.enemies.eliteAlive() < ELITE.maxAlive && Math.random() < ELITE.chance) this.forceElite(e);
     return e;
   }
+  forceElite(e: Enemy) { if (this.enemies.makeElite(e)) { this.snap.elites = (this.snap.elites ?? 0) + 1; return true; } return false; }
   private newGroup() { const s = this.snap; s.nextGroup = (s.nextGroup ?? 1) + 1; return s.nextGroup; }
 
   /** Enjambre: un grupo de 8-12 bichos. */
@@ -732,8 +839,11 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   }
 
   /** Ruido en el mundo. Desde el minuto 10, el ruido fuerte atrae hordas. */
+  /** QA: últimos ruidos (x, y, radio, t). */
+  noiseLog: { x: number; y: number; r: number; t: number }[] = [];
   noise(x: number, y: number, radiusTiles: number) {
     if (radiusTiles <= 0) return;
+    this.noiseLog.push({ x: Math.round(x), y: Math.round(y), r: radiusTiles, t: this.snap.elapsed }); if (this.noiseLog.length > 300) this.noiseLog.shift();
     const m = this.minute();
     const horde = m >= DIFFICULTY.hordeFromMinute;
     this.enemies.noise(x, y, radiusTiles * (horde ? DIFFICULTY.hordeNoiseRadiusMult : 1));
@@ -755,22 +865,23 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   onEnemyDeath(e: Enemy) {
     this.snap.kills++;
     const items: ItemInst[] = [];
-    if (Math.random() < e.def.dropChance) items.push(rollItem(Math.random, 0));
+    if (e.elite) { const drops = rollEliteDrops(Math.random); items.push(...drops); this.v31s.eliteKills++; this.v31s.eliteDrops += drops.length; }
+    else if (Math.random() < e.def.dropChance) items.push(rollItem(Math.random, 0));
     // v3: muestras mutadas (Hinchado 50 %, Abominación 2-3, mutado 35 %)
     const M = MATERIAL_LOOT.muestra;
     let muestras = 0;
     if (e.def.type === 'hinchado' && Math.random() < M.hinchado) muestras = 1;
     if (e.def.type === 'abominacion') muestras = M.abominacionQty[0] + Math.floor(Math.random() * (M.abominacionQty[1] - M.abominacionQty[0] + 1));
     if (e.mut && Math.random() < M.mutado) muestras += 1;
-    if (muestras) { items.push(makeItem('mat_muestra', 'comun', muestras)); this.v3s.muestras += muestras; }
+    if (muestras) { items.push(this.tagRaid(makeItem('mat_muestra', 'comun', muestras))); this.v3s.muestras += muestras; }
     // registro para misiones: muertes por tipo y arma (m = cuerpo a cuerpo, r = a distancia, o = otras)
     const tr = this.snap.track ??= { heals: 0, dmgTaken: 0, kills: {} };
     const k = tr.kills[e.def.type] ??= { m: 0, r: 0, o: 0 };
     const w = e.lastWeapon ? ITEMS[e.lastWeapon]?.weapon : undefined;
     if (e.lastWeapon === 'punos' || (w && w.melee)) k.m++; else if (w) k.r++; else k.o++;
-    // flechas clavadas en el cuerpo: se recuperan del cadáver
-    const n = this.stuck.get(e) ?? 0;
-    if (n > 0) { items.push(makeItem('flechas', 'comun', n)); this.stuck.delete(e); }
+    // flechas/virotes clavados: caen al suelo junto al cuerpo (se recogen al pasar por encima)
+    const st = this.stuck.get(e);
+    if (st) { let k = 0; for (const [id, n] of Object.entries(st)) if (n > 0) this.dropArrow(e.x + 14 * Math.cos(k * 2.4), e.y + 10 + 14 * Math.sin(k++ * 2.4), n, id); this.stuck.delete(e); }
     if (items.length) this.addContainer({ id: this.nextContainerId++, x: e.x, y: e.y, kind: 'cadaver', items, opened: true });
   }
 
@@ -811,39 +922,56 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       const v = near && this.visible(c.snap.x, c.snap.y, 16);
       if (c.sprite.visible !== v) { c.sprite.setVisible(v); c.lock?.setVisible(v); c.glow?.setVisible(v && c.snap.items.length > 0); }
     }
-    for (const a of this.groundArrows) a.img.setVisible(this.visible(a.x, a.y, 8));
+    for (const a of this.groundArrows) { const v = this.visible(a.x, a.y, 8); a.img.setVisible(v); a.glow?.setVisible(v); }
     for (const d of this.debris) d.img.setVisible(Math.abs(d.x - this.player.x) < 700 && Math.abs(d.y - this.player.y) < 700 && this.visible(d.x, d.y, 6));
   }
 
   // ---------- Flechas recuperables ----------
-  private dropArrow(x: number, y: number, qty: number) {
-    if (pointInWalls(this.walls, x, y, 2)) return;
-    const near = this.groundArrows.find(a => Math.hypot(a.x - x, a.y - y) < TILE * 0.6);
+  private dropArrow(x: number, y: number, qty: number, id = 'flechas') {
+    if (pointInWalls(this.walls, x, y, 2)) {
+      // dentro de una pared: se queda pegada al borde más cercano por donde vino (si no hay hueco, se pierde)
+      const ang = Math.atan2(this.player.y - y, this.player.x - x);
+      let ok = false;
+      for (let d = 6; d <= 30 && !ok; d += 6) { const nx = x + Math.cos(ang) * d, ny = y + Math.sin(ang) * d; if (!pointInWalls(this.walls, nx, ny, 2)) { x = nx; y = ny; ok = true; } }
+      if (!ok) return;
+    }
+    const near = this.groundArrows.find(a => a.def === id && Math.hypot(a.x - x, a.y - y) < TILE * 0.6);
     if (near) { near.qty += qty; this.syncArrows(); return; }
-    this.addGroundArrow(x, y, qty, true);
+    this.addGroundArrow(x, y, qty, true, id);
   }
 
-  private addGroundArrow(x: number, y: number, qty: number, save: boolean) {
-    const key = this.textures.exists('proyectil_flecha') ? 'proyectil_flecha' : 'flecha';
-    const img = this.add.image(x, y, key).setDepth(4.5).setRotation(Math.random() * Math.PI * 2);
-    if (key === 'proyectil_flecha') img.setDisplaySize(8, 30); else img.setDisplaySize(TILE * 0.6, TILE * 0.6);
-    this.groundArrows.push({ x, y, qty, img });
+  /** v3.1: flecha/virote en el suelo con brillo tenue (flecha_suelo de Basu) hasta el final de la incursión. */
+  private addGroundArrow(x: number, y: number, qty: number, save: boolean, id = 'flechas') {
+    const rot = Math.random() * Math.PI * 2;
+    let img: Phaser.GameObjects.Image, glow: Phaser.GameObjects.Arc | null = null;
+    if (id === 'virotes' && this.textures.exists('proyectil_virote')) {
+      glow = this.add.circle(x, y, 17, 0xffe7a0, 0.16).setDepth(4.4).setBlendMode(Phaser.BlendModes.ADD);
+      img = this.add.image(x, y, 'proyectil_virote').setDepth(4.5).setRotation(rot).setDisplaySize(11, 32);
+    } else if (this.textures.exists('flecha_suelo')) {
+      img = this.add.image(x, y, 'flecha_suelo').setDepth(4.5).setRotation(rot).setDisplaySize(40, 40);
+    } else {
+      const key = this.textures.exists('proyectil_flecha') ? 'proyectil_flecha' : 'flecha';
+      img = this.add.image(x, y, key).setDepth(4.5).setRotation(rot);
+      if (key === 'proyectil_flecha') img.setDisplaySize(8, 30); else img.setDisplaySize(TILE * 0.6, TILE * 0.6);
+    }
+    if (glow) this.tweens.add({ targets: glow, alpha: 0.07, duration: 900, yoyo: true, repeat: -1 });
+    this.groundArrows.push({ x, y, qty, def: id, img, glow });
     if (save) this.syncArrows();
   }
 
-  private syncArrows() { this.snap.arrows = this.groundArrows.map(a => ({ x: Math.round(a.x), y: Math.round(a.y), qty: a.qty })); }
+  private syncArrows() { this.snap.arrows = this.groundArrows.map(a => ({ x: Math.round(a.x), y: Math.round(a.y), qty: a.qty, def: a.def })); }
 
   private pickupArrows() {
     for (let i = this.groundArrows.length - 1; i >= 0; i--) {
       const a = this.groundArrows[i];
-      if (Math.hypot(a.x - this.player.x, a.y - this.player.y) > TILE * 0.9) continue;
-      const it = makeItem('flechas', 'comun', a.qty);
+      if (Math.hypot(a.x - this.player.x, a.y - this.player.y) > TILE * BOWS.pickupTiles) continue;
+      const it = makeItem(a.def, 'comun', a.qty);
       const left = backpackAdd(this.snap.loadout, it);
       const got = a.qty - (left?.qty ?? 0);
       if (got <= 0) continue;
       this.stats.arrowsRecovered += got;
-      if (left) { a.qty = left.qty; } else { a.img.destroy(); this.groundArrows.splice(i, 1); }
-      this.hud?.toast(`+${got} flecha${got > 1 ? 's' : ''}`, 0.9);
+      if (left) { a.qty = left.qty; } else { a.img.destroy(); a.glow?.destroy(); this.groundArrows.splice(i, 1); }
+      this.hud?.toast(a.def === 'virotes' ? `+${got} virote${got > 1 ? 's' : ''}` : `+${got} flecha${got > 1 ? 's' : ''}`, 0.9);
       this.syncArrows();
       this.host.refreshInventory();
     }
@@ -903,20 +1031,27 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
 
   /** Daño a un enemigo con todo el "juice": número, sangre, tambaleo, hit-stop y sacudida según el daño. */
   dealDamage(e: Enemy, dmg: number, ang: number, weapon: string, crit: boolean, stopMs = JUICE.hitStopMs, backstab = false) {
-    if (crit) this.stats.crits++;
+    if (crit) { this.stats.crits++; this.rig.flashGoggles(); }
     if (backstab) this.stats.backstabs++;
     const killed = this.enemies.damage(e, dmg, { ang, weapon, crit, backstab });
     if (e.visibleNow || this.visible(e.x, e.y, e.def.size * 0.4)) { this.hitStop(crit ? JUICE.hitStopHeavyMs : stopMs); this.shakeFor(dmg * (crit ? 1.5 : 1)); }
     return killed;
   }
 
-  private rollCrit(dmg: number) { const crit = Math.random() < JUICE.critChance; return { dmg: crit ? dmg * JUICE.critMult : dmg, crit }; }
+  /** v3.1 §9.2: variación de daño + crítico del jugador (sustituye el crítico de la v2). */
+  private rollCrit(dmg: number) { return rollDamage(dmg, 'player'); }
+
+  /** Puñalada / Ejecutar / disparo apuntado a un desprevenido: ×2,5 (STEALTH.backstabMult), siempre crítico. */
+  private backstabDmg(base: number) { const c = DAMAGE.player; return (DAMAGE.backstabRolls ? base * (c.minFrac + (c.maxFrac - c.minFrac) * Math.random()) : base) * STEALTH.backstabMult; }
 
   // ---------- Combate ----------
   damagePlayer(n: number, cause: string, react = true) {
     if (this.ended || this.god) return;
     const p = this.snap.player;
-    let dmg = n;
+    // v3.1 §9.2: golpes directos (react) tiran variación y crítico enemigo; los daños por segundo no (el agarre del Reptante tampoco)
+    const rolls = react && cause !== 'Reptante' && cause !== 'Depuración';
+    const roll = rolls ? rollDamage(n, 'enemy') : { dmg: n, crit: false };
+    let dmg = roll.dmg;
     if (react) dmg *= (1 - totalProtection(this.snap.loadout)) * (p.aguantar > 0 ? 0.4 : 1);
     // v3: el Reptante te agarra → el resto te hace la mitad; adrenalina → -30 %
     dmg *= this.enemies?.v3.dmgMult(cause) ?? 1;
@@ -933,6 +1068,9 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       // el anillo de looteo se PAUSA (no se reinicia) al recibir un golpe
       if (this.loot.c && this.loot.t > 0) { this.loot.pause = 0.6; this.stats.lootPaused++; }
       this.cameras.main.shake(90, 0.006);
+      // daño recibido en rojo; el crítico recibido además hace temblar la pantalla
+      if (dmg >= 0.5) this.fx.damageNumber(this.player.x, this.player.y - 26, dmg, roll.crit, true);
+      if (roll.crit) { this.stats.critsTaken++; this.cameras.main.shake(DAMAGE.hurtCritShake[0], DAMAGE.hurtCritShake[1], true); }
       this.rig.hit(Math.random() * Math.PI * 2, 0.5);
       this.rig.setTint(0xff4d6d);
       this.time.delayedCall(100, () => this.rig && this.rig.setTint(null));
@@ -991,13 +1129,16 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   }
 
   private weaponId() { return this.snap.loadout.arma?.def ?? 'punos'; }
-  private isBow() { return this.snap.loadout.arma?.def === 'arco'; }
-  private arrowsLeft() { const lo = this.snap.loadout; return countOf(lo.mochila, 'flechas') + this.pocketCount('flechas'); }
+  /** Arco o ballesta (proyectil físico recuperable, munición propia). */
+  private isBow() { const d = this.snap.loadout.arma?.def; return d === 'arco' || d === 'ballesta'; }
+  private bowAmmo() { return this.snap.loadout.arma?.def === 'ballesta' ? 'virotes' : 'flechas'; }
+  private arrowsLeft() { const lo = this.snap.loadout, id = this.bowAmmo(); return countOf(lo.mochila, id) + this.pocketCount(id); }
   private takeArrow() {
-    const lo = this.snap.loadout;
-    if (consume(lo.mochila, 'flechas', 1) > 0) return true;
-    return this.pocketTake('flechas');
+    const lo = this.snap.loadout, id = this.bowAmmo();
+    if (consume(lo.mochila, id, 1) > 0) return true;
+    return this.pocketTake(id);
   }
+  private noAmmoText() { return this.bowAmmo() === 'virotes' ? 'Sin virotes' : 'Sin flechas'; }
   /** v3: bolsillo seguro con varias casillas (bolsillo + bolsilloExtra). */
   pocketList(): ItemInst[] { const lo = this.snap.loadout; return [lo.bolsillo ?? null, ...(lo.bolsilloExtra ?? [])].filter((x): x is ItemInst => !!x); }
   pocketCount(id: string) { return this.pocketList().filter(i => i.def === id).reduce((s, i) => s + i.qty, 0); }
@@ -1025,7 +1166,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       return false;
     }
     if (this.isBow() && this.arrowsLeft() <= 0) {
-      if (!this.noAmmoWarned) { this.noAmmoWarned = true; this.hud?.toast('Sin flechas'); }
+      if (!this.noAmmoWarned) { this.noAmmoWarned = true; this.hud?.toast(this.noAmmoText()); }
       return false;
     }
     return true;
@@ -1041,7 +1182,9 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.attackT = 1 / (ws.aps * (auto ? AIM.autoFireRateMult : 1));
     const { dmg, crit } = this.rollCrit(ws.dmg);
     const ox = this.player.x + Math.cos(ang) * 20, oy = this.player.y + Math.sin(ang) * 20;
-    this.proj.fire(this.isBow() ? 'flecha' : 'bala', ox, oy, ang, ws.rangeTiles * TILE, dmg, crit, this.weaponId(), !auto);
+    const pj: Proj = this.proj.fire(this.isBow() ? (this.bowAmmo() === 'virotes' ? 'virote' : 'flecha') : 'bala', ox, oy, ang, ws.rangeTiles * TILE, dmg, crit, this.weaponId(), !auto);
+    pj.base = ws.dmg;
+    if (this.clavarArmed && pj.kind === 'virote') { pj.pierce = BOWS.clavarPierce; this.clavarArmed = false; this.stats.clavarShots++; }
     this.stats.shots++;
     if (!this.isBow()) this.fx.muzzle(this.player.x + Math.cos(ang) * 34, this.player.y + Math.sin(ang) * 34, ang);
     // retroceso: en Android vibración corta; en iOS (sin vibración) más retroceso del arma + golpe y sacudida de cámara
@@ -1062,11 +1205,12 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
 
   private onProjHit(pj: Proj, e: Enemy) {
     const ang = Math.atan2(pj.vy, pj.vx);
-    if (pj.kind === 'flecha' && Math.random() < PROJECTILE.arrowRecoverChance) this.stuck.set(e, (this.stuck.get(e) ?? 0) + 1);
+    // v3.1: si acierta, el 60 % cae junto al enemigo al morir (atravesado por «Clavar»: no se queda clavado)
+    const through = pj.pierce > 0 || !!pj.pierced?.has(e);
+    if (isPhysical(pj.kind) && !through && Math.random() < BOWS.recoverOnHitChance) { const st = this.stuck.get(e) ?? {}; const id = pj.kind === 'virote' ? 'virotes' : 'flechas'; st[id] = (st[id] ?? 0) + 1; this.stuck.set(e, st); }
     // sigilo: un disparo apuntado (joystick derecho) a un desprevenido aplica x2,5 y crítico
     if (pj.aimed && isUnaware(e)) {
-      const base = pj.crit ? pj.dmg / JUICE.critMult : pj.dmg;
-      this.dealDamage(e, base * STEALTH.backstabMult, ang, pj.weapon, true, JUICE.hitStopHeavyMs, true);
+      this.dealDamage(e, this.backstabDmg(pj.base), ang, pj.weapon, true, JUICE.hitStopHeavyMs, true);
       return;
     }
     this.dealDamage(e, pj.dmg, ang, pj.weapon, pj.crit, pj.kind === 'bala' ? 50 : JUICE.hitStopMs);
@@ -1222,7 +1366,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
         const arc = this.add.graphics().setDepth(11);
         arc.lineStyle(8, COLORS.hueso, 0.95).beginPath().arc(px, py, TILE * 1.0, ang - 0.8, ang + 0.8).strokePath();
         this.tweens.add({ targets: arc, alpha: 0, duration: 200, onComplete: () => arc.destroy() });
-        this.dealDamage(t, 30 * ws.dmgMult, ang, 'bate', false, JUICE.hitStopHeavyMs);
+        { const r = this.rollCrit(30 * ws.dmgMult); this.dealDamage(t, r.dmg, ang, 'bate', r.crit, JUICE.hitStopHeavyMs); }
         t.body.velocity.add(new Phaser.Math.Vector2(Math.cos(ang), Math.sin(ang)).scale(380 / (STAGGER.weight[t.def.type] ?? 1)));
         break;
       }
@@ -1230,11 +1374,11 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
         const r = TILE * 1.8;
         const fx = this.add.circle(px, py, r, COLORS.hueso, 0.18).setStrokeStyle(4, COLORS.hueso).setDepth(11);
         this.tweens.add({ targets: fx, alpha: 0, angle: 360, duration: 300, onComplete: () => fx.destroy() });
-        for (const e of [...this.enemies.list]) if (Math.hypot(e.x - px, e.y - py) <= r + e.def.size * 0.3) { this.dealDamage(e, 15 * ws.dmgMult, Math.atan2(e.y - py, e.x - px), 'machete', false); e.bleed = 4; }
+        for (const e of [...this.enemies.list]) if (Math.hypot(e.x - px, e.y - py) <= r + e.def.size * 0.3) { const r = this.rollCrit(15 * ws.dmgMult); this.dealDamage(e, r.dmg, Math.atan2(e.y - py, e.x - px), 'machete', r.crit); e.bleed = 4; }
         break;
       }
       case 'perforante': {
-        if (this.isBow() && !this.takeArrow()) { ok = false; this.hud?.toast('Sin flechas', 1); break; }
+        if (this.isBow() && !this.takeArrow()) { ok = false; this.hud?.toast(this.noAmmoText(), 1); break; }
         const ang = this.facing;
         let L = ws.rangeTiles * TILE;
         L *= rayHit(this.walls, px, py, px + Math.cos(ang) * L, py + Math.sin(ang) * L);
@@ -1247,9 +1391,15 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
         const tr = this.add.graphics().setDepth(12);
         tr.lineStyle(4, 0xfff2a8, 0.9).lineBetween(px, py, px + Math.cos(ang) * L, py + Math.sin(ang) * L);
         this.tweens.add({ targets: tr, alpha: 0, duration: 200, onComplete: () => tr.destroy() });
-        for (const h of hits) this.dealDamage(h.e, ws.dmg * 1.5, ang, 'arco', false);
+        for (const h of hits) { const r = this.rollCrit(ws.dmg * 1.5); this.dealDamage(h.e, r.dmg, ang, 'arco', r.crit); }
         this.dropArrow(px + Math.cos(ang) * (L - 8), py + Math.sin(ang) * (L - 8), 1);
-        this.noise(px, py, ws.noise);
+        if (ws.noise > 0) this.noise(px, py, ws.noise);
+        break;
+      }
+      case 'clavar': {
+        if (this.arrowsLeft() <= 0) { ok = false; this.hud?.toast('Sin virotes', 1); break; }
+        this.clavarArmed = true;
+        this.hud?.toast('Clavar: el siguiente virote atraviesa', 1.2);
         break;
       }
       case 'rafaga': {
@@ -1524,7 +1674,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
         if (!e.targetable || Math.hypot(e.x - g.x, e.y - g.y) > r + e.def.size * 0.3) continue;
         if (!lineClear(this.walls, g.x, g.y, e.x, e.y)) continue;
         this.v3s.grenadeHits++;
-        this.dealDamage(e, G.dmg, Math.atan2(e.y - g.y, e.x - g.x), 'granada', false, JUICE.hitStopHeavyMs);
+        { const r = this.rollCrit(G.dmg); this.dealDamage(e, r.dmg, Math.atan2(e.y - g.y, e.x - g.x), 'granada', r.crit, JUICE.hitStopHeavyMs); }
       }
       if (Math.hypot(this.player.x - g.x, this.player.y - g.y) <= r && lineClear(this.walls, g.x, g.y, this.player.x, this.player.y)) this.damagePlayer(G.dmg * G.selfMult, 'Tu granada');
       const fx = this.add.circle(g.x, g.y, r, 0xffb347, 0.55).setDepth(20);
@@ -1825,7 +1975,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const arc = this.add.graphics().setDepth(11);
     arc.lineStyle(7, 0xff4a3c, 0.95).beginPath().arc(this.player.x, this.player.y, TILE * 0.9, ang - 0.7, ang + 0.7).strokePath();
     this.tweens.add({ targets: arc, alpha: 0, duration: 200, onComplete: () => arc.destroy() });
-    const killed = this.dealDamage(e, ws.dmg * STEALTH.backstabMult, ang, this.weaponId(), true, JUICE.hitStopHeavyMs, true);
+    const killed = this.dealDamage(e, this.backstabDmg(ws.dmg), ang, this.weaponId(), true, JUICE.hitStopHeavyMs, true);
     this.execTarget = null;
     return killed;
   }
@@ -1964,11 +2114,14 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     if (this.swapT > 0) { this.swapT -= dt; this.rig.lower = Math.sin(Math.PI * Phaser.Math.Clamp(1 - this.swapT / SWAP.sec, 0, 1)); if (this.swapT <= 0) { this.swapT = 0; this.rig.lower = 0; this.finishSwap(); } }
 
     // visión (cono hacia donde miras) y muñeco del jugador
-    this.vision!.update(this.player.x, this.player.y, this.facing, this.wallsVersion);
+    // v3.1 §9.3: la mirada (cono) gira como mucho LINGER.maxTurnDegPerSec, también al apuntar o con giros instantáneos
+    this.viewFacing = Phaser.Math.Angle.RotateTo(this.viewFacing, this.facing, Phaser.Math.DegToRad(LINGER.maxTurnDegPerSec) * dt);
+    this.vision!.update(this.player.x, this.player.y, this.viewFacing, this.wallsVersion, this.snap.elapsed);
     const body = this.player.body as Phaser.Physics.Arcade.Body;
+    this.rig.sneaking = this.moveTier === 'sigilo';
     this.rig.update(dt, this.player.x, this.player.y, this.facing, Math.hypot(body.velocity.x, body.velocity.y) / Math.max(1, max), true);
     this.visT -= dt;
-    if (this.visT <= 0) { this.visT = 0.15; this.updateVisibility(); this.cullWorld(); }
+    if (this.visT <= 0) { this.visT = 0.15; this.updateVisibility(); this.cullWorld(); this.updateTrapero(); }
     this.exitCheckT -= dt;
     if (this.exitCheckT <= 0) { this.exitCheckT = 0.25; this.checkExitsSeen(); }
 
@@ -2090,7 +2243,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.hud.setHp(p.hp, PLAYER_MAX_HP, totalProtection(lo));
     const remain = Math.max(0, DIFFICULTY.raidSeconds - s.elapsed);
     this.hud.timer.setText(remain > 0 ? `${Math.floor(remain / 60)}:${String(Math.floor(remain % 60)).padStart(2, '0')}` : 'NIEBLA').setColor(remain < 120 ? '#ff3cc8' : '#e8e2d0');
-    const ammo = ws.mag && lo.arma ? `  ·  ${p.reload > 0 ? 'recargando' : lo.arma.mag ?? 0}/${countOf(lo.mochila, 'municion')}` : this.isBow() ? `  ·  flechas ${this.arrowsLeft()}` : '';
+    const ammo = ws.mag && lo.arma ? `  ·  ${p.reload > 0 ? 'recargando' : lo.arma.mag ?? 0}/${countOf(lo.mochila, 'municion')}` : this.isBow() ? `  ·  ${this.bowAmmo()} ${this.arrowsLeft()}${this.clavarArmed ? ' · Clavar' : ''}` : '';
     const sm = speedMult(lo);
     this.hud.info.setText(`${lo.arma ? def(lo.arma).nombre : 'Puños'}${ammo}  ·  min ${Math.floor(minute)}${sm < 0.999 ? `  ·  vel ${Math.round(sm * 100)}%` : ''}${p.healLeft > 0 ? '  ·  curando' : ''}`);
     this.abilityIds.forEach((id, i) => {
@@ -2116,6 +2269,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const closed = this.map.exitLocs.filter((_, i) => known(i) && !s.exits.some(e => e.loc === i));
     const extra = this.scanT > 0 ? this.enemies.list.filter(e => Math.hypot(e.x - this.player.x, e.y - this.player.y) < TILE * PRUEBA_V2.scanTiles).map(e => ({ x: e.x, y: e.y, color: COLORS.peligro })) : [];
     if (this.radioDot && this.containers.some(c => c.snap.kind === 'elite' && c.snap.x === this.radioDot!.x && c.snap.y === this.radioDot!.y && c.snap.items.length)) extra.push({ x: this.radioDot.x, y: this.radioDot.y, color: 0x3c8cff });
+    if (s.trapero?.found) extra.push({ x: s.trapero.x, y: s.trapero.y, color: 0xd9a441 });
     this.hud.drawMinimap(this.player.x, this.player.y, exitsView, closed, extra, this.cameras.main.worldView);
     // borde rojo: enemigos ocultos detrás + latido fuerte del Acechador; borde oscuro que vibra: Enjambre
     this.hud.drawVignette([...this.behind, ...this.enemies.v3.vignette()], this.enemies.v3.swarmEdges, s.elapsed);

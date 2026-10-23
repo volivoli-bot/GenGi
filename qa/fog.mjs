@@ -2,7 +2,7 @@ import puppeteer from 'puppeteer-core';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const b=await puppeteer.launch({executablePath:'/usr/bin/google-chrome',headless:'new',args:['--no-sandbox','--use-gl=swiftshader','--enable-unsafe-swiftshader']});
 const p=await b.newPage(); await p.setViewport({width:390,height:844});
-await p.goto('http://localhost:4173/?debug=1'); await p.waitForFunction(()=>window.gengi);
+await p.goto('http://localhost:4173/?debug=1&noelite'); await p.waitForFunction(()=>window.gengi);
 await p.evaluate(()=>gengi.reset()).catch(()=>{}); await sleep(600); await p.waitForFunction(()=>window.gengi);
 await p.evaluate(()=>gengi.start()); await sleep(1000);
 await p.evaluate(()=>{gengi.clearEnemies();gengi.minute(15);}); 

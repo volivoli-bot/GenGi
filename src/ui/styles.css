@@ -112,7 +112,8 @@ table.cmp td.down { color: #ff6b6b; font-weight: 800; }
 .mat img { width: 30px; height: 30px; }
 .mat b { font-size: 15px; }
 .mat small { font-size: 9px; color: var(--dim); }
-.station { background: #000a; border: 2px solid var(--line); border-radius: 12px; padding: 8px; margin-top: 8px; }
+.refugio { border-radius: 12px; padding: 6px; }
+.station { background: #000c; border: 2px solid var(--line); border-radius: 12px; padding: 8px; margin-top: 8px; }
 .st-head { display: flex; gap: 10px; align-items: center; }
 .st-head > img { width: 56px; height: 56px; flex: none; }
 .st-info b { font-size: 16px; margin-right: 6px; }
@@ -152,3 +153,11 @@ table.cmp td.down { color: #ff6b6b; font-weight: 800; }
 .shop .item .info small { color: var(--dim); font-size: 11px; }
 .shop .item .info span { color: var(--dim); font-size: 11px; }
 .card p.news { color: var(--toxico); font-size: 13px; margin: 4px 0; }
+/* v3.1: el Trapero en el inventario de la incursión */
+.trapero { border: 2px solid #d9a441; border-radius: 10px; padding: 6px; margin-bottom: 8px; background: #2a1f12cc; }
+.trapero .retrato { width: 52px; height: 52px; border-radius: 8px; margin-right: 8px; }
+.trapero .tritem { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.trapero .tritem > span { flex: 1; font-size: 13px; }
+.trapero .tritem .cell, .trapero .tritem > div:first-child { width: 40px; height: 40px; flex: none; }
+.trapero .tritem.gone { opacity: .45; }
+.trapero .trmsg { color: #ffd27a; }

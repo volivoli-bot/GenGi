@@ -4,6 +4,7 @@ import { armorProtection, backpackSlots, canPocket, def, ItemInst, itemLabel, it
 import type { RaidScene } from '../raid/RaidScene';
 import { h, itemCell, itemMeta } from './dom';
 import { PRUEBA_V2 } from '../config/v2';
+import { traperoRejects, valesFor } from '../raid/trapero';
 
 const LONG_PRESS_MS = 450;
 type From = 'yo' | 'cerca';
@@ -43,7 +44,8 @@ export class RaidInventory {
     this.timer = window.setInterval(() => {
       const s = this.scene();
       const near = s?.openContainerNear();
-      const key = near ? near.id + ':' + near.items.length : '';
+      const tr = s?.traperoState();
+      const key = (near ? near.id + ':' + near.items.length : '') + (tr?.near ? '|T' + (tr.open ? 1 : 0) : '');
       if (key !== this.lastNear) this.render();
     }, 400);
   }
@@ -101,12 +103,39 @@ export class RaidInventory {
     return el;
   }
 
+  /** v3.1 §9.4: tienda del Trapero dentro del inventario (no pausa: no es zona segura). */
+  private msg = '';
+  private trapero(sc: RaidScene) {
+    const st = sc.traperoState()!, f = sc.traperoFunds();
+    const say = (r: { ok: boolean; msg: string }) => { this.msg = r.msg; this.render(); };
+    const sellable = sc.snap.loadout.mochila.filter(it => ITEMS[it.def].kind === 'material');
+    return h('div', { class: 'trapero' },
+      h('div', { class: 'row' }, h('img', { src: 'art/v3/vendedor_trapero.svg', alt: '', class: 'retrato' }),
+        h('div', {}, h('b', {}, 'El Trapero'), h('div', { class: 'hint' }, st.open ? 'Paga en vales (solo valen aquí y se pierden al salir). Compra materiales de esta incursión al 70 %.' : st.why!)),
+      ),
+      h('div', { class: 'hint' }, h('b', {}, `Vales: ${f.vales}`), ` · chapas encima ${f.carried} · refugio ${f.bank}`),
+      this.msg ? h('div', { class: 'hint trmsg' }, this.msg) : null,
+      h('h3', {}, h('span', {}, 'Vende'), h('span', {}, '−20 %')),
+      ...st.t.stock.map((e, i) => h('div', { class: 'tritem' + (e.sold ? ' gone' : '') }, itemCell(e.item),
+        h('span', { style: ITEMS[e.item.def].rolls ? `color:${RARITIES[e.item.rarity].color}` : '' }, itemLabel(e.item)),
+        h('button', { class: 'btn', disabled: !st.open || e.sold || f.vales + f.carried + f.bank < e.price, onclick: () => say(sc.traperoBuy(i)) }, e.sold ? 'Vendido' : `${e.price}`))),
+      h('h3', {}, h('span', {}, 'Le vendes'), h('span', {}, 'materiales')),
+      sellable.length ? null : h('p', { class: 'hint' }, 'No llevas materiales.'),
+      ...sellable.map(it => {
+        const no = traperoRejects(it, sc.snap.id);
+        return h('div', { class: 'tritem' }, itemCell(it), h('span', {}, itemLabel(it) + (no ? ' · del refugio' : '')),
+          h('button', { class: 'btn', disabled: !st.open || !!no, onclick: () => say(sc.traperoSell(it.uid)) }, no ? 'No lo quiere' : `+${valesFor(it)} vales`));
+      }),
+    );
+  }
+
   render() {
     const sc = this.scene();
     if (!sc) return this.close();
     const lo = sc.snap.loadout;
     const near = sc.openContainerNear();
-    this.lastNear = near ? near.id + ':' + near.items.length : '';
+    const tr = sc.traperoState();
+    this.lastNear = (near ? near.id + ':' + near.items.length : '') + (tr?.near ? '|T' + (tr.open ? 1 : 0) : '');
     const el = h('div', { class: 'sheet side' },
       h('div', { class: 'row' },
         h('b', {}, 'Mochila'),
@@ -115,6 +144,7 @@ export class RaidInventory {
         h('button', { class: 'btn x', onclick: () => this.close() }, '✕'),
       ),
       h('div', { class: 'scroll' },
+        tr?.near ? this.trapero(sc) : null,
         h('h3', {}, 'Equipado'),
         h('div', { class: 'slots five' }, this.cell(lo.arma, 'yo', 'Arma'), this.cell(lo.reserva ?? null, 'yo', 'Reserva'), this.cell(lo.torso, 'yo', 'Torso'), this.cell(lo.cabeza, 'yo', 'Cabeza'), this.cell(lo.espalda ?? null, 'yo', 'Espalda')),
         h('h3', {}, h('span', {}, 'Bolsillo seguro'), h('span', {}, `${(lo.bolsillo ? 1 : 0) + (lo.bolsilloExtra?.length ?? 0)}/${Math.max(sc.snap.pocketSlots ?? 1, 1 + (lo.bolsilloExtra?.length ?? 0))}`)),

@@ -2,6 +2,7 @@ import { ITEMS } from '../data/items';
 import { RARITIES } from '../data/rarity';
 import { VENDORS, VendorId, VENDOR_IDS } from '../config/v3';
 import type { ItemInst } from './inventory';
+import { TRAPERO } from '../config/v31';
 
 /**
  * Precios v3 (diseno-v3 §3 y §6). Regla anti-arbitraje: lo que paga un vendedor es como mucho el 40 %
@@ -23,7 +24,8 @@ export function buyPrice(id: string, rarity: ItemInst['rarity'], qty: number, re
 /** El precio más bajo posible en cualquier tienda (reputación máxima). */
 export function minBuyPrice(id: string, rarity: ItemInst['rarity'], qty: number) {
   const r = ITEMS[id].rolls ? RARITIES[rarity].valor : 1;
-  return basePrice(id) * r * qty * repMult(MAX_REP);
+  // v3.1: el Trapero vende con un 20 % de descuento sobre el precio de rep. 1 → también cuenta como tienda
+  return basePrice(id) * r * qty * Math.min(repMult(MAX_REP), 1 - TRAPERO.discount);
 }
 
 /** Categoría de un objeto: qué vendedor lo compra al 40 %. Materiales: nadie (20 % en todos). */

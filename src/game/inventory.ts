@@ -18,6 +18,8 @@ export interface ItemInst {
   mag?: number;
   /** v3: ya tiene el rasgo extra del Taller (una vez por objeto). */
   mejorado?: boolean;
+  /** v3.1: saqueado en esta incursión (id del snapshot). Solo eso compra el Trapero; se borra al acabar la incursión. */
+  raid?: string;
 }
 
 export interface Loadout {
@@ -112,7 +114,7 @@ export function addToList(list: ItemInst[], it: ItemInst, maxSlots: number): Ite
   const d = def(it);
   if (d.maxStack > 1) {
     for (const o of list) {
-      if (o.def === it.def && o.rarity === it.rarity && !o.free && o.qty < d.maxStack) {
+      if (o.def === it.def && o.rarity === it.rarity && !o.free && (o.raid ?? null) === (it.raid ?? null) && o.qty < d.maxStack) {
         const n = Math.min(d.maxStack - o.qty, it.qty);
         o.qty += n; it.qty -= n;
         if (it.qty <= 0) return null;

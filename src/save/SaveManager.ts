@@ -7,7 +7,7 @@ import { SAVE_VERSION, SaveData, Settings, Refugio, VendorState } from './types'
 import { STATION_IDS, StationDef, STATIONS, VENDOR_IDS, VendorId } from '../config/v3';
 
 export const newRefugio = (): Refugio => ({ levels: { alijo: 1, bolsillo: 1, generador: 1, enfermeria: 1, taller: 1, radio: 1 }, crafts: [] });
-export const newVendor = (): VendorState => ({ xp: 0, stock: [], stockAt: -1, stockLevel: 0, offers: [], active: null, progress: 0 });
+export const newVendor = (): VendorState => ({ xp: 0, stock: [], stockAt: -1, stockLevel: 0, offers: [], active: null, progress: 0, missionsDone: 0, buyXp: 0 });
 const newVendors = () => Object.fromEntries(VENDOR_IDS.map(v => [v, newVendor()])) as Record<VendorId, VendorState>;
 
 export const defaultSettings = (): Settings => ({ prioridad: 'cercano', rarezaMin: 'comun', curarUmbral: 35, rapido: 'vendaje', conosEnemigos: true });

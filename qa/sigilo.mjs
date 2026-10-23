@@ -1,7 +1,7 @@
 // QA del sigilo (diseno-v3.md §7) + migración de guardado v1 + caché del service worker:
 // node qa/sigilo.mjs (con `npx vite preview --port 4173` en marcha)
 import puppeteer from 'puppeteer-core';
-const URL='http://localhost:4173/?debug=1';
+const URL='http://localhost:4173/?debug=1&noelite';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const res=[]; const ok=(n,c,i='')=>{res.push(`${c?'PASS':'FAIL'} ${n} ${i}`);console.log(`${c?'PASS':'FAIL'} ${n} ${i}`);};
 const b=await puppeteer.launch({executablePath:'/usr/bin/google-chrome',headless:'new',args:['--no-sandbox','--use-gl=swiftshader','--enable-unsafe-swiftshader','--window-size=390,844']});
@@ -114,7 +114,7 @@ const T=48;
   await __waitGame(0.3);while(s.attackT>0)await __waitGame(0.05);const sk0=s.enemies.stealthStats.silentKills;const exec2=s.execTarget===v;
   const killed=gengi.execute();await __waitGame(1.5);
   return {hits,base,ex,okTap,execDmg,ratio:+(execDmg/base).toFixed(2),exec2,killed,dead:v.dead,silent:s.enemies.stealthStats.silentKills-sk0,n1:n1.state,n2:n2.state,n1m:n1.meter,n2m:n2.meter,crit:s.fx.shown.slice(-3)};});
- ok('S8 Ejecutar hace x2,5 del golpe base (crítico garantizado)', r.ex&&Math.abs(r.ratio-2.5)<0.05, `base=${r.base} ejecutar=${r.execDmg} ratio=${r.ratio}`);
+ ok('S8 Ejecutar hace x2,5 del daño base del arma (bate 12 → 30, sin variación v3.1; crítico garantizado)', r.ex&&Math.abs(r.execDmg-30)<0.05&&r.base>=12*0.72-0.01&&r.base<=12*1.04*1.5+0.01, `base=${r.base} ejecutar=${r.execDmg} ratio=${r.ratio}`);
  ok('S8 Ejecutar mata en silencio: los vecinos no se enteran', r.exec2&&r.killed&&r.dead&&r.silent===1&&r.n1==='idle'&&r.n2==='idle'&&r.n1m===0&&r.n2m===0, JSON.stringify({killed:r.killed,silent:r.silent,n1:r.n1,n2:r.n2}));}
 
 // ---------- 9. Disparo apuntado (joystick derecho) a un desprevenido: x2,5; automático normal ----------
@@ -126,7 +126,7 @@ const T=48;
   const fired=s.proj.fired.slice(-1)[0];const st=e.state;
   s.enemies.becomeAlert(e,false);const hp1=e.hp;s.attackT=0;s.fireRanged(a,true);await __waitGame(0.6);const dAuto=+(hp1-e.hp).toFixed(2);
   s.snap.loadout.arma=prev;return {dAimed,dAuto,st,fired};});
- ok('S9 disparo apuntado a desprevenido x2,5 (pistola 12 → 30)', Math.abs(r.dAimed-30)<0.6 && (Math.abs(r.dAuto-12)<0.6||r.dAuto>12), JSON.stringify(r));}
+ ok('S9 disparo apuntado a desprevenido x2,5 (pistola 12 → 30); el normal tira [0,72;1,04] (+crítico)', Math.abs(r.dAimed-30)<0.6 && r.dAuto>=12*0.72-0.01 && r.dAuto<=12*1.04*1.5+0.01, JSON.stringify(r));}
 
 // ---------- 10. Ruido a través de paredes a la mitad ----------
 {const r=await E(()=>{const s=gengi.raid();__calm();const T=48;
@@ -172,14 +172,14 @@ const T=48;
  await q.reload();await q.waitForFunction(()=>window.gengi,{timeout:20000});await sleep(500);
  const r=await q.evaluate(()=>{const d=gengi.saveData();return {v:d.saveVersion,chapas:d.chapas,stash:d.stash.map(i=>i.uid+':'+i.def+':'+i.qty),overflow:d.overflow.map(i=>i.uid),mochila:d.loadout.mochila.map(i=>i.uid),reserva:d.loadout.reserva,seen:d.seenExits,set:d.settings};});
  const want=v1.stash.map(i=>i.uid+':'+i.def+':'+i.qty);
- ok('S13 guardado v1 migra a la versión actual', r.v===3, `saveVersion=${r.v}`);
+ ok('S13 guardado v1 migra a la versión actual (4)', r.v===4, `saveVersion=${r.v}`);
  ok('S13 sin perder chapas ni objetos del alijo/excedente/equipo', r.chapas===4321&&want.every(w=>r.stash.includes(w))&&r.overflow.includes('o1')&&r.mochila.includes('m1'), JSON.stringify({chapas:r.chapas,stash:r.stash,overflow:r.overflow}));
  ok('S13 ajustes antiguos conservados + nuevo ajuste de conos activado', r.set.prioridad==='debil'&&r.set.curarUmbral===40&&r.set.conosEnemigos===true&&r.reserva===null, JSON.stringify(r.set));
  // service worker: nombre de caché por build y limpieza de cachés viejas
  // página del mismo origen que NO registra el SW (manifest), para que la activación ocurra después de crear las cachés viejas
  await ctx.close();
  const ctx2=await b.createBrowserContext();const q2=await ctx2.newPage();
- await q2.goto(URL.replace('/?debug=1','/manifest.webmanifest'));
+ await q2.goto(URL.replace('/?debug=1&noelite','/manifest.webmanifest'));
  const sw=await q2.evaluate(async()=>{for(const r of await navigator.serviceWorker.getRegistrations())await r.unregister();
    const t=await (await fetch('sw.js',{cache:'no-store'})).text();const m=t.match(/const CACHE = '([^']+)'/);
    for(const k of await caches.keys())await caches.delete(k);

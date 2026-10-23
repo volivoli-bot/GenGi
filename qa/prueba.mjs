@@ -1,7 +1,7 @@
 // QA de la prueba de Pablo (diseno-v3.md §8, números finales de Basu) + curación con tiempo (§8.8):
 // node qa/prueba.mjs (con `npx vite preview --port 4173` en marcha)
 import puppeteer from 'puppeteer-core';
-const URL='http://localhost:4173/?debug=1';
+const URL='http://localhost:4173/?debug=1&noelite';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const res=[]; const ok=(n,c,i='')=>{res.push(`${c?'PASS':'FAIL'} ${n} ${i}`);console.log(`${c?'PASS':'FAIL'} ${n} ${i}`);};
 const b=await puppeteer.launch({executablePath:'/usr/bin/google-chrome',headless:'new',args:['--no-sandbox','--use-gl=swiftshader','--enable-unsafe-swiftshader','--window-size=390,844']});
@@ -65,7 +65,7 @@ await E(()=>gengi.start()); await sleep(1500); await E(setup); await E(()=>__cal
   const late=s.enemies.spawn('errante',s.player.x+T*12,s.player.y,1.5);const lateDmg=late.dmg;s.enemies.kill(late);
   return {base,hit:hits[0],lateDmg};});
  ok('P2 daño ×1,25: Errante 6→7,5, Corredor 5→6,25, Abominación 18→22,5', r.base.errante===7.5&&r.base.corredor===6.25&&r.base.abominacion===22.5, JSON.stringify(r.base));
- ok('P2 golpe real de Errante sin armadura = 7,5', r.hit&&Math.abs(r.hit.real-7.5)<0.01, JSON.stringify(r.hit));
+ ok('P2 golpe real de Errante sin armadura = 7,5 × [0,72;1,04] (v3.1: ×1,5 si crítico)', r.hit&&r.hit.real>=7.5*0.72-0.01&&r.hit.real<=7.5*1.04*1.5+0.01, JSON.stringify(r.hit));
  ok('P2 la curva por minuto va encima (×1,5 → 11,25)', Math.abs(r.lateDmg-11.25)<0.01, `${r.lateDmg}`);}
 
 // ---------- 3. Escanear: radio 10 casillas, 3 s, también tras paredes ----------

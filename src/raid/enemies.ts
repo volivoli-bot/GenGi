@@ -14,6 +14,7 @@ import type { Fx } from './fx';
 import type { FlowField } from './flow';
 import { lineClear, Rect } from './map';
 import { Rig } from './rig';
+import { ELITE, LINGER } from '../config/v31';
 
 export interface RaidCtx {
   world: Phaser.Scene;
@@ -122,6 +123,9 @@ export class Enemy {
   speedK = 1;
   submerged = false;
   lastHitAt = -99;
+  /** v3.1: último instante en que el jugador lo vio (silueta fantasma) y si es de élite. */
+  seenAt = -99;
+  elite = false;
   flankPhase = Math.random() * 10;
   /** Último arma que le golpeó (misiones "mata con arma a distancia"). */
   lastWeapon?: string;
@@ -178,6 +182,7 @@ export class EnemyManager {
       e.gx = extra.gx; e.gy = extra.gy; e.bleed = extra.bleed ?? 0;
       if (extra.group !== undefined) e.group = extra.group;
       if (extra.mut) this.mutate(e, extra.mut as MutationId, true);
+      if (extra.elite) { e.elite = true; e.rig.setElite(ELITE.scale); }
       if (extra.swell !== undefined) { this.startSwell(e, true); e.t = extra.swell; }
     }
     if (type === 'reptante') { e.gx ??= x; e.gy ??= y; e.submerged = true; e.sub = 'under'; e.cd = 1; body.enable = false; e.rig.setVisible(false); }
@@ -191,6 +196,17 @@ export class EnemyManager {
     return e;
   }
 
+  /** v3.1 §9.5: convierte en élite (vida ×2, daño ×2, ×1,1, aura dorada). */
+  makeElite(e: Enemy) {
+    if (e.dead || e.elite || ELITE.exclude.includes(e.def.type)) return false;
+    e.elite = true;
+    e.maxHp = Math.round(e.maxHp * ELITE.hpMult); e.hp = Math.round(e.hp * ELITE.hpMult);
+    e.dmg *= ELITE.dmgMult;
+    e.rig.setElite(ELITE.scale);
+    return true;
+  }
+  eliteAlive() { let n = 0; for (const e of this.list) if (e.elite && !e.dead) n++; return n; }
+
   /** Mutación (diseño §4, min 10): aura de color + rasgo. `restoring` = ya trae la vida guardada. */
   mutate(e: Enemy, m: MutationId, restoring = false) {
     if (e.dead || MUTATIONS.exclude.includes(e.def.type)) return false;
@@ -203,6 +219,8 @@ export class EnemyManager {
 
   /** Diagnóstico QA del sigilo. */
   stealthStats = { heard: 0, suspects: 0, alerts: 0, silentKills: 0, backstabs: 0 };
+  /** QA v3.1: fotogramas mostrados como silueta fantasma. */
+  ghostFrames = 0;
 
   /**
    * Ruido (sigilo): lo oyen aunque estén de espaldas si están dentro del radio (a través de paredes, a la mitad).
@@ -404,7 +422,7 @@ export class EnemyManager {
     const A = ATTACKS.hinchado;
     const r = A.radiusTiles * TILE;
     const px = this.c.px(), py = this.c.py();
-    if (Math.hypot(px - e.x, py - e.y) <= r + this.c.playerRadius * 0.5) { this.c.damagePlayer(A.dmg * PRUEBA_V2.enemyDmgMult, 'Explosión de Hinchado'); this.c.addStatus('poison', PRUEBA_V2.status.explosionStacks); }
+    if (Math.hypot(px - e.x, py - e.y) <= r + this.c.playerRadius * 0.5) { this.c.damagePlayer(A.dmg * PRUEBA_V2.enemyDmgMult * (e.elite ? ELITE.dmgMult : 1), 'Explosión de Hinchado'); this.c.addStatus('poison', PRUEBA_V2.status.explosionStacks); }
     let hit = 0;
     for (const o of [...this.list]) if (o !== e && !o.dead && Math.hypot(o.x - e.x, o.y - e.y) <= r) { if (o.targetable) hit++; this.damage(o, A.dmg); }
     this.explosions.push({ x: e.x, y: e.y, on: this.c.onScreen(e.x, e.y, 0), hit });
@@ -435,7 +453,14 @@ export class EnemyManager {
       e.visibleNow = vis;
       const spd = Math.hypot(b.velocity.x, b.velocity.y);
       if (!isV3 && spd > 12 && e.stagger <= 0 && e.state !== 'windup' && e.state !== 'cone') e.facing = Phaser.Math.Angle.RotateTo(e.facing, Math.atan2(b.velocity.y, b.velocity.x), dt * 9);
-      e.rig.update(dt, e.x, e.y, e.facing, spd / Math.max(1, sp), e.def.type === 'acechador' ? (vis || rawVis) : e.submerged ? false : vis);
+      const shown = e.def.type === 'acechador' ? (vis || rawVis) : e.submerged ? false : vis;
+      if (shown) { e.seenAt = now; e.rig.setGhost(0); e.rig.update(dt, e.x, e.y, e.facing, spd / Math.max(1, sp), true); }
+      else {
+        // v3.1 §9.3: recién salido del cono → silueta fantasma QUIETA donde lo viste (no se mueve ni muestra ataques), si ese sitio ya no se ve
+        const age = now - e.seenAt, rc = e.rig.c;
+        if (LINGER.sec > 0 && age < LINGER.sec && !e.submerged && !this.c.visible(rc.x, rc.y, e.def.size * 0.4)) { e.rig.setGhost(LINGER.ghostAlpha * (1 - age / LINGER.sec)); this.ghostFrames++; }
+        else { e.rig.setGhost(0); e.rig.update(dt, e.x, e.y, e.facing, spd / Math.max(1, sp), false); }
+      }
       if (e.stagger > 0) {
         e.stagger -= dt;
         b.velocity.scale(Math.pow(0.02, dt));
@@ -717,7 +742,7 @@ export class EnemyManager {
     return this.list.filter(e => !e.dead).map(e => ({
       type: e.def.type, x: Math.round(e.x), y: Math.round(e.y), hp: e.hp, maxHp: e.maxHp, dmg: e.dmg,
       gx: e.gx, gy: e.gy, swell: e.state === 'swell' ? Math.max(0, e.t) : undefined, bleed: e.bleed || undefined,
-      mut: e.mut, group: e.group,
+      mut: e.mut, group: e.group, elite: e.elite || undefined,
     }));
   }
 

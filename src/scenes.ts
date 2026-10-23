@@ -14,7 +14,11 @@ export const ART_V3_UI: [string, number, number][] = [['ui_sospecha', 32, 40], [
 export const ART_V3: [string, number, number][] = [['escupidor_cuerpo', 64, 64], ['escupidor_saco', 32, 32], ['proyectil_acido', 32, 32],
   ['chillon_cuerpo', 64, 64], ['chillon_boca', 32, 32], ['fx_onda_grito', 128, 128], ['acechador_cuerpo', 64, 64],
   ['bruto_cuerpo', 96, 96], ['bruto_placa', 96, 40], ['reptante', 64, 64], ['alcantarilla', 64, 64], ['fx_burbujas', 64, 64],
-  ['enjambre_bicho', 32, 32], ['aura_veloz', 128, 128], ['aura_blindado', 128, 128], ['aura_volatil', 128, 128], ['aura_regenerador', 128, 128]];
+  ['enjambre_bicho', 32, 32], ['aura_veloz', 128, 128], ['aura_blindado', 128, 128], ['aura_volatil', 128, 128], ['aura_regenerador', 128, 128],
+  // v3.1 (§9)
+  ['arma_ballesta', 64, 64], ['proyectil_virote', 16, 48], ['flecha_suelo', 48, 48], ['aura_elite', 128, 128], ['caseta_trapero', 128, 128],
+  // jugador nuevo (capucha, gafas, bufanda, mochila)
+  ['jugador3_brazo', 64, 64], ['jugador3_bufanda', 64, 64], ['jugador3_cabeza', 64, 64], ['jugador3_mochila', 64, 64], ['jugador3_pie', 64, 64], ['jugador3_sombra', 64, 64], ['jugador3_torso', 64, 64]];
 
 export const ART_V2: [string, number, number][] = [
   ['abominacion_cuerpo', 128, 128],

@@ -1,15 +1,22 @@
 import Phaser from 'phaser';
 import { TILE } from '../config/constants';
 import { PROJECTILE } from '../config/v2';
+import { BOWS } from '../config/v31';
 import type { Enemy } from './enemies';
 import { rayHit, Rect } from './map';
 
-export type ProjKind = 'flecha' | 'bala';
+export type ProjKind = 'flecha' | 'virote' | 'bala';
+/** Flecha y virote: proyectiles físicos que caen al suelo y se recuperan. */
+export const isPhysical = (k: ProjKind) => k !== 'bala';
 export interface Proj {
   kind: ProjKind; x: number; y: number; vx: number; vy: number; ang: number;
   travelled: number; max: number; dmg: number; crit: boolean; weapon: string;
+  /** Daño base del arma (sin tirada): para la puñalada a distancia. */
+  base: number;
   /** Disparado a propósito con el joystick derecho (sigilo: x2,5 a un desprevenido). */
   aimed: boolean;
+  /** «Clavar»: enemigos que aún puede atravesar, y los ya atravesados. */
+  pierce: number; pierced: Set<Enemy> | null;
   img: Phaser.GameObjects.Image | null; trail: Phaser.GameObjects.Graphics | null; dead: boolean;
 }
 
@@ -23,7 +30,7 @@ export interface ProjHooks {
 }
 
 /**
- * Proyectiles reales (v2). Flecha: 10 casillas/s, visible, cae un poco al final del alcance y se puede recuperar.
+ * Proyectiles reales (v2; v3.1 §9.1: flecha 7 casillas/s, virote 10). Flecha/virote: visible, cae un poco al final del alcance y se puede recuperar.
  * Bala: 40 casillas/s con trazadora brillante. Las paredes los paran.
  */
 export class Projectiles {
@@ -33,12 +40,12 @@ export class Projectiles {
   constructor(private sc: Phaser.Scene, private h: ProjHooks) {}
 
   fire(kind: ProjKind, x: number, y: number, ang: number, rangePx: number, dmg: number, crit: boolean, weapon: string, aimed = false) {
-    const sp = (kind === 'flecha' ? PROJECTILE.arrowTilesPerSec : PROJECTILE.bulletTilesPerSec) * TILE;
-    const p: Proj = { kind, x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, ang, travelled: 0, max: rangePx, dmg, crit, weapon, aimed, img: null, trail: null, dead: false };
-    const key = kind === 'flecha' ? 'proyectil_flecha' : 'proyectil_bala';
+    const sp = (kind === 'flecha' ? BOWS.arrowTilesPerSec : kind === 'virote' ? BOWS.boltTilesPerSec : PROJECTILE.bulletTilesPerSec) * TILE;
+    const p: Proj = { kind, x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, ang, travelled: 0, max: rangePx, dmg, crit, weapon, base: dmg, aimed, pierce: 0, pierced: null, img: null, trail: null, dead: false };
+    const key = kind === 'flecha' ? 'proyectil_flecha' : kind === 'virote' ? 'proyectil_virote' : 'proyectil_bala';
     if (this.sc.textures.exists(key)) {
       p.img = this.sc.add.image(x, y, key).setRotation(ang + Math.PI / 2).setDepth(12.5);
-      if (kind === 'flecha') p.img.setDisplaySize(9, 36); else p.img.setDisplaySize(6, 30).setBlendMode(Phaser.BlendModes.ADD);
+      if (kind === 'flecha') p.img.setDisplaySize(9, 36); else if (kind === 'virote') p.img.setDisplaySize(10, 30); else p.img.setDisplaySize(6, 30).setBlendMode(Phaser.BlendModes.ADD);
     } else if (kind === 'flecha') p.img = this.sc.add.image(x, y, 'flecha').setDisplaySize(TILE * 0.8, TILE * 0.8).setRotation(ang + Math.PI / 4).setDepth(12.5);
     if (kind === 'bala') p.trail = this.sc.add.graphics().setDepth(12.4).setBlendMode(Phaser.BlendModes.ADD);
     this.list.push(p);
@@ -59,7 +66,7 @@ export class Projectiles {
       let best: Enemy | null = null, bt = 1;
       const mx = (p.x + x2) / 2, my = (p.y + y2) / 2;
       for (const e of this.h.enemies()) {
-        if (!e.targetable) continue;
+        if (!e.targetable || p.pierced?.has(e)) continue;
         const r = e.def.size * 0.38;
         if (Math.abs(e.x - mx) > step / 2 + r || Math.abs(e.y - my) > step / 2 + r) continue;
         const t = segCircle(p.x, p.y, x2, y2, e.x, e.y, r);
@@ -69,18 +76,27 @@ export class Projectiles {
       if (wt < 1 && (!best || wt < bt)) {
         const hx = p.x + (x2 - p.x) * wt - ux * 4, hy = p.y + (y2 - p.y) * wt - uy * 4;
         this.h.onWall(p, hx, hy);
-        if (p.kind === 'flecha') this.h.onLand(p, hx, hy);
+        if (isPhysical(p.kind)) this.h.onLand(p, hx, hy);
         this.kill(p); continue;
       }
       if (best) {
+        const ox = p.x, oy = p.y;
         p.x += (x2 - p.x) * bt; p.y += (y2 - p.y) * bt;
+        if (p.pierce > 0) {
+          // «Clavar»: atraviesa y sigue volando
+          p.pierce--; (p.pierced ??= new Set()).add(best);
+          this.h.onHit(p, best);
+          p.travelled += Math.hypot(p.x - ox, p.y - oy);
+          p.img?.setPosition(p.x, p.y);
+          continue;
+        }
         this.h.onHit(p, best);
         this.kill(p); continue;
       }
       p.x = x2; p.y = y2; p.travelled += step;
       if (p.img) {
         p.img.setPosition(p.x, p.y);
-        if (p.kind === 'flecha') {
+        if (isPhysical(p.kind)) {
           const k = Phaser.Math.Clamp((p.travelled / p.max - 0.8) / 0.2, 0, 1);
           p.img.setScale(p.img.scaleX * (1 - 0.04 * k * dt * 60), p.img.scaleY * (1 - 0.04 * k * dt * 60));
           p.img.y += k * 6;
@@ -91,7 +107,7 @@ export class Projectiles {
         p.trail.clear().lineStyle(4, 0xffb347, 0.35).lineBetween(p.x - ux * L, p.y - uy * L, p.x, p.y).lineStyle(2, 0xfff2a8, 0.95).lineBetween(p.x - ux * L * 0.6, p.y - uy * L * 0.6, p.x, p.y);
       }
       if (p.travelled >= p.max - 0.5) {
-        if (p.kind === 'flecha') this.h.onLand(p, p.x, p.y + 6);
+        if (isPhysical(p.kind)) this.h.onLand(p, p.x, p.y + 6);
         this.kill(p);
       }
     }

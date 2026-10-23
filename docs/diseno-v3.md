@@ -107,3 +107,36 @@ Mutaciones (a partir del min 10): cualquier enemigo puede salir mutado con un au
    - Máximo 5 cargas de cada tipo. Las vendas quitan el sangrado y el botiquín quita ambos.
    - Al recibir daño por estado: un destello leve en la barra de vida, sin hit-stop.
 8. Tiempo de aplicar curaciones: venda 1,5 s y botiquín 2,5 s. Mientras aplicas te mueves al 50 %, no atacas y se ve un anillo de progreso sobre el jugador. Si recibes un golpe o sueltas el botón, se cancela sin gastar el objeto. Al terminar se aplica la curación de siempre (venda +30 en 2 s, botiquín +70 en 4 s) y se quitan los estados.
+
+## 9. Cambios tras la prueba de la v2.1 (Pablo)
+1. Arco y ballesta silenciosos:
+   - Disparar no hace ruido. Al caer, la flecha hace un ruido de 1,5 casillas donde impacta, que sirve para distraer (el enemigo va a investigar ahí).
+   - Velocidad: flecha de arco 7 casillas/s (antes 10). Virote de ballesta 10 casillas/s.
+   - Ballesta: 24 de daño, 0,4 ataques/s, alcance 8, peso 3, munición propia (virotes). Habilidad «Clavar»: el siguiente virote atraviesa a 2 enemigos.
+   - Recuperar munición: las flechas y virotes que fallan se quedan en el suelo (brillo tenue) hasta el final de la incursión. Si aciertan, el 60 % cae junto al enemigo al morir. Se recogen al pasar por encima, sin anillo de saqueo.
+2. Daño variable y críticos:
+   - Cada golpe hace entre el 72 % y el 104 % del daño indicado (25 pasa a ser 18-26). Con los críticos, la media queda igual que antes.
+   - Crítico: +50 % de daño. Probabilidad del 25 % en las armas del jugador y del 10 % en los enemigos (con un 25 % para los enemigos, los picos de daño serían demasiado frecuentes con 100 de vida).
+   - Sangrado, veneno, quemadura, ácido y la niebla nunca hacen crítico.
+   - Puñalada por la espalda: sustituye el ×1,5 por ×2,5 y siempre es crítica.
+   - Número normal blanco. Número crítico amarillo anaranjado (#ffb02e), 1,35 veces más grande, con «!» y un pequeño rebote. Daño recibido en rojo; el crítico recibido además hace temblar la pantalla.
+3. Memoria de visión al girarte:
+   - Lo que sale del cono se queda visible 0,6 s y se va apagando.
+   - Para que girar como una peonza no sirva de truco, durante esos 0,6 s los enemigos se quedan como silueta fantasma en la última posición donde los viste: no se mueven ni muestran ataques nuevos. Solo ves lo que había, no lo que pasa ahora.
+   - Además, el giro de la mirada tiene un límite de 540°/s.
+4. Comerciante de incursión, «el Trapero»:
+   - Caseta pequeña. Aparece en el 50 % de las incursiones y está oculto hasta que lo encuentras, como las extracciones.
+   - Paga en vales, no en chapas. Los vales solo valen en su tienda y se pierden al salir de la incursión (idea de Dott). Compra materiales al 70 % de su valor en vales, y solo los saqueados en esa incursión.
+   - Se pueden combinar vales y chapas para comprar.
+   - Vende 3 objetos: uno Reforzado y uno Militar o mejor, con un 20 % de descuento. Una unidad de cada uno.
+   - Cierra en el minuto 10 o si hay un enemigo en alerta a menos de 4 casillas. No es zona segura.
+5. Enemigos de élite:
+   - El 5 % de los enemigos son de élite (nunca la Abominación ni los bichos del Enjambre).
+   - Vida ×2, daño ×2 y algo más de tamaño (×1,1).
+   - Llevan un contorno y brillo dorado tenue con partículas (aura_elite).
+   - Siempre sueltan 2 objetos, y uno es como mínimo una rareza por encima de la normal.
+   - Límite: 3 élites vivos a la vez y unos 6 por incursión.
+- Reputación de los vendedores (corrección de Dott):
+   - Vender no da reputación.
+   - La reputación por comprar tiene un tope por cada renovación de tienda.
+   - Los niveles 3 y 4 exigen además una misión de ese vendedor, para que no se puedan comprar solo con chapas.

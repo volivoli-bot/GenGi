@@ -1,3 +1,9 @@
+import * as V31CFG from './config/v31';
+import { DMG_LOG, rollDamage, meanMult } from './game/damage';
+import { genTrapero, valesFor, traperoPrice } from './raid/trapero';
+import { rollEliteDrops } from './game/loot';
+import { ENEMIES } from './data/enemies';
+import { weaponStats } from './game/inventory';
 import Phaser from 'phaser';
 import { ITEMS } from './data/items';
 import { EnemyType } from './data/enemies';
@@ -108,6 +114,9 @@ export class App implements RaidHost {
   overUi(x: number, y: number) { return this.inv.contains(x, y); }
   refreshInventory() { this.inv.refresh(); }
   seenExits(mapId: string) { return [...(this.save.data.seenExits[mapId] ?? [])]; }
+  /** v3.1: el Trapero acepta chapas del refugio (se descuentan y se guarda en el acto). */
+  bankChapas() { return this.save.data.chapas; }
+  spendBankChapas(n: number) { const d = this.save.data; if (d.chapas < n) return false; d.chapas -= Math.ceil(n); this.save.save(); return true; }
   markExitSeen(mapId: string, loc: number) {
     const l = (this.save.data.seenExits[mapId] ??= []);
     if (!l.includes(loc)) { l.push(loc); this.save.save(); }
@@ -118,6 +127,8 @@ export class App implements RaidHost {
     const snap = d.activeRaid;
     if (!snap) return;
     const lo = snap.loadout;
+    // v3.1: lo saqueado deja de ser «de esta incursión» (el Trapero ya no lo compraría) y los vales se pierden con el snapshot
+    for (const it of [lo.arma, lo.reserva, lo.torso, lo.cabeza, lo.espalda, lo.bolsillo, ...(lo.bolsilloExtra ?? []), ...lo.mochila]) if (it) delete it.raid;
     const kept: string[] = [];
     let valueOut = 0;
     if (result === 'extraido') {
@@ -193,6 +204,8 @@ export class App implements RaidHost {
   // ---------- Ganchos de depuración para QA (?debug=1) ----------
   installDebug() {
     const app = this;
+    // QA de versiones anteriores: ?noelite desactiva los élites (5 % por aparición) para que sus medidas no varíen
+    if (new URLSearchParams(location.search).has('noelite')) V31CFG.ELITE.chance = 0;
     const api = {
       help: () => Object.keys(api).join(', '),
       state: () => JSON.parse(JSON.stringify(app.save.data)),
@@ -205,6 +218,19 @@ export class App implements RaidHost {
       /** Comprueba en n semillas que siempre hay una salida a pie o generador. */
       exitCheck: (n = 200) => { let bad = 0; const seen: Record<string, number> = {}; for (let i = 0; i < n; i++) { const m = generateMap(i * 7919 + 1); const ex = chooseExits(seeded(i + 99), m); ex.forEach(e => (seen[e.type] = (seen[e.type] ?? 0) + 1)); if (ex.length !== 2 || !ex.some(e => e.type === 'pie' || e.type === 'generador')) bad++; } return { bad, seen }; },
       raid: () => app.raidScene(),
+      /** v3.1: configuración mutable (QA) y diagnóstico. */
+      cfg31: V31CFG,
+      dmgLog: DMG_LOG,
+      /** QA v3.1: n tiradas de daño (base, lado). */
+      rollDmg: (base: number, side: 'player' | 'enemy', n = 10000) => { const out: { dmg: number; crit: boolean }[] = []; for (let i = 0; i < n; i++) out.push(rollDamage(base, side)); DMG_LOG[side].length = 0; return { out, mean: meanMult(side) }; },
+      eliteDrops: (n = 1000, seed = 7) => { const rng = seeded(seed); const out: { a: string; ar: string; b: string; br: string }[] = []; for (let i = 0; i < n; i++) { const [x, y] = rollEliteDrops(rng); out.push({ a: x.def, ar: x.rarity, b: y.def, br: y.rarity }); } return out; },
+      traperoRate: (n = 1000) => { let c = 0; for (let i = 0; i < n; i++) if (genTrapero(seeded(1000 + i), [], { x: 0, y: 0 }, [])) c++; return c / n; },
+      valesFor: (id: string, qty = 1) => valesFor(makeItem(id, 'comun', qty)),
+      traperoPrice: (id: string, rarity: string) => traperoPrice(makeItem(id, rarity as never, 1)),
+      defs: () => ({ enemies: JSON.parse(JSON.stringify(ENEMIES)), weapons: Object.fromEntries(Object.entries(ITEMS).filter(([, d]) => d.weapon).map(([id]) => [id, weaponStats(makeItem(id, 'comun', 1))])), items: JSON.parse(JSON.stringify(ITEMS)) }),
+      /** Misiones completadas con un vendedor (reputación 3-4). */
+      missions: (v: string, n: number) => { (app.save.data.vendors as Record<string, { missionsDone: number }>)[v].missionsDone = n; refreshAll(app.save.data); app.save.save(); app.hub.render(); },
+      v31: () => { const s = app.raidScene(); if (!s) return null; return { ...s.v31s, elites: s.snap.elites ?? 0, eliteAlive: s.enemies.eliteAlive(), ghostFrames: s.enemies.ghostFrames, linger: s.vision?.lingerCount() ?? 0, lingerStats: s.vision?.lingerStats, viewFacing: s.viewFacing, facing: s.facing, groundArrows: s.snap.arrows, trapero: s.snap.trapero ?? null }; },
       minute: (m: number) => { const s = app.raidScene(); if (s) s.snap.elapsed = m * 60; return s?.snap.elapsed; },
       give: (id: string, rarity: Rarity = 'comun', qty = 1) => {
         if (!ITEMS[id]) return 'objetos: ' + Object.keys(ITEMS).join(', ');
@@ -217,7 +243,9 @@ export class App implements RaidHost {
       god: (on = true) => { const s = app.raidScene(); if (s) s.god = on; },
       hurt: (n: number) => app.raidScene()?.damagePlayer(n, 'Depuración'),
       kill: () => app.raidScene()?.damagePlayer(99999, 'Depuración', false),
-      spawn: (type: EnemyType = 'errante', n = 1) => { const s = app.raidScene(); if (!s) return; for (let i = 0; i < n; i++) s.spawnAt(type, s.player.x + (Math.random() - 0.5) * TILE * 8, s.player.y - TILE * 5); },
+      spawn: (type: EnemyType = 'errante', n = 1) => { const s = app.raidScene(); if (!s) return; for (let i = 0; i < n; i++) s.spawnAt(type, s.player.x + (Math.random() - 0.5) * TILE * 8, s.player.y - TILE * 5, undefined, false); },
+      /** v3.1: fuerza un élite (y devuelve el enemigo). */
+      elite: (type: EnemyType = 'errante', dx = 0, dy = -5) => { const s = app.raidScene(); if (!s) return null; return s.spawnAt(type, s.player.x + dx * TILE, s.player.y + dy * TILE, undefined, true); },
       exits: () => app.raidScene()?.snap.exits,
       tpExit: (i = 0) => { const s = app.raidScene(); const e = s?.snap.exits[i]; if (s && e) s.player.setPosition(e.x, e.y); },
       tpBox: () => { const s = app.raidScene(); if (!s) return; const c = s.snap.containers.filter(c => c.items.length).sort((a, b) => Math.hypot(a.x - s.player.x, a.y - s.player.y) - Math.hypot(b.x - s.player.x, b.y - s.player.y))[0]; if (c) s.player.setPosition(c.x + TILE, c.y); },

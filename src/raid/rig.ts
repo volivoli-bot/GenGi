@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { LINGER, PLAYER_ART } from '../config/v31';
 
 /**
  * Muñeco por piezas (arte v2 de Basu, public/art/v2, ver animacion.json) que sigue a un cuerpo físico invisible.
@@ -85,6 +86,17 @@ export class Rig {
       // el arma va por debajo del torso para que la empuñadura quede "en la mano"
       if (this.arma) this.c.moveBelow(this.arma, this.torso);
       this.cabeza = img(`${b}_cabeza`);
+      // jugador nuevo de Basu: bufanda (pivote 32,20) y mochila por detrás del torso; brazos y arma por encima del torso
+      if (tex(`${b}_bufanda`) && tex(`${b}_mochila`)) {
+        this.bufanda = img(`${b}_bufanda`, 0.5, 20 / 64);
+        this.mochila = img(`${b}_mochila`);
+        this.c.moveBelow(this.bufanda, this.torso); this.c.moveBelow(this.mochila, this.torso); this.c.moveAbove(this.mochila, this.bufanda);
+        this.c.moveAbove(this.brazoL!, this.torso); this.c.moveAbove(this.brazoR!, this.brazoL!);
+        if (this.arma) this.c.moveAbove(this.arma, this.brazoR!);
+        this.c.bringToTop(this.cabeza);
+        this.goggle = sc.add.circle(0, 0, 7, 0xff8a3c, 0.9).setBlendMode(Phaser.BlendModes.ADD).setVisible(false);
+        this.c.add(this.goggle);
+      }
       if (tex('fx_fogonazo')) { this.fogonazo = img('fx_fogonazo', 0.5, 0.5, 26, 26).setVisible(false); }
     } else if (this.kind === 'hinchado') {
       this.baseScale = o.size / 72;
@@ -125,6 +137,27 @@ export class Rig {
     this.aura.setTexture(key).setDisplaySize(d, d);
   }
 
+  /** v3.1 §9.5: élite → contorno y brillo dorado tenue con partículas (aura_elite, distinta de las mutaciones) y ×1,1 de tamaño. */
+  private eliteAura?: Phaser.GameObjects.Image;
+  setElite(scale: number) {
+    if (this.eliteAura || !this.sc.textures.exists('aura_elite')) return;
+    const d = (this.kind === 'humano' ? 64 * 1.7 : this.box * 1.5) * 1.12;
+    this.eliteAura = this.sc.add.image(0, 0, 'aura_elite').setDisplaySize(d, d).setAlpha(0.85);
+    this.c.addAt(this.eliteAura, 0);
+    this.sc.tweens.add({ targets: this.eliteAura, alpha: 0.55, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    this.baseScale *= scale; this.c.setScale(this.baseScale * this.pump);
+  }
+  get isElite() { return !!this.eliteAura; }
+
+  /** v3.1 §9.3: silueta fantasma (quieta en la última posición vista, pálida, opacidad `a`); 0 = normal. */
+  ghostOn = false;
+  setGhost(a: number) {
+    if (a > 0) {
+      if (!this.ghostOn) { this.ghostOn = true; for (const p of this.parts) if (p !== this.fogonazo) p.setTintFill(LINGER.ghostTint); this.fogonazo?.setVisible(false); }
+      this.c.setVisible(true).setAlpha(a);
+    } else if (this.ghostOn) { this.ghostOn = false; this.c.setAlpha(1); this.applyTint(); }
+  }
+
   setWeapon(id: string | null | undefined) {
     if (!this.arma) return;
     const k = id ? `arma_${id}` : '';
@@ -132,11 +165,30 @@ export class Rig {
     else this.arma.setVisible(false);
   }
 
+  private bufanda?: Phaser.GameObjects.Image;
+  private mochila?: Phaser.GameObjects.Image;
+  private goggle?: Phaser.GameObjects.Arc;
+  /** QA: destellos de gafas. */
+  goggleFlashes = 0;
+  /** Gafas: brillo de 1 fotograma (disparo o crítico). Solo con el jugador nuevo. */
+  flashGoggles() {
+    if (!this.goggle) return;
+    this.goggleFlashes++;
+    this.goggle.setVisible(true);
+    this.sc.time.delayedCall(PLAYER_ART.goggleFlashMs, () => this.goggle?.setVisible(false));
+  }
+  get hasScarf() { return !!this.bufanda; }
+  /** Jugador en sigilo: la bufanda se queda quieta. */
+  sneaking = false;
+  scarfAngle = 0;
+  private scarfAmp = 0;
+  private lastDt = 0;
+
   /** Golpe cuerpo a cuerpo: preparación -70° (0,12 s), golpe +80° (0,08 s), vuelta (0,15 s). */
   swing() { this.swingT = 0; }
   private recoilPx = 4;
   /** Retroceso del arma (px); en iOS más fuerte como contrapartida visual de la vibración. */
-  recoil(px = 4) { this.recoilPx = px; this.recoilT = 0.08; if (this.fogonazo) { this.fogonazo.setVisible(true); this.sc.time.delayedCall(34, () => this.fogonazo?.setVisible(false)); } }
+  recoil(px = 4) { this.flashGoggles(); this.recoilPx = px; this.recoilT = 0.08; if (this.fogonazo) { this.fogonazo.setVisible(true); this.sc.time.delayedCall(34, () => this.fogonazo?.setVisible(false)); } }
   /** Recibir golpe: destello blanco 1 fotograma, desplazamiento 3-8 px según la fuerza, giro ±10°. */
   hit(ang: number, force01: number) {
     this.flashFrames = 2;
@@ -147,7 +199,7 @@ export class Rig {
   setTint(c: number | null) { this.tintCol = c; this.applyTint(); }
   private applyTint() {
     for (const p of this.parts) {
-      if (p === this.fogonazo) continue;
+      if (p === this.fogonazo || p === (this.goggle as unknown)) continue;
       if (this.flashFrames > 0) p.setTintFill(0xffffff);
       else if (this.tintCol !== null) p.setTint(this.tintCol);
       else p.clearTint();
@@ -166,7 +218,7 @@ export class Rig {
     if (this.dead) return;
     this.setVisible(visible);
     if (!visible) return;
-    this.phase += dt;
+    this.phase += dt; this.lastDt = dt;
     if (speed01 > 0.05) this.walk += dt * 2.5 * Math.PI * 2 * Math.min(1.4, speed01); else this.walk *= 0.9;
     if (this.swingT >= 0) { this.swingT += dt; if (this.swingT > 0.35) this.swingT = -1; }
     if (this.recoilT > 0) this.recoilT -= dt;
@@ -187,6 +239,18 @@ export class Rig {
       const lean = base === 'corredor' ? -3 : 0;
       this.torso!.setScale((64 / this.torso!.width) * breathe, (64 / this.torso!.height) * breathe * (1 - this.crouch * 0.15)).setRotation(moving ? Phaser.Math.DegToRad(4) * s : 0).setY(lean);
       this.cabeza!.setPosition(HEAD.x, HEAD.y + lean * 1.4 + (moving ? Math.abs(s) * -1 : 0) + this.crouch * 3);
+      if (this.bufanda) {
+        // bufanda: ±8° a 1,5 ciclos/s, más fuerte al correr, quieta en sigilo (agachado)
+        const P = PLAYER_ART, target = Phaser.Math.DegToRad(P.scarfDeg) * (1 + (P.scarfRunBoost - 1) * Math.min(1, speed01)) * (this.sneaking ? 0 : 1 - Math.min(1, this.crouch));
+        // la amplitud cambia suave (no salta al entrar/salir de sigilo)
+        this.scarfAmp += (target - this.scarfAmp) * Math.min(1, this.lastDt * P.scarfEase);
+        const amp = this.scarfAmp;
+        this.scarfAngle = amp * Math.sin(this.phase * Math.PI * 2 * P.scarfHz * (moving ? 1.4 : 1));
+        this.bufanda.setPosition(-4, -12 + 10).setRotation(this.scarfAngle);
+        // mochila: 1 px al andar, a contrafase del torso
+        this.mochila!.setPosition(0, moving ? -Math.sin(this.walk + Math.PI / 2) * P.packBobPx : 0);
+        this.goggle!.setPosition(this.cabeza!.x, this.cabeza!.y - 7);
+      }
       this.sombra!.setPosition(0, 2);
       // brazos
       let rl = Phaser.Math.DegToRad(-15), rr = Phaser.Math.DegToRad(15);
@@ -242,6 +306,7 @@ export class Rig {
 
   /** Muerte: cae (escala 0,9, gira 70°, brazos abiertos) y se queda como cadáver con alfa 0,85. */
   die(onDone?: () => void) {
+    this.setGhost(0);
     this.dead = true;
     this.setVisible(true);
     this.tintCol = null; this.flashFrames = 0; this.applyTint();

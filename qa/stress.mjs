@@ -3,7 +3,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const b=await puppeteer.launch({executablePath:'/usr/bin/google-chrome',headless:'new',args:['--no-sandbox','--use-gl=swiftshader','--enable-unsafe-swiftshader']});
 const p=await b.newPage(); await p.setViewport({width:390,height:844,isMobile:true,hasTouch:true});
 const errs=[]; p.on('pageerror',e=>errs.push(e.message));
-await p.goto('http://localhost:4173/?debug=1'); await p.waitForFunction(()=>window.gengi);
+await p.goto('http://localhost:4173/?debug=1&noelite'); await p.waitForFunction(()=>window.gengi);
 await p.evaluate(()=>gengi.reset()).catch(()=>{}); await sleep(600); await p.waitForFunction(()=>window.gengi);
 const E=(f,...a)=>p.evaluate(f,...a);
 // novato: sin god, bate, ver cuánto sobrevive a minuto 0 en 25 s quieto
