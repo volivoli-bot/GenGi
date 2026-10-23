@@ -3,14 +3,14 @@ const URL='http://localhost:4173/?debug=1';
 const res=[]; const ok=(name,cond,info='')=>{res.push(`${cond?'PASS':'FAIL'} ${name} ${info}`);};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const b=await puppeteer.launch({executablePath:'/usr/bin/google-chrome',headless:'new',args:['--no-sandbox','--use-gl=swiftshader','--enable-unsafe-swiftshader','--window-size=390,844']});
-const p=await b.newPage(); await p.setViewport({width:390,height:844,isMobile:true,hasTouch:true});
+let p=await b.newPage(); await p.setViewport({width:390,height:844,isMobile:true,hasTouch:true});
 const errs=[]; p.on('pageerror',e=>errs.push(e.message)); p.on('console',m=>{if(m.type()==='error')errs.push(m.text())});
 await p.goto(URL); await p.waitForFunction(()=>window.gengi,{timeout:15000});
 const E=(f,...a)=>p.evaluate(f,...a);
 await E(()=>gengi.reset()).catch(()=>{}); await sleep(500); await p.waitForFunction(()=>window.gengi);
 // legacy migration
 await E(()=>gengi.loadLegacy()).catch(()=>{}); await sleep(800); await p.waitForFunction(()=>window.gengi);
-let st=await E(()=>gengi.state()); ok('1.5 guardado antiguo migra', st.saveVersion===1, `chapas=${st.chapas} alijo=${st.stash.length}`);
+let st=await E(()=>gengi.state()); ok('1.5 guardado antiguo migra', st.saveVersion===2 && typeof st.seenExits==='object', `chapas=${st.chapas} alijo=${st.stash.length}`);
 // free gear unsellable
 ok('2.1 equipo gratis presente', st.loadout.arma?.free && st.loadout.torso?.free);
 // export/import
@@ -39,7 +39,7 @@ st=await E(()=>gengi.state()); ok('equipo sale del refugio al entrar (1 escritur
   const joyDuring=await E(()=>gengi.raid().joy.pointerId); await p.touchscreen.touchEnd(); await sleep(100);
   // 2) se fuerza el panel encima de los botones de habilidad y se toca justo sobre uno de ellos
   const btn=await E(()=>{const h=gengi.raid().hud;const b=h.abilities[0].bg;const q=h.quick.bg;const el=document.querySelector('.sheet');Object.assign(el.style,{top:(q.y-60)+'px',height:'200px'});return {x:b.x,y:b.y,qx:q.x,qy:q.y}});
-  await p.touchscreen.tap(btn.x, btn.y); await sleep(100); await p.touchscreen.tap(btn.qx, btn.qy); await sleep(150);
+  await p.touchscreen.tap(btn.x, btn.y); await sleep(100); await E(()=>document.querySelector('.ctx')?.remove()); /* v2: el toque abre el menú contextual del objeto; se cierra para que el 2º toque pruebe el botón de debajo */ await p.touchscreen.tap(btn.qx, btn.qy); await sleep(150);
   const s1=await snapState(); const stillOpen=await E(()=>!!document.querySelector('.sheet'));
   // control positivo: sin panel, el mismo toque SÍ usa el consumible rápido (el test es sensible)
   await E(()=>document.querySelector('.sheet .btn.x')?.click()); await sleep(100);
@@ -75,7 +75,8 @@ await E(()=>{Object.defineProperty(document,'visibilityState',{configurable:true
 const elHidden=await E(()=>gengi.raid().snap.elapsed); ls=await E(()=>JSON.parse(localStorage.getItem('gengi.save')).activeRaid);
 ok('1.1 guardado en visibilitychange=hidden', Math.abs(ls.elapsed-elHidden)<0.001 && await E(()=>gengi.raid().paused), `${ls.elapsed} vs ${elHidden}`);
 // reload -> resume exactly
-await p.reload(); await p.waitForFunction(()=>window.gengi&&gengi.raid()&&gengi.raid().snap,{timeout:15000}); await sleep(800);
+// recarga = abrir la app de nuevo (pestaña nueva, mismo almacenamiento). Chrome headless deja la pestaña congelada como 'hidden' sin rAF tras Page.setWebLifecycleState, así que no se reutiliza.
+{const old=p; p=await b.newPage(); await p.setViewport({width:390,height:844,isMobile:true,hasTouch:true}); p.on('pageerror',e=>errs.push(e.message)); p.on('console',m=>{if(m.type()==='error')errs.push(m.text())}); await old.close(); await p.goto(URL);} {let okr=false; const rt0=Date.now(); for(let i=0;i<80&&!okr;i++){await sleep(250); okr=await E(()=>!!(window.gengi&&gengi.raid()&&gengi.raid().snap)).catch(()=>false);} if(!okr){console.log('RELOAD FAIL',errs);process.exit(1);} } await sleep(800);
 const r2=await E(()=>({el:gengi.raid().snap.elapsed,x:gengi.raid().player.x,paused:gengi.raid().paused}));
 ok('1.1 retoma en el punto exacto tras recarga', Math.abs(r2.el-elHidden)<0.001 && Math.round(r2.x)===Math.round(ls.player.x) && r2.paused, JSON.stringify(r2));
 ok('1.2 sin rollback: recargar no reinicia la raid', r2.el>100);

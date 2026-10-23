@@ -33,6 +33,7 @@ const TABLE: { id: string; w: number; qty?: [number, number] }[] = [
   { id: 'chapas', w: 22, qty: [4, 20] },
   { id: 'botiquin', w: 6 },
   { id: 'municion', w: 5, qty: [4, 10] },
+  { id: 'flechas', w: 5, qty: [3, 8] },
   { id: 'bengala', w: 4 },
   { id: 'bate', w: 6 },
   { id: 'machete', w: 6 },
@@ -67,6 +68,8 @@ export function rollContainer(rng: Rng, kind: ContainerKind, bonus: number): Ite
   const n = kind === 'caja' ? 1 + Math.floor(rng() * 2) : kind === 'cerrada' ? 2 + Math.floor(rng() * 3) : 1;
   const b = Math.min(1, bonus + (kind === 'cerrada' ? 0.35 : 0));
   for (let i = 0; i < n; i++) out.push(rollItem(rng, b));
+  // un arco encontrado viene con unas flechas
+  if (out.some(i => i.def === 'arco')) out.push(makeItem('flechas', 'comun', 6));
   return out;
 }
 

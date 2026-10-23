@@ -7,11 +7,11 @@ import { addToList, canPocket, canSell, freeItem, ItemInst, makeItem, sellPrice,
  * Operaciones del refugio sobre el guardado. Cada operación localiza el objeto por uid en UN solo
  * sitio, lo quita y lo pone en el destino (o lo devuelve si no cabe): no hay forma de duplicar.
  */
-export type Place = 'stash' | 'overflow' | 'mochila' | 'arma' | 'torso' | 'cabeza' | 'bolsillo';
+export type Place = 'stash' | 'overflow' | 'mochila' | 'arma' | 'torso' | 'cabeza' | 'bolsillo' | 'reserva';
 
 export function locate(d: SaveData, uid: string): { it: ItemInst; place: Place } | null {
   const lo = d.loadout;
-  for (const k of ['arma', 'torso', 'cabeza', 'bolsillo'] as const) if (lo[k]?.uid === uid) return { it: lo[k]!, place: k };
+  for (const k of ['arma', 'torso', 'cabeza', 'bolsillo', 'reserva'] as const) if (lo[k]?.uid === uid) return { it: lo[k]!, place: k };
   for (const [place, list] of [['stash', d.stash], ['overflow', d.overflow], ['mochila', lo.mochila]] as const) {
     const it = list.find(i => i.uid === uid);
     if (it) return { it, place };
@@ -63,8 +63,11 @@ export function equip(d: SaveData, uid: string): OpResult {
   const f0 = locate(d, uid); if (!f0) return fail('No encontrado');
   const slot = slotOf(f0.it); if (!slot) return fail('No se puede equipar');
   const f = take(d, uid)!;
-  const prev = d.loadout[slot];
+  let prev = d.loadout[slot];
   d.loadout[slot] = f.it;
+  // v2: el arma anterior pasa a la ranura de reserva (y la reserva anterior va a donde estaba la nueva)
+  if (slot === 'arma' && prev && !prev.free && f.place !== 'reserva') { const r = d.loadout.reserva ?? null; d.loadout.reserva = prev; prev = r; }
+  else if (slot === 'arma' && f.place === 'reserva' && prev && !prev.free) { d.loadout.reserva = prev; prev = null; }
   if (prev && !prev.free) {
     // el anterior va a donde estaba el nuevo (o al alijo)
     const dest = f.place === 'mochila' ? d.loadout.mochila : d.stash;
@@ -109,6 +112,7 @@ export const SHOP: ShopEntry[] = [
   { id: 'bengala', qty: 1, price: 90 },
   { id: 'machete', qty: 1, price: 60 },
   { id: 'arco', qty: 1, price: 95 },
+  { id: 'flechas', qty: 12, price: 30 },
   { id: 'pistola', qty: 1, price: 150 },
   { id: 'tablas', qty: 1, price: 55 },
 ];
@@ -128,6 +132,7 @@ export function buy(d: SaveData, e: ShopEntry): OpResult {
 
 /** Equipo gratis siempre: si no tienes arma o torso, se te da bate Común / ropa invendibles. */
 export function ensureFreeGear(d: SaveData) {
+  if (d.loadout.reserva === undefined) d.loadout.reserva = null;
   if (!d.loadout.arma) d.loadout.arma = freeItem('bate');
   if (!d.loadout.torso) d.loadout.torso = freeItem('ropa');
 }

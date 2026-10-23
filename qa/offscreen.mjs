@@ -10,8 +10,9 @@ await p.evaluate(()=>gengi.reset()).catch(()=>{}); await sleep(600); await p.wai
 const E=(f,...a)=>p.evaluate(f,...a);
 await E(()=>gengi.start()); await sleep(1200);
 // escenario controlado: sin oleadas, sin Corredor de castigo, sin paredes para la línea de visión
-await E(()=>{const s=gengi.raid();gengi.god(true);gengi.clearEnemies();s.snap.stream=null;s.snap.spawnTimer=-1e9;
-  s.walls.length=0;
+// v2: la visión (cono + niebla) se prueba en qa/v2.mjs; aquí se aísla el criterio «en pantalla» con la visión apagada
+await E(()=>{const s=gengi.raid();gengi.god(true);gengi.vision(false);gengi.clearEnemies();s.snap.stream=null;s.snap.spawnTimer=-1e9;
+  s.walls.length=0;s.wallIndex.rebuild(s.walls);
   window.__pins=new Map();
   s.events.on('update',()=>{ s.idleT=0; for(const [e,pos] of window.__pins){ if(!e.dead){ e.body.reset(s.player.x+pos.dx,s.player.y+pos.dy); } } });
   window.__view=()=>{const v=s.cameras.main.worldView;return {w:v.width/48,h:v.height/48,zoom:s.cameras.main.zoom}}; });

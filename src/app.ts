@@ -96,6 +96,11 @@ export class App implements RaidHost {
   isInventoryOpen() { return this.inv.isOpen; }
   overUi(x: number, y: number) { return this.inv.contains(x, y); }
   refreshInventory() { this.inv.refresh(); }
+  seenExits(mapId: string) { return [...(this.save.data.seenExits[mapId] ?? [])]; }
+  markExitSeen(mapId: string, loc: number) {
+    const l = (this.save.data.seenExits[mapId] ??= []);
+    if (!l.includes(loc)) { l.push(loc); this.save.save(); }
+  }
 
   endRaid(result: 'extraido' | 'muerto', detail: { cause?: string; exit?: ExitState }) {
     const d = this.save.data;
@@ -109,11 +114,11 @@ export class App implements RaidHost {
       // la mochila pasa al alijo; si no cabe, al excedente (nunca se pierde nada)
       for (const it of lo.mochila) { const left = addToList(d.stash, it, STASH_SLOTS); if (left) d.overflow.push(left); }
       if (lo.bolsillo?.def === 'chapas') { d.chapas += lo.bolsillo.qty; lo.bolsillo = null; }
-      d.loadout = { arma: lo.arma, torso: lo.torso, cabeza: lo.cabeza, bolsillo: lo.bolsillo, mochila: [] };
+      d.loadout = { arma: lo.arma, torso: lo.torso, cabeza: lo.cabeza, bolsillo: lo.bolsillo, reserva: lo.reserva ?? null, mochila: [] };
       cashChapas(d);
       d.stats.extracted++;
     } else {
-      // muerte: se pierde todo salvo el bolsillo seguro
+      // muerte: se pierde todo salvo el bolsillo seguro (también el arma de reserva)
       d.loadout = { ...emptyLoadout(), bolsillo: lo.bolsillo };
       if (lo.bolsillo) { kept.push(itemLabel(lo.bolsillo)); valueOut = gearValue(d.loadout); }
       d.stats.deaths++;
@@ -202,6 +207,17 @@ export class App implements RaidHost {
       pause: () => app.raidScene()?.setPaused(true, 'usuario'),
       resume: () => app.raidScene()?.setPaused(false, 'usuario'),
       inventory: () => app.openInventory(),
+      // ---- v2 ----
+      vision: (on = true) => app.raidScene()?.setVision(on),
+      /** Joystick de apuntar simulado: aim(x, y) con x,y ∈ [-1,1]; aim(null) suelta. */
+      aim: (x: number | null, y = 0) => app.raidScene()?.aim?.debugSet(x === null ? null : { x, y }),
+      stats: () => { const s = app.raidScene(); return s ? { ...s.stats, swapT: s.swapT, facing: s.facing, vel: { x: s.vel.x, y: s.vel.y }, seen: s.seenExitList(), loot: s.lootState(), stains: s.fx.stainCount, dmgNums: s.fx.shown.slice(-20), fired: s.proj.fired.slice(-20), hitStop: s.hitStopActive() } : null; },
+      seenExits: () => JSON.parse(JSON.stringify(app.save.data.seenExits)),
+      doors: () => app.raidScene()?.doorList(),
+      swap: () => app.raidScene()?.swapWeapon(),
+      equip: (uid: string) => app.raidScene()?.invEquip(uid),
+      face: (deg: number) => { const s = app.raidScene(); if (s) s.facing = deg * Math.PI / 180; },
+      tp: (tx: number, ty: number) => { const s = app.raidScene(); if (s) { s.player.setPosition(tx * TILE, ty * TILE); s.vel.set(0, 0); } },
       loadLegacy: () => { localStorage.setItem('gengi.save', JSON.stringify(LEGACY_SAMPLE)); location.reload(); },
       reset: () => { app.save.reset(); location.reload(); },
     };

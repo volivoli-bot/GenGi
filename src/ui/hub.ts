@@ -77,7 +77,7 @@ export class Hub {
     const acts: HTMLElement[] = [];
     const a = (label: string, fn: () => { ok: boolean; msg?: string }, cls = '') => acts.push(h('button', { class: 'btn ' + cls, onclick: () => { const r = fn(); if (r.ok) this.sel = null; this.commit(r); } }, label));
     const equipped = (['arma', 'torso', 'cabeza'] as Place[]).includes(f.place);
-    if (d.slot && !equipped) a('Equipar', () => equip(this.d, it.uid));
+    if (d.slot && !equipped) a(f.place === 'reserva' ? 'Usar como principal' : 'Equipar', () => equip(this.d, it.uid));
     if (f.place !== 'mochila' && !it.free) a('A la mochila', () => toBackpack(this.d, it.uid));
     if (f.place !== 'stash' && !it.free) a('Al alijo', () => toStash(this.d, it.uid));
     if (f.place !== 'bolsillo' && canPocket(it) && !it.free) a('Al bolsillo seguro', () => toPocket(this.d, it.uid));
@@ -95,9 +95,9 @@ export class Hub {
     return h('div', {},
       h('h3', {}, h('span', {}, 'Equipo de raid'), h('span', {}, `Valor ${gearValue(lo)} · peso ${w.toFixed(1)} · vel ${Math.round(sm * 100)} %`)),
       h('div', { class: 'slots' },
-        this.cell(lo.arma, 'Arma'), this.cell(lo.torso, 'Torso'), this.cell(lo.cabeza, 'Cabeza'), this.cell(lo.bolsillo, 'Bolsillo'),
+        this.cell(lo.arma, 'Arma'), this.cell(lo.reserva ?? null, 'Reserva'), this.cell(lo.torso, 'Torso'), this.cell(lo.cabeza, 'Cabeza'), this.cell(lo.bolsillo, 'Bolsillo'),
       ),
-      h('p', { class: 'hint' }, 'El bolsillo seguro (1 casilla, solo objetos pequeños) se conserva aunque mueras. Todo lo demás se pierde.'),
+      h('p', { class: 'hint' }, 'El bolsillo seguro (1 casilla, solo objetos pequeños) se conserva aunque mueras. Todo lo demás se pierde, también el arma de reserva. Al equipar un arma nueva, la anterior pasa a la reserva.'),
       h('h3', {}, h('span', {}, 'Mochila'), h('span', {}, `${lo.mochila.length}/${BACKPACK_SLOTS}`)),
       h('div', { class: 'grid' }, ...Array.from({ length: BACKPACK_SLOTS }, (_, i) => this.cell(lo.mochila[i] ?? null))),
       this.detail(),

@@ -1,7 +1,7 @@
 /** Tamaño de una "casilla" del diseño en píxeles del mundo. */
 export const TILE = 48;
 /** Mapa en casillas. */
-export const MAP_TILES = 60;
+export const MAP_TILES = 104;
 export const WORLD = TILE * MAP_TILES;
 
 export const PLAYER_MAX_HP = 100;

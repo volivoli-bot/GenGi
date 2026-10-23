@@ -1,0 +1,91 @@
+# GenGi: diseño v3 (Basu). Refugio, vendedores y enemigos
+
+## 1. Materiales (nuevo tipo de botín)
+Se encuentran en raids y sirven para mejorar el refugio. Pequeños, apilables, se pierden al morir (salvo en el bolsillo seguro).
+| Material | Dónde abunda | Uso |
+|---|---|---|
+| Chatarra | Calles, coches | Alijo, Taller |
+| Tela | Casas, tiendas | Enfermería, Bolsillo seguro |
+| Componentes | Comisaría, almacén | Radio, Taller, Generador |
+| Combustible | Coches, gasolinera | Generador |
+| Muestra mutada | Cadáver de Hinchado/Abominación | Enfermería n3, misiones |
+
+## 2. Refugio: estaciones (nivel 1 → 3)
+Mejorar cuesta chapas + materiales. Algunas exigen el Generador a cierto nivel (cuello de botella intencionado).
+| Estación | Nivel 1 (inicial) | Nivel 2 | Nivel 3 |
+|---|---|---|---|
+| Alijo | 30 casillas | 45 (400 chapas, 10 chatarra) | 70 (1200, 20 chatarra, 5 componentes) |
+| Bolsillo seguro | 1 casilla | 2 casillas (600, 8 tela) | 4 casillas (2000, 15 tela, 5 componentes) |
+| Generador | Básico | Permite nivel 2 del resto (500, 6 combustible) | Permite nivel 3 (1500, 12 combustible, 6 componentes) |
+| Enfermería | — | Fabrica vendajes con tela (300, 6 tela) | Fabrica botiquines y adrenalina (1000, 4 muestras) |
+| Taller | Repara durabilidad | Fabrica munición y flechas (400, 10 chatarra) | Mejora 1 rasgo extra de un arma o armadura (1400, 8 componentes) |
+| Radio | Sabes los nombres de las extracciones | Al empezar se revela 1 extracción (700, 6 componentes) | Sabes en qué zona está la Abominación y su botín (1600, 10 componentes) |
+Fabricar tarda "3 raids" (no tiempo real, para que funcione sin conexión y sin trampas con el reloj).
+
+## 3. Vendedores
+Cada uno tiene reputación (nivel 1-4). Sube comerciando con él y completando sus misiones. Más reputación = mejores rarezas en la tienda y mejores precios (-5 % por nivel).
+El stock se renueva cada 3 raids. Cada vendedor compra su categoría al 40 % (ver sección 6); el resto de categorías y los materiales al 20 %. El equipo gratis no se vende.
+
+| Vendedor | Vende | Nivel 1 | Nivel 2 | Nivel 3 | Nivel 4 |
+|---|---|---|---|---|---|
+| Doc Reyes (médica de campaña) | Vendajes, botiquines, adrenalina, granadas, bengalas | Vendajes | Botiquines, bengalas | Adrenalina, granadas | Antídoto de ácido, estimulante de visión |
+| Chispas (armero) | Armas, munición, flechas | Común | Reforzado | Militar | 1 arma Militar con rasgo garantizado por renovación |
+| Hierro (chatarrero blindado) | Armaduras, cascos, mochilas | Común | Reforzado | Militar | Mochilas grandes |
+
+Misiones (3 activas por vendedor, se elige una). Ejemplos:
+- Doc Reyes: "Trae 3 muestras mutadas", "Extrae con menos de 20 de vida", "Cúrate 5 veces en una raid".
+- Chispas: "Mata 10 Corredores con arma a distancia", "Extrae por la Azotea del hospital", "Mata una Abominación".
+- Hierro: "Extrae llevando armadura Militar sin que se rompa", "Recibe 300 de daño en una raid y sobrevive", "Trae 15 chatarra".
+Recompensa: chapas + reputación + a veces un objeto.
+
+## 4. Enemigos nuevos (por minuto de aparición)
+Todos siguen la regla de oro: el ataque se anuncia y se puede esquivar; ninguno empieza a atacar fuera de pantalla.
+| Enemigo | Desde | Ataque | Aviso | Cómo contrarrestarlo |
+|---|---|---|---|---|
+| Escupidor | min 3 | Escupe una bola de ácido lenta (6 casillas/s) desde lejos y se aleja si te acercas | Se infla la garganta 0,6 s, brillo verde | Moverse de lado; acortar distancia por coberturas |
+| Chillón | min 4 | No hace daño: grita y atrae a todo en 12 casillas, y sube la dificultad local 2 min | Se yergue y abre la boca 1,2 s | Matarlo antes de que grite (prioridad), o huir de la zona |
+| Acechador | min 5, interiores | Emboscada por la espalda (25 daño) | Es casi invisible: solo se ve a menos de 3 casillas o en tu cono de visión como distorsión; borde rojo si está detrás | Usar el cono de visión, mirar atrás, no lootear dando la espalda a puertas |
+| Bruto | min 6 | Golpe en arco frontal (30) y carga corta | Levanta los brazos 0,8 s; arco rojo en el suelo | Su frente blindado reduce el daño un 70 %: hay que flanquearlo |
+| Reptante | min 7 | Sale de alcantarillas y te agarra 2 s (inmoviliza) | Charco que burbujea 1 s antes | Pisar fuera; si te agarra, mover el joystick rápido de lado a lado acorta el agarre |
+| Enjambre | min 8 | 8-12 bichos pequeños y rápidos (5 de vida, 3 de daño) | Mancha oscura que se acerca + borde que vibra visualmente (y ruido de patas si hay sonido) | Armas de área (machete, escopeta, Hinchado cerca) |
+
+Mutaciones (a partir del min 10): cualquier enemigo puede salir mutado con un aura de color y un rasgo: Veloz (+40 % velocidad), Blindado (+60 % vida), Volátil (explota al morir como un Hinchado), Regenerador (recupera vida si no le pegas 3 s). Mucha variedad con poco arte nuevo.
+
+## 5. Orden recomendado para programar
+1. Materiales + 3 vendedores con reputación (sin misiones).
+2. Estaciones Alijo, Bolsillo seguro y Generador.
+3. Escupidor, Chillón y Bruto (son los que más cambian el combate).
+4. Misiones, resto de estaciones y resto de enemigos.
+5. Mutaciones.
+
+## 6. Reglas de seguridad (aportadas por Dott)
+- Economía: cualquier vendedor compra como máximo al 40 % del precio de venta más bajo de ese objeto en cualquier tienda (con la reputación máxima incluida). Comprar y vender nunca da beneficio.
+- Ataques a distancia (Escupidor y futuros): solo dispara si está en pantalla y dentro de tu cono de visión; su proyectil siempre es visible, también al atravesar la niebla.
+- Ataques por la espalda (Acechador): está en pantalla aunque fuera del cono; antes de atacar, el borde rojo late fuerte en su lado 0,8 s. Siempre hay aviso, aunque no lo veas.
+- Acechador: antes de atacar se vuelve visible 0,6 s (siempre, aunque esté fuera del cono).
+- Reptante: tras un agarre, 4 s de inmunidad a agarres; mientras te agarra, el resto de enemigos te hace un 50 % menos de daño.
+
+## 7. Sigilo (idea de Pablo)
+### Ruido del jugador (anillo tenue alrededor del personaje que muestra su alcance)
+| Movimiento | Joystick | Velocidad | Radio de ruido |
+|---|---|---|---|
+| Sigilo | menos del 40 % | 35 % | 1 casilla |
+| Andar | 40-85 % | 70 % | 3 casillas |
+| Correr | más del 85 % | 100 % | 6 casillas |
+- Suman ruido: armadura pesada (+1 casilla con chaleco militar), abrir puertas (3), cajas cerradas (4), disparar (según arma), cristales y latas del suelo (5, se ven si te fijas).
+- El ruido se oye a través de paredes a la mitad de distancia.
+
+### Percepción de los enemigos
+- Vista: cono de 110° y 6 casillas, cortado por paredes. De espaldas no te ven.
+- Oído: si estás dentro de tu radio de ruido, lo oyen aunque estén de espaldas.
+- Medidor sobre la cabeza del enemigo: "?" que se llena (0,4 s si estás cerca, 1,2 s si estás lejos). Lleno = "!" y pasa a perseguirte y avisa a los cercanos.
+- Si sales de su vista antes de llenarse, queda en "sospecha": va al último sitio donde te notó, mira alrededor 4 s y vuelve a su rutina.
+- La mala suerte: los enemigos quietos giran al azar cada 3-7 s, y los que deambulan cambian de rumbo. Se ve venir: antes de girarse hacen una pequeña pausa de 0,4 s.
+- Ruido y vista de los enemigos que estén en tu cono de visión se muestran como un cono tenue en el suelo (solo en dificultad normal; se puede quitar en ajustes para los expertos).
+
+### Recompensa por jugar táctico
+- Golpe por la espalda a un enemigo que no te ha detectado: x2,5 de daño y crítico garantizado (con cuerpo a cuerpo suele ser muerte silenciosa).
+- Matar sin ser detectado no avisa a los cercanos.
+- Ciertos enemigos lo cambian: el Chillón tiene oído doble, el Acechador oye el sigilo a 2 casillas, el Enjambre no ve pero oye todo.
+- La dificultad por minuto también aumenta el oído de los enemigos (+3 % por minuto).
+- Ataque automático y sigilo: el ataque automático nunca se dirige a enemigos que no te han detectado. Contra ellos solo se ataca a propósito: al estar detrás de uno desprevenido y a alcance de arma cuerpo a cuerpo aparece un botón contextual "Ejecutar" (sustituye temporalmente al botón de cambio rápido). Con armas a distancia, disparar con el joystick derecho a uno desprevenido también aplica el x2,5.

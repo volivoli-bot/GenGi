@@ -57,7 +57,7 @@ export function itemMeta(it: ItemInst): string {
     if (d.armor.ability) parts.push(`Habilidad: ${ABILITIES[d.armor.ability].nombre} (${ABILITIES[d.armor.ability].cooldown} s)`);
   }
   if (it.traits?.length) parts.push('Rasgos: ' + it.traits.map(t => TRAITS[t].nombre).join(', '));
-  parts.push(d.desc);
+  if (d.desc && !/^Habilidad /.test(d.desc)) parts.push(d.desc);
   parts.push(`Peso ${itemWeight(it).toFixed(1)} · Valor ${itemValue(it)} · ${canSell(it) ? `Venta ${sellPrice(it)} chapas` : 'Invendible'}`);
   if (d.small && d.kind !== 'armadura') parts.push('Cabe en el bolsillo seguro');
   return parts.join('<br>');

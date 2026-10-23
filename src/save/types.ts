@@ -5,7 +5,7 @@ import type { ItemInst, Loadout } from '../game/inventory';
 import type { ContainerKind } from '../game/loot';
 
 /** Versión actual del formato de guardado. Súbela y añade una migración en migrations.ts al cambiar el formato. */
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 export type TargetPriority = 'cercano' | 'debil' | 'peligroso';
 
@@ -82,6 +82,13 @@ export interface RaidSnapshot {
   hordeCd: number;
   /** Contador monotónico de guardados de esta raid (diagnóstico). */
   saves: number;
+  /** v2: id del mapa de la raid y estado del mundo que cambia (puertas abiertas, salidas vistas en esta raid). */
+  mapId?: string;
+  doorsOpen?: number[];
+  /** v2: guardado antiguo (mapa v1) que hay que repoblar en el mapa nuevo al reanudar. */
+  repopulate?: boolean;
+  /** v2: flechas clavadas/caídas por el suelo, recuperables. */
+  arrows?: { x: number; y: number; qty: number }[];
 }
 
 export interface SaveData {
@@ -97,4 +104,6 @@ export interface SaveData {
   raidLog: RaidLogEntry[];
   activeRaid: RaidSnapshot | null;
   stats: { raids: number; extracted: number; deaths: number };
+  /** v2: salidas descubiertas (vistas al menos una vez) por mapa: índices de exitLocs. */
+  seenExits: Record<string, number[]>;
 }

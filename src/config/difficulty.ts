@@ -16,25 +16,25 @@ export const DIFFICULTY = {
   /** +4 % de vida y daño enemigos por minuto. */
   statScalePerMinute: 0.04,
   /** Segundos entre oleadas de aparición en el minuto 0 (se divide por el multiplicador de aparición). */
-  baseSpawnIntervalSec: 9,
+  baseSpawnIntervalSec: 8, // v2: mapa ×3 → algo más de presión
   /** Población inicial: lo que ya está en el mapa al entrar (repartido por sectores, lejos del jugador). */
-  initialErranteGroups: 5,
+  initialErranteGroups: 12, // v2: mapa ~3× de área
   erranteGroupMin: 3,
   erranteGroupMax: 5,
-  initialHinchados: 2,
+  initialHinchados: 5,
   /** Errantes que patrullan la zona peligrosa junto a la Abominación. */
   eliteGuards: 4,
   /** Resto de la población inicial: entra poco a poco, fuera de cámara, durante el primer medio minuto. */
-  streamErranteGroups: 4,
-  streamHinchados: 2,
+  streamErranteGroups: 8,
+  streamHinchados: 3,
   streamIntervalSec: 6,
   /** Distancia mínima (casillas) al punto de entrada para la población inicial. */
   initialMinDistTiles: 15,
   /** Límite de enemigos vivos a la vez (rendimiento en móvil). */
-  maxAlive: 75,
+  maxAlive: 90,
 
   /** Minuto en que entran los Corredores en las oleadas. */
-  corredorFromMinute: 4,
+  corredorFromMinute: 4, // diseño de Basu: minuto 4
   /** Minuto a partir del cual salen más Hinchados. */
   moreHinchadosFromMinute: 7,
   /** Minuto a partir del cual el ruido atrae hordas de forma permanente. */

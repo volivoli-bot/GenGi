@@ -3,6 +3,9 @@ import './ui/styles.css';
 import { App } from './app';
 import { RaidScene, RaidUIScene } from './raid/RaidScene';
 import { BootScene, HubBgScene } from './scenes';
+import { installIosGuard } from './ui/iosGuard';
+
+installIosGuard();
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,

@@ -21,9 +21,11 @@ export interface Loadout {
   cabeza: ItemInst | null;
   mochila: ItemInst[];
   bolsillo: ItemInst | null;
+  /** v2: arma de reserva (cambio rápido en raid). Pesa y se pierde al morir como el resto. */
+  reserva: ItemInst | null;
 }
 
-export const emptyLoadout = (): Loadout => ({ arma: null, torso: null, cabeza: null, mochila: [], bolsillo: null });
+export const emptyLoadout = (): Loadout => ({ arma: null, torso: null, cabeza: null, mochila: [], bolsillo: null, reserva: null });
 
 let counter = 0;
 export function uid() {
@@ -73,7 +75,7 @@ export function totalProtection(l: Loadout) {
 }
 
 export function allItems(l: Loadout): ItemInst[] {
-  return [l.arma, l.torso, l.cabeza, l.bolsillo, ...l.mochila].filter((x): x is ItemInst => !!x);
+  return [l.arma, l.reserva ?? null, l.torso, l.cabeza, l.bolsillo, ...l.mochila].filter((x): x is ItemInst => !!x);
 }
 export function totalWeight(l: Loadout) { return allItems(l).reduce((s, it) => s + itemWeight(it), 0); }
 export function speedMult(l: Loadout) {
@@ -139,11 +141,14 @@ export function itemLabel(it: ItemInst) {
  * y queda guardada en el arma, `mag`, dentro del loadout/instantánea). Devuelve las balas cargadas.
  */
 export function loadMagazine(lo: Loadout): number {
-  const ws = weaponStats(lo.arma);
-  if (!lo.arma || !ws.mag) return 0;
-  const need = ws.mag - (lo.arma.mag ?? 0);
-  if (need <= 0) return 0;
-  const got = consume(lo.mochila, 'municion', need);
-  lo.arma.mag = (lo.arma.mag ?? 0) + got;
+  let got = 0;
+  for (const w of [lo.arma, lo.reserva ?? null]) {
+    const ws = weaponStats(w);
+    if (!w || !ws.mag) continue;
+    const need = ws.mag - (w.mag ?? 0);
+    if (need <= 0) continue;
+    const g = consume(lo.mochila, 'municion', need);
+    w.mag = (w.mag ?? 0) + g; got += g;
+  }
   return got;
 }

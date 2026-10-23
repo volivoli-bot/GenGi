@@ -46,6 +46,8 @@ export interface ExtractionHooks {
   pay(): boolean;
   onExtract(exit: ExitState): void;
   toast(msg: string): void;
+  /** v2: ¿se dibuja esta salida (vista alguna vez en este mapa, o a la vista ahora)? */
+  shown?(loc: number): boolean;
 }
 
 export interface ExtractionStatus {
@@ -61,25 +63,31 @@ export class ExtractionManager {
   hitPause = 0;
   private current: ExitState | null = null;
   private genNoiseT = 0;
-  private gfx: { exit: ExitState; img: Phaser.GameObjects.Image; label: Phaser.GameObjects.Text }[] = [];
+  private gfx: { exit: ExitState; img: Phaser.GameObjects.Image; label: Phaser.GameObjects.Text; icon?: Phaser.GameObjects.Image }[] = [];
+  private closedGfx: { loc: number; objs: Phaser.GameObjects.GameObject[] }[] = [];
 
-  constructor(public exits: ExitState[], map: MapData, private h: ExtractionHooks) {
+  constructor(public exits: ExitState[], private map: MapData, private h: ExtractionHooks) {
     const sc = h.scene;
     const r = EXIT_RADIUS_TILES * TILE;
+    const nm = (i: number) => map.exitLocNames?.[i] ?? '';
     map.exitLocs.forEach((p, i) => {
       if (exits.some(e => e.loc === i)) return;
-      sc.add.image(p.x, p.y, 'extraccion').setDisplaySize(r * 2, r * 2).setTint(0x555555).setAlpha(0.5).setDepth(2);
-      sc.add.text(p.x, p.y + r + 6, 'CERRADA', { fontFamily: 'sans-serif', fontSize: '14px', color: '#888', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5, 0).setDepth(2);
+      const a = sc.add.image(p.x, p.y, 'extraccion').setDisplaySize(r * 2, r * 2).setTint(0x555555).setAlpha(0.5).setDepth(2);
+      const b = sc.add.text(p.x, p.y + r + 6, `${nm(i)}\nCERRADA`, { fontFamily: 'sans-serif', fontSize: '14px', color: '#888', stroke: '#000', strokeThickness: 3, align: 'center' }).setOrigin(0.5, 0).setDepth(2);
+      this.closedGfx.push({ loc: i, objs: [a, b] });
     });
     for (const e of exits) {
       const img = sc.add.image(e.x, e.y, 'extraccion').setDisplaySize(r * 2, r * 2).setDepth(2);
       sc.tweens.add({ targets: img, angle: 360, duration: 12000, repeat: -1 });
-      const icon = e.type === 'generador' ? 'generador' : e.type === 'bengala' ? 'bengala' : e.type === 'pago' ? 'chapa' : null;
-      if (icon) sc.add.image(e.x, e.y, icon).setDisplaySize(TILE * 1.1, TILE * 1.1).setDepth(3);
+      const iconK = e.type === 'generador' ? 'generador' : e.type === 'bengala' ? 'bengala' : e.type === 'pago' ? 'chapa' : null;
+      const icon = iconK ? sc.add.image(e.x, e.y, iconK).setDisplaySize(TILE * 1.1, TILE * 1.1).setDepth(3) : undefined;
       const label = sc.add.text(e.x, e.y - r - 6, '', { fontFamily: 'sans-serif', fontSize: '15px', fontStyle: 'bold', color: '#4cd964', stroke: '#000', strokeThickness: 4, align: 'center' }).setOrigin(0.5, 1).setDepth(3);
-      this.gfx.push({ exit: e, img, label });
+      this.gfx.push({ exit: e, img, label, icon });
     }
   }
+
+  /** Nombre del sitio de una salida (p. ej. "Túnel norte"). */
+  locName(loc: number) { return this.map.exitLocNames?.[loc] ?? `Salida ${loc + 1}`; }
 
   isOpen(e: ExitState) {
     if (e.type === 'bengala') return e.unlocked && e.flareAt !== null && this.h.elapsed() < e.flareAt + FLARE_WINDOW_SEC;
@@ -98,10 +106,15 @@ export class ExtractionManager {
     const px = this.h.px(), py = this.h.py();
     const r = EXIT_RADIUS_TILES * TILE;
     const minute = this.h.elapsed() / 60;
+    const shown = (loc: number) => !this.h.shown || this.h.shown(loc);
+    for (const c of this.closedGfx) { const v = shown(c.loc); for (const o of c.objs) (o as Phaser.GameObjects.Image).setVisible(v); }
     for (const g of this.gfx) {
+      const v = shown(g.exit.loc);
+      g.img.setVisible(v); g.label.setVisible(v); g.icon?.setVisible(v);
+      if (!v) continue;
       const open = this.isOpen(g.exit);
       g.img.setTint(open ? 0xffffff : 0x888888);
-      g.label.setText(EXIT_NAMES[g.exit.type] + (open ? '' : this.lockReason(g.exit, minute))).setColor(open ? '#4cd964' : '#e8e2d0');
+      g.label.setText(`${this.locName(g.exit.loc)}\n${EXIT_NAMES[g.exit.type]}` + (open ? '' : this.lockReason(g.exit, minute))).setColor(open ? '#4cd964' : '#e8e2d0');
     }
     const inside = this.exits.find(e => Math.hypot(px - e.x, py - e.y) <= r) ?? null;
     if (inside !== this.current) { this.hold = 0; this.hitPause = 0; this.current = inside; }

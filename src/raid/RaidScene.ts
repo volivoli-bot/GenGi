@@ -1,24 +1,31 @@
 import Phaser from 'phaser';
 import {
-  LOCKED_CRATE_NOISE, LOCKED_CRATE_SEC, LOOT_ENEMY_BLOCK_TILES, LOOT_REACH_TILES, LOOT_RING_SEC,
+  EXIT_RADIUS_TILES, LOCKED_CRATE_NOISE, LOCKED_CRATE_SEC, LOOT_REACH_TILES, LOOT_RING_SEC,
   PLAYER_MAX_HP, PLAYER_SPEED_TILES, RAID_AUTOSAVE_SEC, TILE, WORLD, COLORS,
   RAID_ZOOM_FACTOR,
 } from '../config/constants';
 import { DIFFICULTY, scaling } from '../config/difficulty';
+import { AIM, JUICE, MAP2, MOVE, PROJECTILE, STAGGER, SWAP, VISION } from '../config/v2';
 import { ABILITIES, AbilityId, ITEMS } from '../data/items';
 import { EnemyType } from '../data/enemies';
 import { rarityAtLeast, RARITIES } from '../data/rarity';
 import {
   backpackAdd, canPocket, consume, countOf, def, ItemInst, itemLabel, itemValue, makeItem, slotOf,
-  speedMult, totalProtection, weaponStats,
+  speedMult, totalProtection, totalWeight, weaponStats,
 } from '../game/inventory';
 import { rollContainer, rollItem, seeded } from '../game/loot';
 import type { ContainerSnap, ExitState, RaidSnapshot, Settings } from '../save/types';
+import { AimStick } from './aim';
 import { Enemy, EnemyManager, hasDetected, RaidCtx } from './enemies';
 import { chooseExits, EXIT_NAMES, ExtractionManager } from './extraction';
+import { FlowField } from './flow';
+import { Fx } from './fx';
 import { Hud } from './hud';
 import { Joystick } from './Joystick';
-import { generateMap, lineClear, MapData, pointInWalls } from './map';
+import { Door, generateMap, lineClear, MapData, pointInWalls, rayHit, Rect, setWallIndex, WallIndex, zoneAt } from './map';
+import { Proj, Projectiles } from './projectiles';
+import { Rig } from './rig';
+import { Vision } from './vision';
 
 export interface RaidHost {
   persist(): void;
@@ -30,11 +37,15 @@ export interface RaidHost {
   overUi(x: number, y: number): boolean;
   refreshInventory(): void;
   onPauseChange(paused: boolean, reason: 'usuario' | 'segundo-plano' | 'reanudada'): void;
+  /** v2: salidas ya vistas en este mapa (persisten entre raids). */
+  seenExits(mapId: string): number[];
+  markExitSeen(mapId: string, loc: number): void;
 }
 
 export interface RaidInit { snap: RaidSnapshot; settings: Settings; fresh: boolean; host: RaidHost; debug: boolean }
 
 interface ContainerObj { snap: ContainerSnap; sprite: Phaser.GameObjects.Image | Phaser.GameObjects.Ellipse; lock?: Phaser.GameObjects.Text; glow?: Phaser.GameObjects.Arc }
+interface DoorObj { d: Door; img: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle; body: Phaser.GameObjects.Zone; open: boolean }
 
 /** Escena de UI sin zoom, encima del mundo. */
 export class RaidUIScene extends Phaser.Scene {
@@ -42,13 +53,19 @@ export class RaidUIScene extends Phaser.Scene {
   create(data: { ready: (s: Phaser.Scene) => void }) { data.ready(this); }
 }
 
+/** ¿Sin vibración (iOS Safari)? Entonces se usa la contrapartida visual: más retroceso y sacudida. */
+export const NO_VIBRATE = typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function';
+function vibrate(ms: number | number[]) { try { if (!NO_VIBRATE) navigator.vibrate(ms); } catch { /* sin vibración */ } }
+
 export function newRaidSnapshot(seed: number, loadout: RaidSnapshot['loadout'], valueIn: number): RaidSnapshot {
   const map = generateMap(seed);
   const exits = chooseExits(seeded(seed ^ 0x5bd1e995), map);
+  const sp = map.spawns[Math.floor(seeded(seed ^ 0x2545f491)() * map.spawns.length)] ?? map.spawn;
   return {
     id: 'raid-' + Date.now().toString(36), seed, startedAt: new Date().toISOString(), elapsed: 0, valueIn, kills: 0,
-    player: { x: map.spawn.x, y: map.spawn.y, hp: PLAYER_MAX_HP, healLeft: 0, healRate: 0, aguantar: 0, cds: {}, reload: 0 },
+    player: { x: sp.x, y: sp.y, hp: PLAYER_MAX_HP, healLeft: 0, healRate: 0, aguantar: 0, cds: {}, reload: 0 },
     loadout, enemies: [], containers: [], exits, acid: [], spawnTimer: 0, hordeCd: 0, saves: 0,
+    mapId: map.id, doorsOpen: [], arrows: [],
   };
 }
 
@@ -59,84 +76,155 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   fresh = false;
   debug = false;
   map!: MapData;
-  walls: MapData['walls'] = [];
+  /** Paredes que bloquean AHORA (fijas + puertas cerradas). Se sustituye al abrir una puerta. */
+  walls: Rect[] = [];
+  wallsVersion = 0;
+  wallIndex!: WallIndex;
+  flow!: FlowField;
+  fx!: Fx;
+  vision: Vision | null = null;
+  proj!: Projectiles;
   player!: Phaser.Physics.Arcade.Image;
+  rig!: Rig;
   playerRadius = 18;
   enemies!: EnemyManager;
   extraction!: ExtractionManager;
   hud: Hud | null = null;
   joy: Joystick | null = null;
+  aim: AimStick | null = null;
   ui: Phaser.Scene | null = null;
   keys: Record<string, Phaser.Input.Keyboard.Key> | null = null;
   containers: ContainerObj[] = [];
+  doors: DoorObj[] = [];
   acidGfx: Phaser.GameObjects.Graphics | null = null;
   scanGfx: Phaser.GameObjects.Graphics | null = null;
   reloadGfx: Phaser.GameObjects.Graphics | null = null;
+  aimGfx: Phaser.GameObjects.Graphics | null = null;
   paused = false;
   ended = false;
   god = false;
+  /** Mirada actual (rad) y velocidad real (inercia). */
+  facing = -Math.PI / 2;
+  vel = new Phaser.Math.Vector2();
+  /** Cambio de arma en curso (s restantes): no se ataca. */
+  swapT = 0;
+  /** QA / diagnóstico v2. */
+  stats = { shots: 0, swaps: 0, attacksDuringSwap: 0, behindWarn: 0, behindVibes: 0, hitStops: 0, crits: 0, doorsOpened: 0, arrowsRecovered: 0, lootPaused: 0, iosKick: 0 };
   private attackT = 0;
   private autosaveT = 0;
   private idleT = 0;
   private scanT = 0;
-  private loot: { c: ContainerObj | null; t: number; done: Set<number>; ring: Phaser.GameObjects.Graphics | null } = { c: null, t: 0, done: new Set(), ring: null };
+  private loot: { c: ContainerObj | null; t: number; done: Set<number>; ring: Phaser.GameObjects.Graphics | null; pause: number } = { c: null, t: 0, done: new Set(), ring: null, pause: 0 };
   private noAmmoWarned = false;
   private warned13 = false;
   private nextContainerId = 1;
   private lastMove = new Phaser.Math.Vector2();
   private fpsT = 0;
-  private lootBlockedMsg = false;
   private abilityIds: (AbilityId | null)[] = [null, null, null];
+  private glanceT = 0;
+  private glanceBase = 0;
+  private steadyT = 0;
+  private steadyRef = 0;
+  private fireLatch = false;
+  private hitStopT = 0;
+  private behindT = 0;
+  private exitCheckT = 0;
+  private visT = 0;
+  private seen = new Set<number>();
+  private stuck = new Map<Enemy, number>();
+  private groundArrows: { x: number; y: number; qty: number; img: Phaser.GameObjects.Image }[] = [];
+  private kick = new Phaser.Math.Vector2();
+  private behind: { ang: number; k: number }[] = [];
+  private pendingMelee: { t: number; e: Enemy; dmg: number; crit: boolean; weapon: string; range: number; heavy: boolean }[] = [];
 
   constructor() { super('Raid'); }
 
   init(d: RaidInit) {
     this.snap = d.snap; this.settings = d.settings; this.host = d.host; this.fresh = d.fresh; this.debug = d.debug;
-    this.paused = false; this.ended = false; this.containers = []; this.hud = null; this.joy = null;
-    this.loot = { c: null, t: 0, done: new Set(), ring: null };
+    this.paused = false; this.ended = false; this.containers = []; this.doors = []; this.hud = null; this.joy = null; this.aim = null;
+    this.loot = { c: null, t: 0, done: new Set(), ring: null, pause: 0 };
     this.warned13 = d.snap.elapsed >= DIFFICULTY.fogWarningSeconds;
     this.attackT = 0; this.autosaveT = 0; this.idleT = 0; this.scanT = 0; this.god = false; this.noAmmoWarned = false;
+    this.swapT = 0; this.glanceT = 0; this.steadyT = 0; this.hitStopT = 0; this.vel.set(0, 0); this.kick.set(0, 0);
+    this.stuck = new Map(); this.groundArrows = []; this.pendingMelee = []; this.behind = [];
+    this.stats = { shots: 0, swaps: 0, attacksDuringSwap: 0, behindWarn: 0, behindVibes: 0, hitStops: 0, crits: 0, doorsOpened: 0, arrowsRecovered: 0, lootPaused: 0, iosKick: 0 };
   }
 
   // ---------- RaidCtx ----------
   get world(): Phaser.Scene { return this; }
   px() { return this.player.x; }
   py() { return this.player.y; }
+  pvx() { return (this.player.body as Phaser.Physics.Arcade.Body).velocity.x; }
+  pvy() { return (this.player.body as Phaser.Physics.Arcade.Body).velocity.y; }
   elapsed() { return this.snap.elapsed; }
   minute() { return this.snap.elapsed / 60; }
   playerMelee() { return weaponStats(this.snap.loadout.arma).melee; }
+  /** ¿Lo ve el jugador? (cono de 220° + línea de visión; en la niebla = no visible). */
+  visible(x: number, y: number, pad = 0) { return this.vision ? this.vision.sees(x, y, pad) : true; }
 
   create() {
     this.map = generateMap(this.snap.seed);
-    this.walls = this.map.walls;
+    const s = this.snap;
+    // Guardado de la v1 (otro mapa): se repuebla en el mapa nuevo conservando equipo, vida y tiempo.
+    const legacy = !this.fresh && (s.repopulate || s.mapId !== this.map.id);
+    if (legacy) this.repopulateLegacy();
+    s.mapId = this.map.id;
+    s.doorsOpen ??= []; s.arrows ??= [];
     this.physics.world.setBounds(0, 0, WORLD, WORLD);
+    this.fx = new Fx(this);
+    this.flow = new FlowField();
+    this.wallIndex = new WallIndex([]);
     this.drawWorld();
 
     const wallGroup = this.physics.add.staticGroup();
-    for (const r of this.walls) {
-      const z = this.add.zone(r.x + r.w / 2, r.y + r.h / 2, r.w, r.h);
-      wallGroup.add(z);
+    for (const r of this.map.walls) wallGroup.add(this.add.zone(r.x + r.w / 2, r.y + r.h / 2, r.w, r.h));
+    const doorGroup = this.physics.add.staticGroup();
+    for (const d of this.map.doors) {
+      const open = s.doorsOpen!.includes(d.id);
+      const body = this.add.zone(d.x + d.w / 2, d.y + d.h / 2, d.w, d.h);
+      doorGroup.add(body);
+      body.setData('door', d.id);
+      const img = this.textures.exists('puerta')
+        ? this.add.image(d.horiz ? d.x : d.x + d.w / 2, d.horiz ? d.y + d.h / 2 : d.y, 'puerta').setOrigin(0, 0.5).setDisplaySize(d.horiz ? d.w : d.h, TILE * 0.42).setRotation(d.horiz ? 0 : Math.PI / 2).setDepth(6)
+        : this.add.rectangle(d.x, d.y, d.w, d.h, COLORS.oxido).setOrigin(0).setDepth(6);
+      const o: DoorObj = { d, img, body, open: false };
+      this.doors.push(o);
+      if (open) this.openDoor(o, false, true);
     }
+    this.rebuildWalls();
 
-    const p = this.snap.player;
-    this.player = this.physics.add.image(p.x, p.y, 'player').setDepth(10);
+    const p = s.player;
+    this.player = this.physics.add.image(p.x, p.y, 'player').setDepth(10).setVisible(false);
     this.player.setDisplaySize(44, 44);
     const tw = this.player.width;
     const pr = tw * 0.3;
     (this.player.body as Phaser.Physics.Arcade.Body).setCircle(pr, tw / 2 - pr, tw / 2 - pr).setCollideWorldBounds(true);
     this.playerRadius = 44 * 0.3;
+    this.rig = new Rig(this, p.x, p.y, { base: 'jugador', size: 44, depth: 10, weapon: s.loadout.arma?.def ?? null, v1Size: 44 });
     this.physics.add.collider(this.player, wallGroup);
+    const doorHit = (_a: unknown, z: unknown) => { const id = (z as Phaser.GameObjects.Zone).getData('door') as number; const o = this.doors.find(x => x.d.id === id); if (o && !o.open) this.openDoor(o, _a === this.player); };
+    this.physics.add.collider(this.player, doorGroup, doorHit as Phaser.Types.Physics.Arcade.ArcadePhysicsCallback);
 
     this.enemies = new EnemyManager(this);
     this.physics.add.collider(this.enemies.group, wallGroup);
+    this.physics.add.collider(this.enemies.group, doorGroup, doorHit as Phaser.Types.Physics.Arcade.ArcadePhysicsCallback);
     this.physics.add.collider(this.enemies.group, this.enemies.group);
 
-    if (this.fresh) this.populate(); else this.enemies.restore(this.snap.enemies);
-    for (const c of this.snap.containers) this.addContainerObj(c);
-    this.nextContainerId = Math.max(0, ...this.snap.containers.map(c => c.id)) + 1;
+    this.proj = new Projectiles(this, {
+      walls: () => this.walls, enemies: () => this.enemies.list,
+      onHit: (pj, e) => this.onProjHit(pj, e),
+      onLand: (pj, x, y) => { if (Math.random() < PROJECTILE.arrowRecoverChance) this.dropArrow(x, y, 1); void pj; },
+      onWall: (pj, x, y) => { if (pj.kind === 'bala') this.fx.impact(x, y); },
+    });
 
-    this.extraction = new ExtractionManager(this.snap.exits, this.map, {
-      scene: this, px: () => this.player.x, py: () => this.player.y, elapsed: () => this.snap.elapsed,
+    if (this.fresh || legacy) this.populate(); else this.enemies.restore(s.enemies);
+    for (const c of s.containers) this.addContainerObj(c);
+    this.nextContainerId = Math.max(0, ...s.containers.map(c => c.id)) + 1;
+    for (const a of s.arrows!) this.addGroundArrow(a.x, a.y, a.qty, false);
+
+    for (const i of this.host.seenExits(this.map.id)) this.seen.add(i);
+    this.extraction = new ExtractionManager(s.exits, this.map, {
+      scene: this, px: () => this.player.x, py: () => this.player.y, elapsed: () => s.elapsed,
       noise: (x, y, r) => this.noise(x, y, r),
       hasFlare: () => countOf(this.snap.loadout.mochila, 'bengala') + (this.snap.loadout.bolsillo?.def === 'bengala' ? 1 : 0) > 0,
       useFlare: () => this.useFlare(),
@@ -144,11 +232,13 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       pay: () => this.pay(),
       onExtract: (e) => this.finish('extraido', { exit: e }),
       toast: (m) => this.hud?.toast(m),
+      shown: (loc) => this.seen.has(loc) || this.exitVisibleNow(loc),
     });
 
     this.acidGfx = this.add.graphics().setDepth(3);
     this.scanGfx = this.add.graphics().setDepth(25);
     this.reloadGfx = this.add.graphics().setDepth(26);
+    this.aimGfx = this.add.graphics().setDepth(13);
 
     const cam = this.cameras.main;
     // margen fuera del mapa para que el jugador quede siempre centrado y por encima de los botones
@@ -157,6 +247,9 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     cam.setBackgroundColor('#0d0e10');
     this.applyZoom();
     this.scale.on('resize', this.onResize, this);
+    this.vision = new Vision(this, () => this.walls, () => this.wallIndex);
+    this.facing = -Math.PI / 2;
+    this.vision.update(this.player.x, this.player.y, this.facing, this.wallsVersion);
 
     this.scene.launch('RaidUI', { ready: (ui: Phaser.Scene) => this.buildUi(ui) });
 
@@ -173,11 +266,23 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       document.removeEventListener('freeze', onPageHide);
       window.removeEventListener('beforeunload', onPageHide);
       this.scale.off('resize', this.onResize, this);
+      setWallIndex(null);
+      this.vision?.destroy(); this.vision = null;
       this.scene.stop('RaidUI');
     });
 
     if (!this.fresh) this.setPaused(true, 'reanudada');
     else this.persist();
+  }
+
+  /** Raid guardada con el mapa de la v1: misma vida, equipo y tiempo; mundo nuevo (enemigos, botín, salidas). */
+  private repopulateLegacy() {
+    const s = this.snap;
+    const sp = this.map.spawns[1] ?? this.map.spawn;
+    s.player.x = sp.x; s.player.y = sp.y;
+    s.enemies = []; s.containers = []; s.acid = []; s.doorsOpen = []; s.arrows = [];
+    s.exits = chooseExits(seeded(s.seed ^ 0x5bd1e995), this.map);
+    s.repopulate = false;
   }
 
   private buildUi(ui: Phaser.Scene) {
@@ -192,16 +297,21 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       return this.host.overUi(r.left + pt.x * (r.width / this.scale.width), r.top + pt.y * (r.height / this.scale.height));
     };
     this.joy = new Joystick(ui, (x, y, pt) => hud.hitTest(x, y) || this.paused || (!!pt && overUi(pt)));
+    // Joystick de apuntar: solo nace de toques que NO caen en botones/HUD (ni en el minimapa de arriba)
+    this.aim = new AimStick(ui, (x, y, pt) => hud.hitTest(x, y) || this.paused || this.ended || y < hud.miniRect.y + hud.miniRect.s + 8 || (!!pt && overUi(pt)));
+    this.aim.place(hud.aimRest.x, hud.aimRest.y);
     ui.input.on('pointerdown', (pt: Phaser.Input.Pointer) => { if (!this.paused && !this.ended && !overUi(pt)) hud.handleTap(pt.x, pt.y); });
-    this.keys = ui.input.keyboard!.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,ONE,TWO,THREE,Q,I,P') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = ui.input.keyboard!.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,ONE,TWO,THREE,Q,I,P,R') as Record<string, Phaser.Input.Keyboard.Key>;
     ui.input.keyboard!.on('keydown-P', () => this.setPaused(!this.paused, 'usuario'));
     ui.input.keyboard!.on('keydown-I', () => this.toggleInventory());
     ui.input.keyboard!.on('keydown-ONE', () => this.useAbility(0));
     ui.input.keyboard!.on('keydown-TWO', () => this.useAbility(1));
     ui.input.keyboard!.on('keydown-THREE', () => this.useAbility(2));
     ui.input.keyboard!.on('keydown-Q', () => this.useQuick());
+    ui.input.keyboard!.on('keydown-R', () => this.swapWeapon());
     hud.abilities.forEach((b, i) => b.onTap = () => this.useAbility(i));
     hud.quick.onTap = () => this.useQuick();
+    hud.swap.onTap = () => this.swapWeapon();
     hud.pauseBtn.onTap = () => this.setPaused(true, 'usuario');
     hud.bagBtn.onTap = () => this.toggleInventory();
     hud.pauseBtn.label.setText('');
@@ -209,9 +319,16 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const drawPause = () => { pg.clear().fillStyle(0xe8e2d0, 1); const b = hud.pauseBtn.bg; pg.fillRect(b.x - 7, b.y - 8, 5, 16).fillRect(b.x + 2, b.y - 8, 5, 16); };
     drawPause();
     hud.fps.setVisible(this.debug);
-    this.scale.on('resize', drawPause);
-    this.events.once('shutdown', () => this.scale.off('resize', drawPause));
-    if (this.fresh) hud.toast('Planea la ruta: las salidas activas están marcadas en verde/naranja', 3.5);
+    const relayout = () => { drawPause(); this.aim?.place(hud.aimRest.x, hud.aimRest.y); };
+    this.scale.on('resize', relayout);
+    this.events.once('shutdown', () => this.scale.off('resize', relayout));
+    if (this.fresh) hud.toast(this.exitsAnnouncement(), 4.5);
+  }
+
+  /** "Salidas activas: Túnel norte (A pie) y Muelle del almacén (Generador)". */
+  exitsAnnouncement() {
+    const n = this.snap.exits.map(e => `${this.extraction.locName(e.loc)} (${EXIT_NAMES[e.type]})`);
+    return `Salidas activas: ${n.join(' y ')}`;
   }
 
   private onResize() { this.applyZoom(); this.hud?.layout(); }
@@ -225,53 +342,116 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   }
 
   // ---------- Mundo ----------
+  /** Objetos de mundo grandes que se ocultan fuera de cámara (rendimiento en móvil). */
+  private cullables: { o: Phaser.GameObjects.Components.Visible & Phaser.GameObjects.GameObject; r: Rect }[] = [];
+
   private drawWorld() {
-    const g = this.add.graphics().setDepth(0);
-    g.fillStyle(COLORS.suelo[0], 1).fillRect(0, 0, WORLD, WORLD);
-    const rng = seeded(this.snap.seed + 7);
-    // Suelo: grietas y cascotes grises/ocres de bajo contraste (el verde tóxico queda reservado al peligro)
+    const T = TILE;
+    // suelo: asfalto en mosaico (una sola pieza) + grietas por trozos (se ocultan fuera de cámara)
+    if (this.textures.exists('suelo_asfalto')) this.add.tileSprite(0, 0, WORLD, WORLD, 'suelo_asfalto').setOrigin(0).setTileScale(0.75).setDepth(0);
+    else this.add.rectangle(0, 0, WORLD, WORLD, COLORS.suelo[0]).setOrigin(0).setDepth(0);
+    const rng = seeded(MAP2.layoutSeed + 7);
+    const CH = 8, cw = WORLD / CH;
     const crackCols = [COLORS.contorno, COLORS.suelo[2], COLORS.oxido];
-    for (let i = 0; i < 420; i++) {
-      let x = rng() * WORLD, y = rng() * WORLD;
-      let a = rng() * Math.PI * 2;
-      g.lineStyle(1 + rng() * 2, crackCols[Math.floor(rng() * 3)], 0.22 + rng() * 0.12);
-      g.beginPath().moveTo(x, y);
-      const segs = 3 + Math.floor(rng() * 4);
-      for (let s = 0; s < segs; s++) {
-        a += (rng() - 0.5) * 1.2; const l = 8 + rng() * 22;
-        x += Math.cos(a) * l; y += Math.sin(a) * l; g.lineTo(x, y);
-        if (rng() < 0.25) { const b = a + (rng() < 0.5 ? 1 : -1) * (0.6 + rng() * 0.6); g.moveTo(x, y).lineTo(x + Math.cos(b) * l * 0.6, y + Math.sin(b) * l * 0.6).moveTo(x, y); }
+    for (let cy = 0; cy < CH; cy++) for (let cx = 0; cx < CH; cx++) {
+      const g = this.add.graphics().setDepth(0.5);
+      for (let i = 0; i < 26; i++) {
+        let x = (cx + rng()) * cw, y = (cy + rng()) * cw;
+        let a = rng() * Math.PI * 2;
+        g.lineStyle(1 + rng() * 2, crackCols[Math.floor(rng() * 3)], 0.22 + rng() * 0.12);
+        g.beginPath().moveTo(x, y);
+        const segs = 3 + Math.floor(rng() * 4);
+        for (let s = 0; s < segs; s++) { a += (rng() - 0.5) * 1.2; const l = 8 + rng() * 22; x += Math.cos(a) * l; y += Math.sin(a) * l; g.lineTo(x, y); }
+        g.strokePath();
       }
-      g.strokePath();
+      for (let i = 0; i < 30; i++) {
+        const x = (cx + rng()) * cw, y = (cy + rng()) * cw, s = 2 + rng() * 6;
+        g.fillStyle(rng() < 0.65 ? COLORS.suelo[1] : COLORS.oxido, 0.3 + rng() * 0.2).fillRect(x, y, s * (0.6 + rng()), s * (0.5 + rng() * 0.8));
+      }
+      this.cullables.push({ o: g, r: { x: cx * cw - 40, y: cy * cw - 40, w: cw + 80, h: cw + 80 } });
     }
-    for (let i = 0; i < 700; i++) {
-      const x = rng() * WORLD, y = rng() * WORLD, s = 2 + rng() * 6;
-      g.fillStyle(rng() < 0.65 ? COLORS.suelo[1] : COLORS.oxido, 0.3 + rng() * 0.2);
-      const n = 1 + Math.floor(rng() * 3);
-      for (let k = 0; k < n; k++) g.fillRect(x + (rng() - 0.5) * 14, y + (rng() - 0.5) * 14, s * (0.6 + rng()), s * (0.5 + rng() * 0.8));
+    const border = this.add.graphics().setDepth(6);
+    border.lineStyle(10, COLORS.contorno, 1).strokeRect(0, 0, WORLD, WORLD);
+    // suelos interiores (baldosa) y tinte por zona (alto = riesgo alto)
+    for (const f of this.map.floors) {
+      const o = this.textures.exists('suelo_baldosa') ? this.add.tileSprite(f.x, f.y, f.w, f.h, 'suelo_baldosa').setOrigin(0).setTileScale(0.5).setDepth(1)
+        : this.add.rectangle(f.x, f.y, f.w, f.h, COLORS.suelo[2], 0.7).setOrigin(0).setDepth(1);
+      this.cullables.push({ o, r: f });
     }
-    g.lineStyle(2, COLORS.contorno, 0.25);
-    for (let i = 0; i <= WORLD; i += TILE * 10) { g.lineBetween(i, 0, i, WORLD); g.lineBetween(0, i, WORLD, i); }
-    g.lineStyle(10, COLORS.contorno, 1).strokeRect(0, 0, WORLD, WORLD);
-    for (const f of this.map.floors) g.fillStyle(COLORS.suelo[2], 0.7).fillRect(f.x, f.y, f.w, f.h);
-    // zona peligrosa
-    const d = this.map.danger;
-    g.fillStyle(COLORS.mutacion, 0.06).fillCircle(d.x, d.y, d.r);
-    g.lineStyle(3, COLORS.mutacion, 0.25).strokeCircle(d.x, d.y, d.r);
-    const wg = this.add.graphics().setDepth(6);
-    for (const r of this.walls) {
-      wg.fillStyle(COLORS.suelo[1], 1).fillRect(r.x, r.y, r.w, r.h);
-      wg.lineStyle(4, COLORS.contorno, 1).strokeRect(r.x, r.y, r.w, r.h);
-      if (r.w > TILE && r.h > TILE) wg.fillStyle(COLORS.oxido, 0.35).fillRect(r.x + 6, r.y + 6, r.w * 0.4, r.h * 0.3);
+    const zg = this.add.graphics().setDepth(1.2);
+    for (const z of this.map.zones) {
+      if (z.kind !== 'alto') continue;
+      zg.fillStyle(COLORS.mutacion, 0.07).fillRect(z.rect.x, z.rect.y, z.rect.w, z.rect.h);
+      zg.lineStyle(3, COLORS.mutacion, 0.3).strokeRect(z.rect.x - 4, z.rect.y - 4, z.rect.w + 8, z.rect.h + 8);
+      this.add.text(z.rect.x + z.rect.w / 2, z.rect.y - 10, z.name.toUpperCase(), { fontFamily: 'sans-serif', fontStyle: 'bold', fontSize: '16px', color: '#ff3cc8', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5, 1).setDepth(6.5).setAlpha(0.85);
+    }
+    for (const z of this.map.zones) {
+      if (z.kind !== 'tienda' && z.kind !== 'casa') continue;
+      if (z.name === 'Casa') continue;
+      this.add.text(z.rect.x + z.rect.w / 2, z.rect.y - 10, z.name.toUpperCase(), { fontFamily: 'sans-serif', fontStyle: 'bold', fontSize: '14px', color: '#e8e2d0', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5, 1).setDepth(6.5).setAlpha(0.7);
+    }
+    // paredes (muro en mosaico + contorno) y coches
+    const carSet = new Set(this.map.cars.map(c => `${c.x},${c.y}`));
+    const outline = this.add.graphics().setDepth(6.2);
+    for (const r of this.map.walls) {
+      if (carSet.has(`${r.x},${r.y}`)) continue;
+      const o = this.textures.exists('muro') ? this.add.tileSprite(r.x, r.y, r.w, r.h, 'muro').setOrigin(0).setTileScale(0.5).setDepth(6)
+        : this.add.rectangle(r.x, r.y, r.w, r.h, COLORS.suelo[1]).setOrigin(0).setDepth(6);
+      this.cullables.push({ o, r });
+      outline.lineStyle(3, COLORS.contorno, 1).strokeRect(r.x, r.y, r.w, r.h);
+    }
+    for (const c of this.map.cars) {
+      const horiz = c.w > c.h;
+      const o = this.textures.exists('coche') ? this.add.image(c.x + c.w / 2, c.y + c.h / 2, 'coche').setDisplaySize(horiz ? c.h : c.w, horiz ? c.w : c.h).setRotation(c.rot).setDepth(6)
+        : this.add.rectangle(c.x, c.y, c.w, c.h, COLORS.oxido).setOrigin(0).setDepth(6);
+      this.cullables.push({ o, r: c });
+    }
+    // carteles de evacuación (la flecha del arte apunta a la derecha)
+    for (const sg of this.map.signs) {
+      if (this.textures.exists('cartel_evacuacion')) this.add.image(sg.x, sg.y, 'cartel_evacuacion').setDisplaySize(T * 0.9, T * 0.9).setRotation(sg.ang).setDepth(6.6);
+      this.add.text(sg.x, sg.y + T * 0.55, this.map.exitLocNames[sg.exit] ?? 'Salida', { fontFamily: 'sans-serif', fontStyle: 'bold', fontSize: '11px', color: '#4cd964', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5, 0).setDepth(6.6);
+    }
+  }
+
+  private cullWorld() {
+    const v = this.cameras.main.worldView;
+    const x0 = v.x - TILE, y0 = v.y - TILE, x1 = v.right + TILE, y1 = v.bottom + TILE;
+    for (const c of this.cullables) {
+      const vis = c.r.x < x1 && c.r.x + c.r.w > x0 && c.r.y < y1 && c.r.y + c.r.h > y0;
+      if (c.o.visible !== vis) c.o.setVisible(vis);
+    }
+  }
+
+  /** Paredes activas = fijas + puertas cerradas. Reindexa rayos, campo de flujo y visión. */
+  private rebuildWalls() {
+    this.walls = [...this.map.walls, ...this.doors.filter(o => !o.open).map(o => o.d)];
+    this.wallIndex.rebuild(this.walls);
+    setWallIndex(this.wallIndex);
+    this.flow.setWalls(this.walls);
+    this.wallsVersion++;
+  }
+
+  /** Las puertas se abren al pasar (jugador o enemigos) y hacen ruido si las abres tú. */
+  openDoor(o: DoorObj, byPlayer: boolean, silent = false) {
+    if (o.open) return;
+    o.open = true;
+    (o.body.body as Phaser.Physics.Arcade.StaticBody).enable = false;
+    const ang = o.d.horiz ? -Math.PI / 2 * 0.85 : Math.PI / 2 + Math.PI / 2 * 0.85;
+    if (silent) o.img.setRotation(ang).setAlpha(0.8);
+    else this.tweens.add({ targets: o.img, rotation: ang, alpha: 0.8, duration: 180, ease: 'Quad.easeOut' });
+    if (!this.snap.doorsOpen!.includes(o.d.id)) this.snap.doorsOpen!.push(o.d.id);
+    if (!silent) {
+      this.rebuildWalls();
+      if (byPlayer) { this.stats.doorsOpened++; this.noise(o.d.x + o.d.w / 2, o.d.y + o.d.h / 2, MAP2.doorNoise); }
     }
   }
 
   private populate() {
     const rng = seeded(this.snap.seed + 99);
-    const spawn = this.map.spawn;
+    const spawn = { x: this.snap.player.x, y: this.snap.player.y };
     const minD = DIFFICULTY.initialMinDistTiles;
-    // Reparto por sectores (4×4 de 15 casillas) para que no se amontonen; se excluyen los cercanos a la entrada
-    const SECT = 4, sw = WORLD / SECT;
+    // Reparto por sectores (6×6) para que no se amontonen; se excluyen los cercanos a la entrada
+    const SECT = 6, sw = WORLD / SECT;
     const sectors: { sx: number; sy: number }[] = [];
     for (let sy = 0; sy < SECT; sy++) for (let sx = 0; sx < SECT; sx++) {
       if (Math.hypot((sx + 0.5) * sw - spawn.x, (sy + 0.5) * sw - spawn.y) >= minD * TILE) sectors.push({ sx, sy });
@@ -281,8 +461,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const farPoint = (minFromSpawn: number) => {
       const sec = sectors[si++ % Math.max(1, sectors.length)];
       for (let i = 0; i < 40; i++) {
-        const x = sec ? (sec.sx + 0.1 + rng() * 0.8) * sw : (2 + rng() * 56) * TILE;
-        const y = sec ? (sec.sy + 0.1 + rng() * 0.8) * sw : (2 + rng() * 56) * TILE;
+        const x = sec ? (sec.sx + 0.1 + rng() * 0.8) * sw : (2 + rng() * 100) * TILE;
+        const y = sec ? (sec.sy + 0.1 + rng() * 0.8) * sw : (2 + rng() * 100) * TILE;
         if (Math.hypot(x - spawn.x, y - spawn.y) < minFromSpawn * TILE) continue;
         if (pointInWalls(this.walls, x, y, TILE * 0.8)) continue;
         return { x, y };
@@ -296,20 +476,25 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       for (let i = 0; i < n; i++) this.spawnAt('errante', c.x + (rng() - 0.5) * TILE * 3, c.y + (rng() - 0.5) * TILE * 3);
     }
     for (let i = 0; i < DIFFICULTY.initialHinchados; i++) { const c = farPoint(minD); this.spawnAt('hinchado', c.x, c.y); }
-    const el = this.map.eliteBox;
-    const ab = this.spawnAt('abominacion', el.x, el.y - TILE * 2);
-    ab.gx = el.x; ab.gy = el.y;
-    // más Errantes en la zona peligrosa
-    for (let i = 0; i < DIFFICULTY.eliteGuards; i++) this.spawnAt('errante', el.x + (rng() - 0.5) * TILE * 12, el.y + (rng() - 0.5) * TILE * 12);
-
-    // botín
-    const d = this.map.danger;
+    // una Abominación por zona de riesgo alto (comisaría, hospital, almacén militar), con su caja de élite y guardias
+    for (const el of this.map.eliteBoxes) {
+      const ab = this.spawnAt('abominacion', el.x, el.y - TILE * 2);
+      ab.gx = el.x; ab.gy = el.y;
+      const z = zoneAt(this.map, el.x, el.y).rect;
+      for (let i = 0; i < DIFFICULTY.eliteGuards; i++) {
+        for (let k = 0; k < 10; k++) {
+          const x = z.x + TILE + rng() * (z.w - TILE * 2), y = z.y + TILE + rng() * (z.h - TILE * 2);
+          if (pointInWalls(this.walls, x, y, TILE * 0.6) || Math.hypot(x - spawn.x, y - spawn.y) < minD * TILE) continue;
+          this.spawnAt('errante', x, y); break;
+        }
+      }
+      this.snap.containers.push({ id: this.nextContainerId++, x: el.x, y: el.y, kind: 'elite', items: rollContainer(rng, 'elite', 1), opened: false });
+    }
+    // botín: calles poco, tiendas/casas medio, zonas altas mucho (bonus por zona)
     for (const c of this.map.containers) {
       if (pointInWalls(this.walls, c.x, c.y, 10)) continue;
-      const bonus = Phaser.Math.Clamp(1 - Math.hypot(c.x - d.x, c.y - d.y) / (TILE * 26), 0, 1);
-      this.snap.containers.push({ id: this.nextContainerId++, x: c.x, y: c.y, kind: c.kind, items: rollContainer(rng, c.kind, bonus), opened: false });
+      this.snap.containers.push({ id: this.nextContainerId++, x: c.x, y: c.y, kind: c.kind, items: rollContainer(rng, c.kind, c.bonus), opened: false });
     }
-    this.snap.containers.push({ id: this.nextContainerId++, x: el.x, y: el.y, kind: 'elite', items: rollContainer(rng, 'elite', 1), opened: false });
   }
 
   spawnAt(type: EnemyType, x: number, y: number) {
@@ -342,7 +527,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const p = this.offscreenPoint(12, 22);
     if (!p) return;
     const n = type === 'errante' ? DIFFICULTY.erranteGroupMin + Math.floor(Math.random() * (DIFFICULTY.erranteGroupMax - DIFFICULTY.erranteGroupMin + 1)) : 1;
-    for (let i = 0; i < n; i++) this.spawnAt(type, p.x + (Math.random() - 0.5) * TILE * 2, p.y + (Math.random() - 0.5) * TILE * 2);
+    const room = DIFFICULTY.maxAlive - this.enemies.list.length; // el tope se respeta también dentro del grupo
+    for (let i = 0; i < Math.min(n, room); i++) this.spawnAt(type, p.x + (Math.random() - 0.5) * TILE * 2, p.y + (Math.random() - 0.5) * TILE * 2);
   }
 
   /** Ruido en el mundo. Desde el minuto 10, el ruido fuerte atrae hordas. */
@@ -355,7 +541,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       this.snap.hordeCd = DIFFICULTY.hordeCooldownSec;
       const p = this.offscreenPoint(12, 18, x, y);
       if (!p) return;
-      const n = DIFFICULTY.hordeSizeMin + Math.floor(Math.random() * (DIFFICULTY.hordeSizeMax - DIFFICULTY.hordeSizeMin + 1));
+      const n = Math.min(DIFFICULTY.maxAlive - this.enemies.list.length, DIFFICULTY.hordeSizeMin + Math.floor(Math.random() * (DIFFICULTY.hordeSizeMax - DIFFICULTY.hordeSizeMin + 1)));
       for (let i = 0; i < n; i++) {
         const e = this.spawnAt(Math.random() < 0.25 ? 'corredor' : 'errante', p.x + (Math.random() - 0.5) * TILE * 3, p.y + (Math.random() - 0.5) * TILE * 3);
         e.goal = { x, y, until: this.snap.elapsed + 20 }; e.state = 'investigate';
@@ -368,10 +554,12 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
 
   onEnemyDeath(e: Enemy) {
     this.snap.kills++;
-    if (Math.random() < e.def.dropChance) {
-      const it = rollItem(Math.random, 0);
-      this.addContainer({ id: this.nextContainerId++, x: e.x, y: e.y, kind: 'cadaver', items: [it], opened: true });
-    }
+    const items: ItemInst[] = [];
+    if (Math.random() < e.def.dropChance) items.push(rollItem(Math.random, 0));
+    // flechas clavadas en el cuerpo: se recuperan del cadáver
+    const n = this.stuck.get(e) ?? 0;
+    if (n > 0) { items.push(makeItem('flechas', 'comun', n)); this.stuck.delete(e); }
+    if (items.length) this.addContainer({ id: this.nextContainerId++, x: e.x, y: e.y, kind: 'cadaver', items, opened: true });
   }
 
   private addContainer(c: ContainerSnap) { this.snap.containers.push(c); this.addContainerObj(c); }
@@ -404,11 +592,55 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     if (empty) o.glow?.setVisible(false);
   }
 
+  /** Botín y flechas en la niebla no se ven (las cajas reaparecen al entrar en tu cono). */
+  private updateVisibility() {
+    for (const c of this.containers) {
+      const near = Math.abs(c.snap.x - this.player.x) < 900 && Math.abs(c.snap.y - this.player.y) < 900;
+      const v = near && this.visible(c.snap.x, c.snap.y, 16);
+      if (c.sprite.visible !== v) { c.sprite.setVisible(v); c.lock?.setVisible(v); c.glow?.setVisible(v && c.snap.items.length > 0); }
+    }
+    for (const a of this.groundArrows) a.img.setVisible(this.visible(a.x, a.y, 8));
+  }
+
+  // ---------- Flechas recuperables ----------
+  private dropArrow(x: number, y: number, qty: number) {
+    if (pointInWalls(this.walls, x, y, 2)) return;
+    const near = this.groundArrows.find(a => Math.hypot(a.x - x, a.y - y) < TILE * 0.6);
+    if (near) { near.qty += qty; this.syncArrows(); return; }
+    this.addGroundArrow(x, y, qty, true);
+  }
+
+  private addGroundArrow(x: number, y: number, qty: number, save: boolean) {
+    const key = this.textures.exists('proyectil_flecha') ? 'proyectil_flecha' : 'flecha';
+    const img = this.add.image(x, y, key).setDepth(4.5).setRotation(Math.random() * Math.PI * 2);
+    if (key === 'proyectil_flecha') img.setDisplaySize(8, 30); else img.setDisplaySize(TILE * 0.6, TILE * 0.6);
+    this.groundArrows.push({ x, y, qty, img });
+    if (save) this.syncArrows();
+  }
+
+  private syncArrows() { this.snap.arrows = this.groundArrows.map(a => ({ x: Math.round(a.x), y: Math.round(a.y), qty: a.qty })); }
+
+  private pickupArrows() {
+    for (let i = this.groundArrows.length - 1; i >= 0; i--) {
+      const a = this.groundArrows[i];
+      if (Math.hypot(a.x - this.player.x, a.y - this.player.y) > TILE * 0.9) continue;
+      const it = makeItem('flechas', 'comun', a.qty);
+      const left = backpackAdd(this.snap.loadout, it);
+      const got = a.qty - (left?.qty ?? 0);
+      if (got <= 0) continue;
+      this.stats.arrowsRecovered += got;
+      if (left) { a.qty = left.qty; } else { a.img.destroy(); this.groundArrows.splice(i, 1); }
+      this.hud?.toast(`+${got} flecha${got > 1 ? 's' : ''}`, 0.9);
+      this.syncArrows();
+      this.host.refreshInventory();
+    }
+  }
+
   // ---------- Pausa / guardado ----------
   /** Al pasar a segundo plano: pausa y guarda EXACTAMENTE este instante (sin volver nunca a copias anteriores). */
   background() {
     if (this.ended) return;
-    this.joy?.reset();
+    this.joy?.reset(); this.aim?.reset();
     if (!this.paused) this.setPaused(true, 'segundo-plano');
     this.persist();
   }
@@ -416,7 +648,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   setPaused(v: boolean, reason: 'usuario' | 'segundo-plano' | 'reanudada') {
     if (this.ended) return;
     this.paused = v;
-    this.joy?.reset();
+    this.joy?.reset(); this.aim?.reset();
+    this.endHitStop();
     if (v) { this.physics.pause(); this.tweens.pauseAll(); this.time.paused = true; this.host.closeInventory(); this.persist(); }
     else { this.physics.resume(); this.tweens.resumeAll(); this.time.paused = false; }
     this.host.onPauseChange(v, reason);
@@ -427,6 +660,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const p = s.player;
     p.x = Math.round(this.player.x); p.y = Math.round(this.player.y);
     s.enemies = this.enemies.snapshot();
+    this.syncArrows();
     s.saves++;
   }
 
@@ -435,6 +669,33 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.writeSnapshot();
     this.host.persist();
   }
+
+  // ---------- Impacto (hit-stop, sacudida) ----------
+  /** Congela el mundo unos ms (50-80) para que el golpe "pese". */
+  hitStop(ms: number) {
+    if (this.paused || this.ended) return;
+    if (this.hitStopT <= 0) this.stats.hitStops++;
+    this.hitStopT = Math.max(this.hitStopT, ms);
+    this.physics.world.timeScale = 40;
+    this.tweens.timeScale = 0.05;
+  }
+  hitStopActive() { return this.hitStopT > 0; }
+  private endHitStop() { this.hitStopT = 0; this.physics.world.timeScale = 1; this.tweens.timeScale = 1; }
+
+  private shakeFor(dmg: number) {
+    const i = Math.min(JUICE.shakeMax, dmg * JUICE.shakePerDmg);
+    if (i > 0.0005) this.cameras.main.shake(70 + Math.min(80, dmg * 2), i);
+  }
+
+  /** Daño a un enemigo con todo el "juice": número, sangre, tambaleo, hit-stop y sacudida según el daño. */
+  dealDamage(e: Enemy, dmg: number, ang: number, weapon: string, crit: boolean, stopMs = JUICE.hitStopMs) {
+    if (crit) this.stats.crits++;
+    const killed = this.enemies.damage(e, dmg, { ang, weapon, crit });
+    if (e.visibleNow || this.visible(e.x, e.y, e.def.size * 0.4)) { this.hitStop(crit ? JUICE.hitStopHeavyMs : stopMs); this.shakeFor(dmg * (crit ? 1.5 : 1)); }
+    return killed;
+  }
+
+  private rollCrit(dmg: number) { const crit = Math.random() < JUICE.critChance; return { dmg: crit ? dmg * JUICE.critMult : dmg, crit }; }
 
   // ---------- Combate ----------
   damagePlayer(n: number, cause: string, react = true) {
@@ -445,19 +706,24 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     p.hp -= dmg;
     if (react) {
       this.extraction.onHit();
+      // el anillo de looteo se PAUSA (no se reinicia) al recibir un golpe
+      if (this.loot.c && this.loot.t > 0) { this.loot.pause = 0.6; this.stats.lootPaused++; }
       this.cameras.main.shake(90, 0.006);
-      this.player.setTint(0xff4d6d);
-      this.time.delayedCall(100, () => this.player.active && this.player.clearTint());
+      this.rig.hit(Math.random() * Math.PI * 2, 0.5);
+      this.rig.setTint(0xff4d6d);
+      this.time.delayedCall(100, () => this.rig && this.rig.setTint(null));
       this.hud?.flashHurt();
+      vibrate(40);
     }
     if (p.hp <= 0) { p.hp = 0; this.finish('muerto', { cause }); }
   }
 
   private finish(result: 'extraido' | 'muerto', detail: { cause?: string; exit?: ExitState }) {
     if (this.ended) return;
+    this.endHitStop();
     this.writeSnapshot();
     this.ended = true;
-    this.joy?.reset();
+    this.joy?.reset(); this.aim?.reset();
     this.physics.pause();
     this.host.closeInventory();
     this.host.endRaid(result, detail);
@@ -469,15 +735,22 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     return x >= v.x + margin && x <= v.right - margin && y >= v.y + margin && y <= v.bottom - margin;
   }
 
-  pickTarget(rangePx: number, melee: boolean): Enemy | null {
+  /**
+   * Objetivo automático. A distancia: solo lo que está en pantalla Y se ve (cono + línea de visión).
+   * Cuerpo a cuerpo: dentro de ±arcDeg de la mirada si se indica.
+   */
+  pickTarget(rangePx: number, melee: boolean, arcDeg = 0): Enemy | null {
     const px = this.player.x, py = this.player.y;
     const cands: { e: Enemy; d: number }[] = [];
     for (const e of this.enemies.list) {
       if (!e.targetable) continue;
-      // a distancia (arco, pistola) solo se dispara a lo que se ve en pantalla
-      if (!melee && !this.onScreen(e.x, e.y)) continue;
+      if (!melee && (!this.onScreen(e.x, e.y) || !this.visible(e.x, e.y, e.def.size * 0.3))) continue;
       const d = Math.hypot(e.x - px, e.y - py) - e.def.size * 0.3;
       if (d > rangePx) continue;
+      if (arcDeg > 0 && d > this.playerRadius) {
+        const off = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(e.y - py, e.x - px) - this.facing));
+        if (off > Phaser.Math.DegToRad(arcDeg)) continue;
+      }
       if (!lineClear(this.walls, px, py, e.x, e.y)) continue;
       cands.push({ e, d });
     }
@@ -490,73 +763,188 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     return pool[0].e;
   }
 
-  private autoAttack(dt: number) {
+  private weaponId() { return this.snap.loadout.arma?.def ?? 'punos'; }
+  private isBow() { return this.snap.loadout.arma?.def === 'arco'; }
+  private arrowsLeft() { const lo = this.snap.loadout; return countOf(lo.mochila, 'flechas') + (lo.bolsillo?.def === 'flechas' ? lo.bolsillo.qty : 0); }
+  private takeArrow() {
     const lo = this.snap.loadout;
-    const ws = weaponStats(lo.arma);
-    const p = this.snap.player;
+    if (consume(lo.mochila, 'flechas', 1) > 0) return true;
+    if (lo.bolsillo?.def === 'flechas') { lo.bolsillo.qty--; if (lo.bolsillo.qty <= 0) lo.bolsillo = null; return true; }
+    return false;
+  }
+
+  /** ¿Puede disparar ya? Gestiona recarga y munición (cargador / flechas). Devuelve false si no. */
+  private readyRanged(dt: number): boolean {
+    const lo = this.snap.loadout, ws = weaponStats(lo.arma), p = this.snap.player;
     if (p.reload > 0) {
       p.reload -= dt;
       if (p.reload <= 0 && lo.arma) { const need = (ws.mag ?? 0) - (lo.arma.mag ?? 0); lo.arma.mag = (lo.arma.mag ?? 0) + consume(lo.mochila, 'municion', need); this.host.refreshInventory(); }
+      return false;
+    }
+    if (ws.mag && lo.arma && (lo.arma.mag ?? 0) <= 0) {
+      if (countOf(lo.mochila, 'municion') > 0) p.reload = ws.reloadSec ?? 1.5;
+      else if (!this.noAmmoWarned) { this.noAmmoWarned = true; this.hud?.toast('¡Sin munición!'); }
+      return false;
+    }
+    if (this.isBow() && this.arrowsLeft() <= 0) {
+      if (!this.noAmmoWarned) { this.noAmmoWarned = true; this.hud?.toast('Sin flechas'); }
+      return false;
+    }
+    return true;
+  }
+
+  /** Dispara un proyectil real hacia `ang`. */
+  private fireRanged(ang: number, auto: boolean) {
+    const lo = this.snap.loadout, ws = weaponStats(lo.arma);
+    if (this.swapT > 0) { this.stats.attacksDuringSwap++; return; }
+    if (ws.mag && lo.arma) { lo.arma.mag!--; }
+    if (this.isBow() && !this.takeArrow()) return;
+    this.noAmmoWarned = false;
+    this.attackT = 1 / (ws.aps * (auto ? AIM.autoFireRateMult : 1));
+    const { dmg, crit } = this.rollCrit(ws.dmg);
+    const ox = this.player.x + Math.cos(ang) * 20, oy = this.player.y + Math.sin(ang) * 20;
+    this.proj.fire(this.isBow() ? 'flecha' : 'bala', ox, oy, ang, ws.rangeTiles * TILE, dmg, crit, this.weaponId());
+    this.stats.shots++;
+    if (!this.isBow()) this.fx.muzzle(this.player.x + Math.cos(ang) * 34, this.player.y + Math.sin(ang) * 34, ang);
+    // retroceso: en Android vibración corta; en iOS (sin vibración) más retroceso del arma + golpe y sacudida de cámara
+    if (NO_VIBRATE) {
+      this.stats.iosKick++;
+      this.rig.recoil(AIM.iosRecoilPx);
+      this.kick.set(-Math.cos(ang) * AIM.iosCameraKickPx, -Math.sin(ang) * AIM.iosCameraKickPx);
+      this.cameras.main.shake(70, AIM.iosShake);
+      this.aim?.pulse();
+    } else {
+      vibrate(AIM.vibrateMs);
+      this.rig.recoil(4);
+      this.kick.set(-Math.cos(ang) * AIM.cameraKickPx, -Math.sin(ang) * AIM.cameraKickPx);
+    }
+    if (ws.noise > 0) this.noise(this.player.x, this.player.y, ws.noise);
+    this.host.refreshInventory();
+  }
+
+  private onProjHit(pj: Proj, e: Enemy) {
+    const ang = Math.atan2(pj.vy, pj.vx);
+    if (pj.kind === 'flecha' && Math.random() < PROJECTILE.arrowRecoverChance) this.stuck.set(e, (this.stuck.get(e) ?? 0) + 1);
+    this.dealDamage(e, pj.dmg, ang, pj.weapon, pj.crit, pj.kind === 'bala' ? 50 : JUICE.hitStopMs);
+  }
+
+  /** Desviación actual del disparo (grados): empieza en 9° y se estabiliza a 1,2° tras 0,4 s quieto. */
+  spreadDeg() { const k = Phaser.Math.Clamp(this.steadyT / AIM.steadySec, 0, 1); return AIM.spreadStartDeg + (AIM.spreadMinDeg - AIM.spreadStartDeg) * k; }
+
+  /** Combate por fotograma: apuntado twin-stick (a distancia), automático (cuerpo a cuerpo o sin tocar el joystick). */
+  private combat(dt: number) {
+    const lo = this.snap.loadout, ws = weaponStats(lo.arma);
+    const aim = this.aim!;
+    this.attackT -= dt;
+    const g = this.aimGfx!.clear();
+    this.rig.aiming = false;
+    if (this.swapT > 0) return;
+    if (!ws.melee) {
+      const ready = this.readyRanged(dt);
+      if (aim.aiming) {
+        // línea de apuntado (respeta paredes): corta y temblorosa al principio, estable tras 0,4 s quieto
+        this.rig.aiming = true;
+        if (Math.abs(Phaser.Math.Angle.Wrap(aim.angle - this.steadyRef)) > Phaser.Math.DegToRad(AIM.steadyToleranceDeg)) { this.steadyRef = aim.angle; this.steadyT = 0; }
+        else this.steadyT += dt;
+        const k = Phaser.Math.Clamp(this.steadyT / AIM.steadySec, 0, 1);
+        const sp = Phaser.Math.DegToRad(this.spreadDeg());
+        const jit = (Math.random() - 0.5) * sp * (1 - k * 0.7);
+        const a = aim.angle + jit;
+        const R = ws.rangeTiles * TILE * (0.35 + 0.65 * k);
+        const x0 = this.player.x + Math.cos(a) * 22, y0 = this.player.y + Math.sin(a) * 22;
+        const x1 = this.player.x + Math.cos(a) * R, y1 = this.player.y + Math.sin(a) * R;
+        const t = rayHit(this.walls, x0, y0, x1, y1);
+        const ex = x0 + (x1 - x0) * t, ey = y0 + (y1 - y0) * t;
+        const col = aim.overThreshold ? 0xff6b4a : 0xfff2a8;
+        g.lineStyle(5, 0x000000, 0.35).lineBetween(x0, y0, ex, ey);
+        g.lineStyle(2, col, 0.55 + 0.4 * k).lineBetween(x0, y0, ex, ey);
+        if (t < 1) g.fillStyle(col, 0.9).fillCircle(ex, ey, 3);
+        // cono de dispersión
+        g.lineStyle(1, col, 0.25).lineBetween(x0, y0, this.player.x + Math.cos(aim.angle + sp / 2) * R * 0.5, this.player.y + Math.sin(aim.angle + sp / 2) * R * 0.5)
+          .lineBetween(x0, y0, this.player.x + Math.cos(aim.angle - sp / 2) * R * 0.5, this.player.y + Math.sin(aim.angle - sp / 2) * R * 0.5);
+        // pasar del 85 % del radio dispara; soltar antes cancela. Pistola: mantener = fuego continuo a su cadencia
+        if (aim.overThreshold) {
+          const can = ready && this.attackT <= 0 && (!this.fireLatch || !this.isBow());
+          if (can) { this.fireRanged(aim.angle + (Math.random() - 0.5) * sp, false); this.fireLatch = true; }
+        } else this.fireLatch = false;
+      } else {
+        this.steadyT = 0; this.fireLatch = false;
+        // sin tocar el joystick de apuntar: disparo automático (más lento) a lo que se ve en pantalla
+        if (AIM.autoFireWhenIdle && !aim.active && ready && this.attackT <= 0) {
+          const t = this.pickTarget(ws.rangeTiles * TILE, false);
+          if (t) { const a = Math.atan2(t.y - this.player.y, t.x - this.player.x); this.facing = a; this.fireRanged(a, true); }
+        }
+      }
       return;
     }
-    // recarga automática en cuanto el cargador se vacía
-    if (ws.mag && lo.arma && (lo.arma.mag ?? 0) <= 0 && countOf(lo.mochila, 'municion') > 0) { p.reload = ws.reloadSec ?? 1.5; return; }
-    this.attackT -= dt;
+    // cuerpo a cuerpo: automático hacia donde miras (±75°); el daño entra tras la preparación del golpe (0,12 s)
     if (this.attackT > 0) return;
-    const range = ws.rangeTiles * TILE + (ws.melee ? this.playerRadius : 0);
-    const t = this.pickTarget(range, ws.melee);
+    const range = ws.rangeTiles * TILE + this.playerRadius;
+    const t = this.pickTarget(range, true, 75);
     if (!t) return;
-    if (ws.mag && lo.arma) {
-      if ((lo.arma.mag ?? 0) <= 0) {
-        if (countOf(lo.mochila, 'municion') > 0) p.reload = ws.reloadSec ?? 1.5;
-        else if (!this.noAmmoWarned) { this.noAmmoWarned = true; this.hud?.toast('¡Sin munición!'); }
-        return;
-      }
-      lo.arma.mag!--;
-      this.noAmmoWarned = false;
-    }
     this.attackT = 1 / ws.aps;
-    this.hit(t, ws.dmg, ws.melee, 120);
+    this.rig.swing();
+    const { dmg, crit } = this.rollCrit(ws.dmg);
+    const w = this.weaponId();
+    this.pendingMelee.push({ t: 0.12, e: t, dmg, crit, weapon: w, range: range * 1.25, heavy: (STAGGER.weapon[w]?.[0] ?? 0) > 250 });
     if (ws.noise > 0) this.noise(this.player.x, this.player.y, ws.noise);
   }
 
-  private hit(t: Enemy, dmg: number, melee: boolean, knock: number) {
-    const ang = Phaser.Math.Angle.Between(this.player.x, this.player.y, t.x, t.y);
-    this.player.rotation = ang - Math.PI / 2;
-    if (melee) {
+  private updatePendingMelee(dt: number) {
+    for (let i = this.pendingMelee.length - 1; i >= 0; i--) {
+      const m = this.pendingMelee[i];
+      m.t -= dt;
+      if (m.t > 0) continue;
+      this.pendingMelee.splice(i, 1);
+      if (this.swapT > 0) continue;
+      const e = m.e;
+      if (e.dead || !e.targetable) continue;
+      const d = Math.hypot(e.x - this.player.x, e.y - this.player.y) - e.def.size * 0.3;
+      if (d > m.range) continue;
+      const ang = Math.atan2(e.y - this.player.y, e.x - this.player.x);
       const arc = this.add.graphics().setDepth(11);
       arc.lineStyle(6, COLORS.hueso, 0.9).beginPath().arc(this.player.x, this.player.y, TILE * 0.9, ang - 0.7, ang + 0.7).strokePath();
       this.tweens.add({ targets: arc, alpha: 0, duration: 160, onComplete: () => arc.destroy() });
-    } else if (this.snap.loadout.arma?.def === 'arco') this.arrowFx(this.player.x, this.player.y, t.x, t.y);
-    else this.tracer(this.player.x, this.player.y, t.x, t.y);
-    this.enemies.damage(t, dmg, { ang, force: knock });
+      this.dealDamage(e, m.dmg, ang, m.weapon, m.crit, m.heavy ? JUICE.hitStopHeavyMs : JUICE.hitStopMs);
+    }
   }
 
-  /** Flecha del arco (arte flecha.svg, que apunta 45° arriba-derecha). */
-  private arrowFx(x1: number, y1: number, x2: number, y2: number) {
-    const ang = Math.atan2(y2 - y1, x2 - x1);
-    const img = this.add.image(x1, y1, 'flecha').setDisplaySize(TILE * 0.8, TILE * 0.8).setRotation(ang + Math.PI / 4).setDepth(12);
-    this.tweens.add({ targets: img, x: x2, y: y2, duration: Math.max(60, Math.hypot(x2 - x1, y2 - y1) / 1.6), onComplete: () => img.destroy() });
-  }
-
-  /** Anillo pequeño de recarga sobre el jugador (sustituye al texto centrado). */
+  /** Anillo pequeño de recarga / cambio de arma sobre el jugador. */
   private drawReload() {
     const g = this.reloadGfx; if (!g) return;
     g.clear();
     const p = this.snap.player;
-    if (p.reload <= 0) return;
-    const total = weaponStats(this.snap.loadout.arma).reloadSec ?? 1.5;
-    const k = Phaser.Math.Clamp(1 - p.reload / total, 0, 1);
+    let k = -1;
+    if (this.swapT > 0) k = 1 - this.swapT / SWAP.sec;
+    else if (p.reload > 0) { const total = weaponStats(this.snap.loadout.arma).reloadSec ?? 1.5; k = Phaser.Math.Clamp(1 - p.reload / total, 0, 1); }
+    if (k < 0) return;
     const x = this.player.x, y = this.player.y - 34;
     g.fillStyle(COLORS.contorno, 0.6).fillCircle(x, y, 9);
     g.lineStyle(3, COLORS.hueso, 0.35).strokeCircle(x, y, 7);
-    g.lineStyle(3, COLORS.hueso, 1).beginPath().arc(x, y, 7, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2).strokePath();
+    g.lineStyle(3, this.swapT > 0 ? 0x3c8cff : COLORS.hueso, 1).beginPath().arc(x, y, 7, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2).strokePath();
   }
 
-  private tracer(x1: number, y1: number, x2: number, y2: number, color = 0xfff2a8) {
-    const g = this.add.graphics().setDepth(11);
-    g.lineStyle(3, color, 0.9).lineBetween(x1, y1, x2, y2);
-    this.tweens.add({ targets: g, alpha: 0, duration: 120, onComplete: () => g.destroy() });
+  // ---------- Arma de reserva ----------
+  /** Cambio rápido arma principal ↔ reserva: 0,4 s sin poder atacar. */
+  swapWeapon() {
+    if (this.paused || this.ended || this.swapT > 0) return false;
+    const lo = this.snap.loadout;
+    if (!lo.reserva) { this.hud?.toast('Sin arma de reserva', 1); return false; }
+    this.swapT = SWAP.sec;
+    this.pendingMelee = [];
+    this.snap.player.reload = 0;
+    this.stats.swaps++;
+    return true;
+  }
+
+  private finishSwap() {
+    const lo = this.snap.loadout;
+    const a = lo.arma; lo.arma = lo.reserva ?? null; lo.reserva = a ?? null;
+    this.rig.setWeapon(lo.arma?.def ?? null);
+    this.refreshAbilities();
+    this.attackT = 0; this.noAmmoWarned = false;
+    this.hud?.toast(lo.arma ? def(lo.arma).nombre : 'Puños', 0.8);
+    this.host.refreshInventory();
   }
 
   refreshAbilities() {
@@ -565,6 +953,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.abilityIds = [wa, lo.torso ? def(lo.torso).armor?.ability ?? null : null, lo.cabeza ? def(lo.cabeza).armor?.ability ?? null : null];
   }
 
+  /** Habilidades: las direccionales (golpe, perforante, ráfaga) salen hacia donde miras. */
   useAbility(i: number) {
     if (this.paused || this.ended) return;
     const id = this.abilityIds[i];
@@ -574,48 +963,53 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const lo = this.snap.loadout;
     const ws = weaponStats(lo.arma);
     const px = this.player.x, py = this.player.y;
+    if (this.swapT > 0 && (id === 'golpe' || id === 'perforante' || id === 'rafaga' || id === 'torbellino')) { this.stats.attacksDuringSwap++; return; }
     let ok = true;
     switch (id) {
       case 'golpe': {
-        const t = this.pickTarget(ws.rangeTiles * TILE + this.playerRadius + TILE * 0.5, true);
-        if (!t) { ok = false; this.hud?.toast('Nadie a tu alcance', 1); break; }
-        this.hit(t, 30 * ws.dmgMult, true, 520);
+        const t = this.pickTarget(ws.rangeTiles * TILE + this.playerRadius + TILE * 0.5, true, 60);
+        if (!t) { ok = false; this.hud?.toast('Nadie delante a tu alcance', 1); break; }
+        this.rig.swing();
+        const ang = Math.atan2(t.y - py, t.x - px);
+        const arc = this.add.graphics().setDepth(11);
+        arc.lineStyle(8, COLORS.hueso, 0.95).beginPath().arc(px, py, TILE * 1.0, ang - 0.8, ang + 0.8).strokePath();
+        this.tweens.add({ targets: arc, alpha: 0, duration: 200, onComplete: () => arc.destroy() });
+        this.dealDamage(t, 30 * ws.dmgMult, ang, 'bate', false, JUICE.hitStopHeavyMs);
+        t.body.velocity.add(new Phaser.Math.Vector2(Math.cos(ang), Math.sin(ang)).scale(380 / (STAGGER.weight[t.def.type] ?? 1)));
         break;
       }
       case 'torbellino': {
         const r = TILE * 1.8;
         const fx = this.add.circle(px, py, r, COLORS.hueso, 0.18).setStrokeStyle(4, COLORS.hueso).setDepth(11);
         this.tweens.add({ targets: fx, alpha: 0, angle: 360, duration: 300, onComplete: () => fx.destroy() });
-        for (const e of [...this.enemies.list]) if (Math.hypot(e.x - px, e.y - py) <= r + e.def.size * 0.3) { this.enemies.damage(e, 15 * ws.dmgMult); e.bleed = 4; }
+        for (const e of [...this.enemies.list]) if (Math.hypot(e.x - px, e.y - py) <= r + e.def.size * 0.3) { this.dealDamage(e, 15 * ws.dmgMult, Math.atan2(e.y - py, e.x - px), 'machete', false); e.bleed = 4; }
         break;
       }
       case 'perforante': {
-        const t = this.pickTarget(ws.rangeTiles * TILE, false);
-        const ang = t ? Math.atan2(t.y - py, t.x - px) : this.player.rotation + Math.PI / 2;
+        if (this.isBow() && !this.takeArrow()) { ok = false; this.hud?.toast('Sin flechas', 1); break; }
+        const ang = this.facing;
         let L = ws.rangeTiles * TILE;
-        const ex = px + Math.cos(ang) * L, ey = py + Math.sin(ang) * L;
-        // corta en la primera pared
-        for (let s = 0; s <= 20; s++) { const k = s / 20; if (pointInWalls(this.walls, px + (ex - px) * k, py + (ey - py) * k)) { L *= k; break; } }
+        L *= rayHit(this.walls, px, py, px + Math.cos(ang) * L, py + Math.sin(ang) * L);
         const hits = this.enemies.list.filter(e => e.targetable).map(e => {
           const rx = e.x - px, ry = e.y - py;
           const along = rx * Math.cos(ang) + ry * Math.sin(ang);
           const perp = Math.abs(-rx * Math.sin(ang) + ry * Math.cos(ang));
           return { e, along, perp };
         }).filter(h => h.along > 0 && h.along < L && h.perp < h.e.def.size * 0.45).sort((a, b) => a.along - b.along).slice(0, 3);
-        this.arrowFx(px, py, px + Math.cos(ang) * L, py + Math.sin(ang) * L);
-        for (const h of hits) this.enemies.damage(h.e, ws.dmg * 1.5, { ang, force: 200 });
+        const tr = this.add.graphics().setDepth(12);
+        tr.lineStyle(4, 0xfff2a8, 0.9).lineBetween(px, py, px + Math.cos(ang) * L, py + Math.sin(ang) * L);
+        this.tweens.add({ targets: tr, alpha: 0, duration: 200, onComplete: () => tr.destroy() });
+        for (const h of hits) this.dealDamage(h.e, ws.dmg * 1.5, ang, 'arco', false);
+        this.dropArrow(px + Math.cos(ang) * (L - 8), py + Math.sin(ang) * (L - 8), 1);
         this.noise(px, py, ws.noise);
         break;
       }
       case 'rafaga': {
         if (!lo.arma || (lo.arma.mag ?? 0) <= 0) { ok = false; this.hud?.toast('Cargador vacío', 1); break; }
         for (let k = 0; k < 5; k++) this.time.delayedCall(k * 90, () => {
-          if (this.ended || !lo.arma || (lo.arma.mag ?? 0) <= 0) return;
-          const t = this.pickTarget(ws.rangeTiles * TILE, false);
-          if (!t) return;
-          lo.arma.mag!--;
-          this.hit(t, ws.dmg, false, 60);
-          this.noise(this.player.x, this.player.y, ws.noise);
+          if (this.ended || this.swapT > 0 || !lo.arma || (lo.arma.mag ?? 0) <= 0 || lo.arma.def !== 'pistola') return;
+          this.attackT = 0;
+          this.fireRanged(this.facing + (Math.random() - 0.5) * Phaser.Math.DegToRad(6), false);
         });
         break;
       }
@@ -624,7 +1018,6 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     }
     if (ok) p.cds[id] = ABILITIES[id].cooldown;
   }
-
   // ---------- Consumibles ----------
   useQuick() {
     const pref = this.settings.rapido;
@@ -672,7 +1065,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   payItem(): ItemInst | null {
     const lo = this.snap.loadout;
     const pick = (list: ItemInst[]) => list.filter(i => !i.free && rarityAtLeast(i.rarity, 'reforzado')).sort((a, b) => itemValue(a) - itemValue(b))[0] ?? null;
-    return pick([...lo.mochila, ...(lo.bolsillo ? [lo.bolsillo] : [])]) ?? pick([lo.cabeza, lo.torso, lo.arma].filter((x): x is ItemInst => !!x));
+    return pick([...lo.mochila, ...(lo.bolsillo ? [lo.bolsillo] : [])]) ?? pick([lo.reserva ?? null, lo.cabeza, lo.torso, lo.arma].filter((x): x is ItemInst => !!x));
   }
 
   private pay() {
@@ -684,9 +1077,9 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   }
 
   // ---------- Inventario (llamado desde la UI) ----------
-  findItem(uid: string): { it: ItemInst; where: 'arma' | 'torso' | 'cabeza' | 'bolsillo' | 'mochila' } | null {
+  findItem(uid: string): { it: ItemInst; where: 'arma' | 'reserva' | 'torso' | 'cabeza' | 'bolsillo' | 'mochila' } | null {
     const lo = this.snap.loadout;
-    for (const k of ['arma', 'torso', 'cabeza', 'bolsillo'] as const) if (lo[k]?.uid === uid) return { it: lo[k]!, where: k };
+    for (const k of ['arma', 'reserva', 'torso', 'cabeza', 'bolsillo'] as const) if (lo[k]?.uid === uid) return { it: lo[k]!, where: k };
     const it = lo.mochila.find(i => i.uid === uid);
     return it ? { it, where: 'mochila' } : null;
   }
@@ -699,6 +1092,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     if (f.where === 'mochila') lo.mochila.splice(lo.mochila.indexOf(f.it), 1);
     else lo[f.where] = null;
     if (f.where === 'arma' || f.where === 'torso' || f.where === 'cabeza') this.refreshAbilities();
+    if (f.where === 'arma') this.rig.setWeapon(null);
     return f.it;
   }
 
@@ -710,16 +1104,23 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const prev = lo[slot];
     lo.mochila.splice(lo.mochila.indexOf(f.it), 1);
     lo[slot] = f.it;
-    if (prev && !prev.free) lo.mochila.push(prev); // cabe: acabamos de liberar una casilla
+    if (slot === 'arma' && prev && !prev.free) {
+      // v2 (Basu): el arma anterior pasa a la reserva; la que había en reserva vuelve a la mochila
+      const old = lo.reserva ?? null;
+      lo.reserva = prev;
+      if (old) lo.mochila.push(old);
+    } else if (prev && !prev.free) lo.mochila.push(prev); // cabe: acabamos de liberar una casilla
+    if (slot === 'arma') { this.rig.setWeapon(f.it.def); this.swapT = 0; }
     this.refreshAbilities();
     this.host.refreshInventory();
   }
 
-  invUnequip(slot: 'arma' | 'torso' | 'cabeza') {
+  invUnequip(slot: 'arma' | 'reserva' | 'torso' | 'cabeza') {
     if (!this.canEditInventory()) return;
     const lo = this.snap.loadout; const it = lo[slot]; if (!it) return;
     if (it.free) { lo[slot] = null; }
     else { if (backpackAdd(lo, it)) { this.hud?.toast('Mochila llena'); return; } lo[slot] = null; }
+    if (slot === 'arma') this.rig.setWeapon(null);
     this.refreshAbilities();
     this.host.refreshInventory();
   }
@@ -795,25 +1196,24 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   }
 
   // ---------- Looteo ----------
+  /** v2: se puede lootear con enemigos cerca (en tiempo real). Un golpe PAUSA el anillo (~0,6 s), no lo reinicia. */
   private updateLoot(dt: number, moving: boolean) {
     const L = this.loot;
     const c = this.nearContainer(LOOT_REACH_TILES * TILE);
     // al alejarse, se puede volver a lootear ese contenedor
     for (const id of [...L.done]) { const o = this.containers.find(x => x.snap.id === id); if (!o || Math.hypot(o.snap.x - this.player.x, o.snap.y - this.player.y) > LOOT_REACH_TILES * TILE * 1.5) L.done.delete(id); }
     const can = c && c.snap.items.length > 0 && !L.done.has(c.snap.id) && !moving;
-    if (!can || c !== L.c) { L.t = 0; L.c = can ? c : null; }
+    if (!can || c !== L.c) { L.t = 0; L.pause = 0; L.c = can ? c : null; }
     if (!L.ring) L.ring = this.add.graphics().setDepth(12);
     L.ring.clear();
-    this.lootBlockedMsg = false;
     if (!can || !c) return;
-    const blocked = this.enemies.list.some(e => !e.dead && Math.hypot(e.x - this.player.x, e.y - this.player.y) < LOOT_ENEMY_BLOCK_TILES * TILE);
-    if (blocked) { this.hud?.setBar('Enemigos cerca: no puedes lootear', null); this.lootBlockedMsg = true; return; }
     const need = c.snap.kind === 'cerrada' && !c.snap.opened ? LOCKED_CRATE_SEC : LOOT_RING_SEC;
-    if (L.t === 0 && c.snap.kind === 'cerrada' && !c.snap.opened) { this.noise(c.snap.x, c.snap.y, LOCKED_CRATE_NOISE); this.hud?.toast('La caja cerrada cruje… hace ruido', 1.5); }
-    L.t += dt;
+    if (L.t === 0 && L.pause <= 0 && c.snap.kind === 'cerrada' && !c.snap.opened) { this.noise(c.snap.x, c.snap.y, LOCKED_CRATE_NOISE); this.hud?.toast('La caja cerrada cruje… hace ruido', 1.5); }
+    const paused = L.pause > 0;
+    if (paused) L.pause -= dt; else L.t += dt;
     const k = Math.min(1, L.t / need);
     L.ring.lineStyle(6, 0x000000, 0.6).strokeCircle(c.snap.x, c.snap.y, 30);
-    L.ring.lineStyle(5, COLORS.hueso, 1).beginPath().arc(c.snap.x, c.snap.y, 30, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2).strokePath();
+    L.ring.lineStyle(5, paused ? 0xff3b30 : COLORS.hueso, 1).beginPath().arc(c.snap.x, c.snap.y, 30, -Math.PI / 2, -Math.PI / 2 + Math.max(0.001, k) * Math.PI * 2).strokePath();
     if (L.t >= need) {
       L.t = 0; L.done.add(c.snap.id);
       c.snap.opened = true;
@@ -833,28 +1233,143 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     }
   }
 
-  // ---------- Bucle ----------
-  update(_t: number, dtMs: number) {
-    if (!this.hud || this.ended) return;
-    if (this.debug) { this.fpsT -= dtMs; if (this.fpsT <= 0) { this.fpsT = 500; this.hud.fps.setText(`${Math.round(this.game.loop.actualFps)} fps · ${this.enemies.list.length} enemigos · guardados ${this.snap.saves}`); } }
-    if (this.paused) return;
-    const dt = Math.min(dtMs, 50) / 1000;
-    this.drawReload();
-    const s = this.snap, p = s.player, lo = s.loadout;
-    s.elapsed += dt;
-    const minute = s.elapsed / 60;
+  /** Estado del looteo (QA). */
+  lootState() { return { id: this.loot.c?.snap.id ?? null, t: this.loot.t, paused: this.loot.pause > 0 }; }
 
-    // movimiento (con penalización por peso)
+  // ---------- Salidas vistas ----------
+  private exitVisibleNow(loc: number) {
+    const p = this.map.exitLocs[loc];
+    return !!p && this.visible(p.x, p.y, EXIT_RADIUS_TILES * TILE * 0.6);
+  }
+
+  private checkExitsSeen() {
+    this.map.exitLocs.forEach((_, i) => {
+      if (this.seen.has(i) || !this.exitVisibleNow(i)) return;
+      this.seen.add(i);
+      this.host.markExitSeen(this.map.id, i);
+      const ex = this.snap.exits.find(e => e.loc === i);
+      this.hud?.toast(`Salida descubierta: ${this.extraction.locName(i)}${ex ? ` (${EXIT_NAMES[ex.type]})` : ' · cerrada en esta raid'}`, 2.5);
+    });
+  }
+  seenExitList() { return [...this.seen].sort(); }
+
+  // ---------- Movimiento / mirada ----------
+  /** Inercia: 0 → máx en 0,25 s, frenada en 0,18 s; cada punto de peso alarga ambos un 2 %. Derrape suave al girar. */
+  private move(dt: number) {
+    const lo = this.snap.loadout;
     const v = this.joy!.vec.clone();
     const k = this.keys!;
     if (k.A.isDown || k.LEFT.isDown) v.x = -1; if (k.D.isDown || k.RIGHT.isDown) v.x = 1;
     if (k.W.isDown || k.UP.isDown) v.y = -1; if (k.S.isDown || k.DOWN.isDown) v.y = 1;
     if (v.length() > 1) v.normalize();
-    const speed = PLAYER_SPEED_TILES * TILE * speedMult(lo);
-    (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(v.x * speed, v.y * speed);
+    const ranged = !weaponStats(lo.arma).melee;
+    const aiming = !!this.aim?.aiming && ranged;
+    const max = PLAYER_SPEED_TILES * TILE * speedMult(lo) * (aiming ? MOVE.aimSpeedMult : 1);
+    const wk = 1 + MOVE.weightTimePct * totalWeight(lo);
+    const target = v.clone().scale(max);
+    const accel = (PLAYER_SPEED_TILES * TILE) / (MOVE.accelSec * wk);
+    const decel = (PLAYER_SPEED_TILES * TILE) / (MOVE.decelSec * wk);
+    const dvx = target.x - this.vel.x, dvy = target.y - this.vel.y;
+    const dl = Math.hypot(dvx, dvy);
+    // acelerar hacia la nueva dirección (derrape) o frenar si sueltas
+    const rate = target.lengthSq() < 1 ? decel : accel;
+    const step = rate * dt;
+    if (dl <= step) this.vel.copy(target); else this.vel.add(new Phaser.Math.Vector2(dvx / dl * step, dvy / dl * step));
+    const body = this.player.body as Phaser.Physics.Arcade.Body;
+    // si una pared nos frena, la inercia no se "acumula" contra ella
+    if (body.blocked.left && this.vel.x < 0 || body.blocked.right && this.vel.x > 0) this.vel.x = 0;
+    if (body.blocked.up && this.vel.y < 0 || body.blocked.down && this.vel.y > 0) this.vel.y = 0;
+    body.setVelocity(this.vel.x, this.vel.y);
     const moving = v.lengthSq() > 0.02;
-    if (moving) { this.player.rotation = Math.atan2(v.y, v.x) - Math.PI / 2; this.idleT = 0; } else this.idleT += dt;
     this.lastMove.copy(v);
+    return { moving, v, max };
+  }
+
+  /**
+   * Mirada: el joystick derecho la fija mientras lo tocas (con cuerpo a cuerpo solo gira al personaje);
+   * si no, mira hacia donde te mueves. Toque rápido = mirar atrás 0,8 s. Quieto con arma de mano: se gira solo
+   * hacia el enemigo detectado más cercano (≤ 2,5 casillas) para que el golpe automático funcione.
+   */
+  private updateFacing(dt: number, moving: boolean, v: Phaser.Math.Vector2) {
+    const aim = this.aim!;
+    if (aim.tapped) { aim.tapped = false; this.glanceT = AIM.glanceBackSec; this.glanceBase = this.facing; }
+    let want = this.facing;
+    if (aim.aiming) { want = aim.angle; this.glanceT = 0; }
+    else if (this.glanceT > 0) { this.glanceT -= dt; want = this.glanceBase + Math.PI; }
+    else if (moving) want = Math.atan2(v.y, v.x);
+    else if (this.playerMelee()) {
+      let best: Enemy | null = null, bd = TILE * 2.5;
+      for (const e of this.enemies.list) {
+        if (!e.targetable || !hasDetected(e)) continue;
+        const d = Math.hypot(e.x - this.player.x, e.y - this.player.y);
+        if (d < bd) { bd = d; best = e; }
+      }
+      if (best) want = Math.atan2(best.y - this.player.y, best.x - this.player.x);
+    }
+    const turn = Phaser.Math.DegToRad(MOVE.turnDegPerSec) * dt * (aim.aiming ? 1.6 : 1);
+    this.facing = Phaser.Math.Angle.RotateTo(this.facing, want, turn);
+  }
+
+  /** Enemigo oculto (en la niebla) a ≤ 4 casillas: vibración creciente + viñeta roja de ese lado. */
+  private updateBehind(dt: number) {
+    const R = VISION.behindWarnTiles * TILE;
+    const list: { ang: number; k: number }[] = [];
+    let nearest = 0;
+    for (const e of this.enemies.list) {
+      if (e.dead || e.visibleNow) continue;
+      const d = Math.hypot(e.x - this.player.x, e.y - this.player.y);
+      if (d > R || !e.sees) continue;
+      const k = 1 - d / R;
+      list.push({ ang: Math.atan2(e.y - this.player.y, e.x - this.player.x), k });
+      nearest = Math.max(nearest, k);
+    }
+    this.behind = list;
+    if (list.length) this.stats.behindWarn++;
+    this.behindT -= dt;
+    if (nearest > 0 && this.behindT <= 0) {
+      this.behindT = 0.9 - 0.65 * nearest;
+      vibrate(Math.round(18 + 40 * nearest));
+      this.stats.behindVibes++;
+    }
+    // la cámara sigue con un pequeño golpe de retroceso al disparar
+    this.kick.scale(Math.pow(0.0005, dt));
+    this.cameras.main.scrollX += this.kick.x * 0.25; this.cameras.main.scrollY += this.kick.y * 0.25;
+  }
+
+  // ---------- Bucle ----------
+  update(_t: number, dtMs: number) {
+    if (!this.hud || this.ended) return;
+    if (this.debug) { this.fpsT -= dtMs; if (this.fpsT <= 0) { this.fpsT = 500; this.hud.fps.setText(`${Math.round(this.game.loop.actualFps)} fps · ${this.enemies.list.length} enemigos · guardados ${this.snap.saves}`); } }
+    if (this.paused) return;
+    // hit-stop: el mundo se congela unos ms (la UI sigue)
+    if (this.hitStopT > 0) {
+      this.hitStopT -= dtMs;
+      if (this.hitStopT <= 0) this.endHitStop();
+      else { this.hud.update(dtMs / 1000); return; }
+    }
+    const dt = Math.min(dtMs, 50) / 1000;
+    const s = this.snap, p = s.player, lo = s.loadout;
+    s.elapsed += dt;
+    const minute = s.elapsed / 60;
+
+    // movimiento con inercia + mirada
+    const { moving, v, max } = this.move(dt);
+    if (moving) this.idleT = 0; else this.idleT += dt;
+    this.updateFacing(dt, moving, v);
+    const ws0 = weaponStats(lo.arma);
+    this.aim!.update(dt, !ws0.melee);
+
+    // cambio de arma (0,4 s sin atacar)
+    if (this.swapT > 0) { this.swapT -= dt; this.rig.lower = Math.sin(Math.PI * Phaser.Math.Clamp(1 - this.swapT / SWAP.sec, 0, 1)); if (this.swapT <= 0) { this.swapT = 0; this.rig.lower = 0; this.finishSwap(); } }
+
+    // visión (cono hacia donde miras) y muñeco del jugador
+    this.vision!.update(this.player.x, this.player.y, this.facing, this.wallsVersion);
+    const body = this.player.body as Phaser.Physics.Arcade.Body;
+    this.rig.update(dt, this.player.x, this.player.y, this.facing, Math.hypot(body.velocity.x, body.velocity.y) / Math.max(1, max), true);
+    this.visT -= dt;
+    if (this.visT <= 0) { this.visT = 0.15; this.updateVisibility(); this.cullWorld(); }
+    this.exitCheckT -= dt;
+    if (this.exitCheckT <= 0) { this.exitCheckT = 0.25; this.checkExitsSeen(); }
 
     // dificultad: oleadas y Corredor de castigo por estar quieto
     s.spawnTimer += dt * scaling(minute).spawn;
@@ -871,7 +1386,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
           if (sq.groups > 0) {
             sq.groups--;
             const n = DIFFICULTY.erranteGroupMin + Math.floor(Math.random() * (DIFFICULTY.erranteGroupMax - DIFFICULTY.erranteGroupMin + 1));
-            for (let i = 0; i < n; i++) this.spawnAt('errante', pt.x + (Math.random() - 0.5) * TILE * 3, pt.y + (Math.random() - 0.5) * TILE * 3);
+            for (let i = 0; i < Math.min(n, DIFFICULTY.maxAlive - this.enemies.list.length); i++) this.spawnAt('errante', pt.x + (Math.random() - 0.5) * TILE * 3, pt.y + (Math.random() - 0.5) * TILE * 3);
           } else { sq.hinchados--; this.spawnAt('hinchado', pt.x, pt.y); }
         }
       }
@@ -882,6 +1397,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       if (pt) { const e = this.spawnAt('corredor', pt.x, pt.y); e.state = 'investigate'; e.goal = { x: this.player.x, y: this.player.y, until: s.elapsed + 15 }; }
     }
 
+    this.flow.compute(this.player.x, this.player.y);
     this.enemies.update(dt);
     if (this.ended) return;
 
@@ -890,7 +1406,12 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     if (p.aguantar > 0) p.aguantar -= dt;
     if (p.healLeft > 0) { const h = Math.min(p.healLeft, p.healRate * dt); p.healLeft -= h; p.hp = Math.min(PLAYER_MAX_HP, p.hp + h); if (p.hp >= PLAYER_MAX_HP) p.healLeft = 0; }
     this.autoHeal();
-    this.autoAttack(dt);
+    this.combat(dt);
+    this.updatePendingMelee(dt);
+    this.proj.update(dt);
+    this.pickupArrows();
+    this.drawReload();
+    if (this.ended) return;
 
     // ácido
     const g = this.acidGfx!.clear();
@@ -919,7 +1440,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const st = this.extraction.update(dt);
     if (this.ended) return;
     if (st.exit) this.hud.setBar(st.text, st.progress > 0 || st.exit.unlocked ? st.progress : null, st.hitPaused ? 0xff3b30 : 0x4cd964);
-    else if (!this.lootBlockedMsg) this.hud.setBar('', null);
+    else if (this.loot.pause > 0) this.hud.setBar('¡Te golpean! Looteo pausado', null, 0xff3b30);
+    else this.hud.setBar('', null);
     this.hud.setAction(st.action?.label ?? null, st.action?.run ?? null);
 
     // escanear
@@ -935,31 +1457,39 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       }
     }
 
+    this.updateBehind(dt);
+
     // HUD
     this.refreshAbilities();
     const ws = weaponStats(lo.arma);
     this.hud.setHp(p.hp, PLAYER_MAX_HP, totalProtection(lo));
     const remain = Math.max(0, DIFFICULTY.raidSeconds - s.elapsed);
     this.hud.timer.setText(remain > 0 ? `${Math.floor(remain / 60)}:${String(Math.floor(remain % 60)).padStart(2, '0')}` : 'NIEBLA').setColor(remain < 120 ? '#ff3cc8' : '#e8e2d0');
-    const ammo = ws.mag && lo.arma ? `  ·  ${p.reload > 0 ? 'recargando' : lo.arma.mag ?? 0}/${countOf(lo.mochila, 'municion')}` : '';
+    const ammo = ws.mag && lo.arma ? `  ·  ${p.reload > 0 ? 'recargando' : lo.arma.mag ?? 0}/${countOf(lo.mochila, 'municion')}` : this.isBow() ? `  ·  flechas ${this.arrowsLeft()}` : '';
     const sm = speedMult(lo);
     this.hud.info.setText(`${lo.arma ? def(lo.arma).nombre : 'Puños'}${ammo}  ·  min ${Math.floor(minute)}${sm < 0.999 ? `  ·  vel ${Math.round(sm * 100)}%` : ''}${p.aguantar > 0 ? '  ·  AGUANTAR' : ''}${p.healLeft > 0 ? '  ·  curando' : ''}`);
     this.abilityIds.forEach((id, i) => {
       const b = this.hud!.abilities[i];
       if (!id) b.set({ icon: null, label: '', cd: 0, maxCd: 0, enabled: false });
-      else b.set({ icon: ABILITIES[id].icon, label: ABILITIES[id].nombre, cd: p.cds[id] ?? 0, maxCd: ABILITIES[id].cooldown, enabled: id !== 'rafaga' || (lo.arma?.mag ?? 0) > 0 });
+      else b.set({ icon: ABILITIES[id].icon, label: ABILITIES[id].nombre, cd: p.cds[id] ?? 0, maxCd: ABILITIES[id].cooldown, enabled: this.swapT <= 0 && (id !== 'rafaga' || (lo.arma?.mag ?? 0) > 0) });
     });
     const qid = this.hasItem(this.settings.rapido) ? this.settings.rapido : this.settings.rapido === 'vendaje' ? 'botiquin' : 'vendaje';
     const qn = countOf(lo.mochila, qid) + (lo.bolsillo?.def === qid ? lo.bolsillo.qty : 0);
     this.hud.quick.set({ icon: ITEMS[qid].icon, label: ITEMS[qid].nombre, cd: p.healLeft > 0 ? p.healLeft : 0, maxCd: ITEMS[qid].heal!.amount, enabled: qn > 0, badge: String(qn) });
+    const rv = lo.reserva ?? null;
+    this.hud.swap.set({ icon: rv ? ITEMS[rv.def].icon ?? null : null, label: rv ? 'Cambiar' : '', cd: this.swapT, maxCd: SWAP.sec, enabled: !!rv, badge: rv ? '⇄' : undefined });
     this.hud.bagBtn.set({ icon: 'caja', label: '', cd: 0, maxCd: 0, enabled: true });
     this.hud.pauseBtn.set({ icon: null, label: '', cd: 0, maxCd: 0, enabled: true });
-    const exitsView = s.exits.map(e => ({ x: e.x, y: e.y, open: this.extraction.isOpen(e), name: EXIT_NAMES[e.type] }));
+    // salidas: solo las vistas alguna vez en este mapa (o a la vista ahora); flechas de borde solo de las activas vistas
+    const known = (loc: number) => this.seen.has(loc) || this.exitVisibleNow(loc);
+    const exitsView = s.exits.filter(e => known(e.loc)).map(e => ({ x: e.x, y: e.y, open: this.extraction.isOpen(e), name: `${this.extraction.locName(e.loc)} · ${EXIT_NAMES[e.type]}` }));
     this.hud.drawArrows(this.cameras.main, exitsView);
-    const threats = this.enemies.list.filter(e => hasDetected(e) && !this.onScreen(e.x, e.y)).map(e => ({ x: e.x, y: e.y, type: e.def.type as string }));
+    // amenazas: detectado y NO (en pantalla y visible) → flecha de borde; en la niebla cuenta como no visible
+    const threats = this.enemies.list.filter(e => hasDetected(e) && !(this.onScreen(e.x, e.y) && e.visibleNow)).map(e => ({ x: e.x, y: e.y, type: e.def.type as string }));
     this.hud.drawThreats(this.cameras.main, this.player, threats, s.elapsed);
-    const closed = this.map.exitLocs.filter((_, i) => !s.exits.some(e => e.loc === i));
+    const closed = this.map.exitLocs.filter((_, i) => known(i) && !s.exits.some(e => e.loc === i));
     this.hud.drawMinimap(this.player.x, this.player.y, exitsView, closed, this.scanT > 0 ? this.enemies.list.map(e => ({ x: e.x, y: e.y, color: COLORS.peligro })) : [], this.cameras.main.worldView);
+    this.hud.drawVignette(this.behind);
     this.hud.update(dt);
 
     this.autosaveT += dt;
@@ -973,4 +1503,23 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.host.refreshInventory();
     return !left;
   }
+  /** QA: tiempos de inercia esperados con el peso actual. */
+  inertia() {
+    const lo = this.snap.loadout, w = totalWeight(lo), k = 1 + MOVE.weightTimePct * w;
+    return { weight: w, accelSec: MOVE.accelSec * k, decelSec: MOVE.decelSec * k, max: PLAYER_SPEED_TILES * TILE * speedMult(lo) };
+  }
+  /** QA: punto (px) sin paredes en `r` casillas a la redonda, buscando en espiral desde el jugador. */
+  openSpot(r = 5) {
+    const R = r * TILE, out: Rect[] = [];
+    for (let ring = 0; ring < 60; ring++) for (let a = 0; a < Math.max(1, ring * 6); a++) {
+      const ang = (a / Math.max(1, ring * 6)) * Math.PI * 2;
+      const x = this.player.x + Math.cos(ang) * ring * TILE * 2, y = this.player.y + Math.sin(ang) * ring * TILE * 2;
+      if (x < R + TILE || y < R + TILE || x > WORLD - R - TILE || y > WORLD - R - TILE) continue;
+      out.length = 0;
+      if (!this.wallIndex.query(x - R, y - R, x + R, y + R, out).some(w => w.x < x + R && w.x + w.w > x - R && w.y < y + R && w.y + w.h > y - R) && !this.doors.some(o => Math.hypot(o.d.x - x, o.d.y - y) < R + TILE)) return { x, y };
+    }
+    return null;
+  }
+  setVision(on: boolean) { this.vision?.setEnabled(on); }
+  doorList() { return this.doors.map(o => ({ id: o.d.id, x: o.d.x + o.d.w / 2, y: o.d.y + o.d.h / 2, horiz: o.d.horiz, open: o.open })); }
 }

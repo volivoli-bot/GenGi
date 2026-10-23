@@ -4,6 +4,50 @@ import { COLORS } from './config/constants';
 export const ART = ['player', 'errante', 'corredor', 'hinchado', 'abominacion', 'caja', 'bate', 'machete', 'arco', 'pistola',
   'casco', 'chaleco', 'tablas', 'vendaje', 'botiquin', 'bengala', 'generador', 'chapa', 'extraccion', 'aviso-ataque', 'municion', 'flecha'];
 
+/** Arte v2 por piezas (Basu, public/art/v2): [clave, ancho, alto] del viewBox. Se rasteriza a 2× para que no se vea borroso con zoom. */
+export const ART_V2: [string, number, number][] = [
+  ['abominacion_cuerpo', 128, 128],
+  ['abominacion_tentaculo', 32, 96],
+  ['arma_arco', 64, 64],
+  ['arma_bate', 64, 64],
+  ['arma_machete', 64, 64],
+  ['arma_pistola', 64, 64],
+  ['cartel_evacuacion', 64, 64],
+  ['coche', 64, 128],
+  ['corredor_brazo', 64, 64],
+  ['corredor_cabeza', 64, 64],
+  ['corredor_pie', 64, 64],
+  ['corredor_sombra', 64, 64],
+  ['corredor_torso', 64, 64],
+  ['errante_brazo', 64, 64],
+  ['errante_cabeza', 64, 64],
+  ['errante_pie', 64, 64],
+  ['errante_sombra', 64, 64],
+  ['errante_torso', 64, 64],
+  ['fx_charco_acido', 128, 128],
+  ['fx_fogonazo', 64, 64],
+  ['fx_impacto', 64, 64],
+  ['fx_mancha_suelo_azul', 64, 64],
+  ['fx_mancha_suelo_verde', 64, 64],
+  ['fx_sangre_azul_1', 64, 64],
+  ['fx_sangre_azul_2', 64, 64],
+  ['fx_sangre_verde_1', 64, 64],
+  ['fx_sangre_verde_2', 64, 64],
+  ['hinchado_cuerpo', 96, 96],
+  ['hinchado_pustula', 32, 32],
+  ['jugador_brazo', 64, 64],
+  ['jugador_cabeza', 64, 64],
+  ['jugador_pie', 64, 64],
+  ['jugador_sombra', 64, 64],
+  ['jugador_torso', 64, 64],
+  ['muro', 64, 64],
+  ['proyectil_bala', 8, 48],
+  ['proyectil_flecha', 16, 64],
+  ['puerta', 64, 16],
+  ['suelo_asfalto', 64, 64],
+  ['suelo_baldosa', 64, 64],
+];
+
 /** Carga el arte vectorial y avisa a la app. */
 export class BootScene extends Phaser.Scene {
   constructor() { super('Boot'); }
@@ -12,6 +56,8 @@ export class BootScene extends Phaser.Scene {
       const big = k === 'abominacion' || k === 'extraccion' || k === 'aviso-ataque';
       this.load.svg(k, `art/${k}.svg`, { width: big ? 256 : 128, height: big ? 256 : 128 });
     }
+    // si falta alguna pieza, el muñeco usa la imagen única de la v1 (ver rig.ts)
+    for (const [k, w, h] of ART_V2) this.load.svg(k, `art/v2/${k}.svg`, { width: w * 2, height: h * 2 });
   }
   create() { this.game.events.emit('gengi-ready'); }
 }

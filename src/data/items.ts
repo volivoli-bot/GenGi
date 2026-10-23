@@ -7,6 +7,8 @@ export type AbilityId = 'golpe' | 'torbellino' | 'perforante' | 'rafaga' | 'agua
 export interface WeaponStats {
   dmg: number; aps: number; rangeTiles: number; noise: number; melee: boolean;
   ability: AbilityId; mag?: number; reloadSec?: number;
+  /** v2: munición que gasta cada disparo directamente de la mochila (arco → flechas). */
+  ammo?: string;
 }
 export interface ArmorStats { protection: number; ability?: AbilityId }
 
@@ -37,7 +39,7 @@ export const ITEMS: Record<string, ItemDef> = {
   machete: { id: 'machete', nombre: 'Machete', kind: 'arma', slot: 'arma', icon: 'machete', weight: 1.5, value: 45, small: false, rolls: true, maxStack: 1,
     weapon: { dmg: 9, aps: 2.0, rangeTiles: 1.1, noise: 0, melee: true, ability: 'torbellino' }, desc: 'Rápido. Torbellino con sangrado.' },
   arco: { id: 'arco', nombre: 'Arco', kind: 'arma', slot: 'arma', icon: 'arco', weight: 2, value: 70, small: false, rolls: true, maxStack: 1,
-    weapon: { dmg: 18, aps: 0.8, rangeTiles: 7, noise: 1, melee: false, ability: 'perforante' }, desc: 'Largo alcance y casi sin ruido.' },
+    weapon: { dmg: 18, aps: 0.8, rangeTiles: 7, noise: 1, melee: false, ability: 'perforante', ammo: 'flechas' }, desc: 'Largo alcance y casi sin ruido.' },
   pistola: { id: 'pistola', nombre: 'Pistola', kind: 'arma', slot: 'arma', icon: 'pistola', weight: 1, value: 110, small: true, rolls: true, maxStack: 1,
     weapon: { dmg: 12, aps: 2.0, rangeTiles: 6, noise: 10, melee: false, ability: 'rafaga', mag: 12, reloadSec: 1.5 }, desc: 'Mucho daño pero MUCHO ruido. Gasta munición.' },
   ropa: { id: 'ropa', nombre: 'Ropa', kind: 'armadura', slot: 'torso', icon: null, weight: 0, value: 5, small: false, rolls: false, maxStack: 1,
@@ -52,6 +54,7 @@ export const ITEMS: Record<string, ItemDef> = {
     heal: { amount: 30, seconds: 2 }, desc: '+30 de vida en 2 s.' },
   botiquin: { id: 'botiquin', nombre: 'Botiquín', kind: 'consumible', icon: 'botiquin', weight: 0.8, value: 60, small: true, rolls: false, maxStack: 3,
     heal: { amount: 70, seconds: 4 }, desc: '+70 de vida en 4 s.' },
+  flechas: { id: 'flechas', nombre: 'Flechas', kind: 'municion', icon: 'flecha', weight: 0.05, value: 3, small: true, rolls: false, maxStack: 30, desc: 'Para el arco. Se pueden recoger del suelo o del cadáver.' },
   municion: { id: 'municion', nombre: 'Munición 9 mm', kind: 'municion', icon: 'municion', weight: 0.02, value: 4, small: true, rolls: false, maxStack: 48, desc: 'Escasa y cara.' },
   bengala: { id: 'bengala', nombre: 'Bengala', kind: 'bengala', icon: 'bengala', weight: 0.5, value: 50, small: true, rolls: false, maxStack: 2, desc: 'Abre la extracción de bengala (min 8-10).' },
   chapas: { id: 'chapas', nombre: 'Chapas', kind: 'chapas', icon: 'chapa', weight: 0, value: 1, small: true, rolls: false, maxStack: 999, desc: 'Moneda. Se ingresa al extraer.' },

@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { HUD2 } from '../config/v2';
 
 /** Joystick virtual flotante: aparece donde tocas en la mitad izquierda. */
 export class Joystick {
@@ -7,6 +8,8 @@ export class Joystick {
   private knob: Phaser.GameObjects.Arc;
   private pointerId: number | null = null;
   private readonly radius = 60;
+  /** Punto donde empezó el toque: el vector se mide desde aquí (neutro al tocar), aunque la base se dibuje separada del borde. */
+  private ox = 0; private oy = 0;
 
   constructor(private scene: Phaser.Scene, private blocked: (x: number, y: number, p?: Phaser.Input.Pointer) => boolean = () => false) {
     this.base = scene.add.circle(0, 0, this.radius, 0xffffff, 0.08).setStrokeStyle(3, 0xffffff, 0.35).setScrollFactor(0).setDepth(1000).setVisible(false);
@@ -15,12 +18,16 @@ export class Joystick {
     scene.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (this.pointerId !== null || p.x > scene.scale.width / 2 || this.blocked(p.x, p.y, p)) return;
       this.pointerId = p.id;
-      this.base.setPosition(p.x, p.y).setVisible(true);
-      this.knob.setPosition(p.x, p.y).setVisible(true);
+      this.ox = p.x; this.oy = p.y;
+      // la base no se pega al borde (gesto de atrás de iOS): al menos edgeInsetPx + radio
+      const m = HUD2.edgeInsetPx + this.radius, W = scene.scale.width, H = scene.scale.height;
+      const bx = Phaser.Math.Clamp(p.x, m, Math.max(m, W - m)), by = Phaser.Math.Clamp(p.y, m, Math.max(m, H - m));
+      this.base.setPosition(bx, by).setVisible(true);
+      this.knob.setPosition(bx, by).setVisible(true);
     });
     scene.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (p.id !== this.pointerId) return;
-      const dx = p.x - this.base.x, dy = p.y - this.base.y;
+      const dx = p.x - this.ox, dy = p.y - this.oy;
       const len = Math.hypot(dx, dy);
       const k = len > this.radius ? this.radius / len : 1;
       this.knob.setPosition(this.base.x + dx * k, this.base.y + dy * k);

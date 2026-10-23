@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { WORLD } from '../config/constants';
+import { AIM, HUD2, SWAP } from '../config/v2';
 import { safeInsets } from '../ui/safe';
 
 const FONT = 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
@@ -55,6 +56,12 @@ export class Hud {
   msg: Phaser.GameObjects.Text;
   abilities: RoundButton[];
   quick: RoundButton;
+  /** v2: cambio rápido al arma de reserva (encima del arco de habilidades). */
+  swap: RoundButton;
+  /** v2: posición en reposo del joystick de apuntar. */
+  aimRest = { x: 0, y: 0 };
+  /** v2: viñeta roja del lado de un enemigo oculto detrás. */
+  vignette: Phaser.GameObjects.Graphics;
   pauseBtn: RoundButton;
   bagBtn: RoundButton;
   actionBtn: Phaser.GameObjects.Text;
@@ -88,6 +95,8 @@ export class Hud {
     this.fps = t(11, '#b6ff3c').setVisible(false);
     this.abilities = [new RoundButton(sc), new RoundButton(sc), new RoundButton(sc)];
     this.quick = new RoundButton(sc);
+    this.swap = new RoundButton(sc);
+    this.vignette = sc.add.graphics().setScrollFactor(0).setDepth(D - 8);
     this.pauseBtn = new RoundButton(sc);
     this.bagBtn = new RoundButton(sc);
     this.pauseBtn.icon.setVisible(false);
@@ -120,14 +129,20 @@ export class Hud {
     this.bagBtn.icon.setTexture('caja');
     const s = Math.min(96, Math.max(72, W * 0.22));
     this.miniRect = { x: R - s, y: T + 56, s };
-    // Botones en abanico en la esquina inferior derecha (alcance del pulgar)
-    const big = Math.min(40, Math.max(32, Math.min(W, H) * 0.095)), small = big * 0.78;
-    const cx = R - big - 4, cy = B - big - 18;
-    this.abilities[0].place(cx, cy, big);
-    this.abilities[1].place(cx - big * 2.35, cy + big * 0.2, small);
-    this.abilities[2].place(cx + big * 0.1, cy - big * 2.45, small);
-    this.quick.place(cx - big * 1.95, cy - big * 1.85, small);
-    this.actionBtn.setPosition(W / 2, B - 150);
+    // v2 (Basu/Dott): joystick de apuntar grande (radio 70) abajo a la derecha, en el reposo del pulgar;
+    // las 3 habilidades y el consumible en un arco más pequeño (52 px) encima y a la izquierda; el cambio de arma encima del arco.
+    const ar = AIM.stickRadius;
+    const cx = R - ar - HUD2.edgeInsetPx, cy = B - ar - HUD2.edgeInsetPx; // reposo a 20 px del borde (gesto de atrás de iOS)
+    this.aimRest = { x: cx, y: cy };
+    const br = HUD2.buttonPx / 2;
+    const btns = [this.abilities[0], this.abilities[1], this.abilities[2], this.quick];
+    HUD2.arcDeg.forEach((deg, i) => {
+      const a = Phaser.Math.DegToRad(deg);
+      btns[i].place(cx + Math.cos(a) * HUD2.arcRadius, cy + Math.sin(a) * HUD2.arcRadius, br);
+    });
+    const top = this.quick.bg, q2 = this.abilities[2].bg;
+    this.swap.place((top.x + q2.x) / 2 + 4, Math.min(top.y, q2.y) - br - SWAP.buttonPx / 2 - 14, SWAP.buttonPx / 2);
+    this.actionBtn.setPosition(Math.max(L + 80, W * 0.36), B - 232);
     this.barBg.setPosition(W / 2, H * 0.62); this.barFill.setPosition(W / 2 - 108, H * 0.62); this.barText.setPosition(W / 2, H * 0.62 - 10);
   }
 
@@ -144,7 +159,7 @@ export class Hud {
 
   /** ¿Toca este punto algún control? (para que el joystick no lo robe) */
   hitTest(x: number, y: number) {
-    const btns = [...this.abilities, this.quick, this.pauseBtn, this.bagBtn];
+    const btns = [...this.abilities, this.quick, this.swap, this.pauseBtn, this.bagBtn];
     if (btns.some(b => b.contains(x, y))) return true;
     if (this.actionBtn.visible && this.actionBtn.getBounds().contains(x, y)) return true;
     return y < this.insets.top + 50;
@@ -153,7 +168,7 @@ export class Hud {
   /** Despacha un toque a los botones; devuelve true si lo ha consumido. */
   handleTap(x: number, y: number) {
     if (this.actionBtn.visible && this.actionBtn.getBounds().contains(x, y)) { this.onAction?.(); return true; }
-    for (const b of [...this.abilities, this.quick, this.pauseBtn, this.bagBtn]) if (b.contains(x, y)) { b.onTap(); return true; }
+    for (const b of [...this.abilities, this.quick, this.swap, this.pauseBtn, this.bagBtn]) if (b.contains(x, y)) { b.onTap(); return true; }
     return false;
   }
 
@@ -185,6 +200,27 @@ export class Hud {
   }
 
   flashHurt() { this.hurt.fillAlpha = 0.28; }
+
+  /** Viñeta roja en el borde de pantalla hacia `ang` (enemigo oculto detrás); k 0..1 = cercanía. */
+  drawVignette(list: { ang: number; k: number }[]) {
+    const g = this.vignette.clear();
+    if (!list.length) return;
+    const W = this.sc.scale.width, H = this.sc.scale.height;
+    const band = 46, steps = 6;
+    for (const { ang, k } of list) {
+      const dx = Math.cos(ang), dy = Math.sin(ang);
+      const sides: [number, number][] = [];
+      if (dx > 0.3) sides.push([0, dx]); if (dx < -0.3) sides.push([1, -dx]);
+      if (dy > 0.3) sides.push([2, dy]); if (dy < -0.3) sides.push([3, -dy]);
+      for (const [side, w] of sides) for (let i = 0; i < steps; i++) {
+        const a = 0.34 * k * w * (1 - i / steps) / steps * 2;
+        const o = (band / steps) * i, t = band / steps;
+        g.fillStyle(0xff1a1a, a);
+        if (side === 0) g.fillRect(W - o - t, 0, t, H); else if (side === 1) g.fillRect(o, 0, t, H);
+        else if (side === 2) g.fillRect(0, H - o - t, W, t); else g.fillRect(0, o, W, t);
+      }
+    }
+  }
 
   drawMinimap(px: number, py: number, exits: { x: number; y: number; open: boolean }[], closed: { x: number; y: number }[], extra: { x: number; y: number; color: number }[], view?: Phaser.Geom.Rectangle) {
     const { x, y, s } = this.miniRect;

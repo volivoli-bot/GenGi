@@ -25,6 +25,22 @@ export const MIGRATIONS: Record<number, (d: AnySave) => AnySave> = {
       activeRaid: null,
     };
   },
+  /**
+   * 1 → 2 (v2): salidas descubiertas por mapa (vacío: hay que volver a verlas en el mapa nuevo, 3× más grande)
+   * y una raid activa del mapa v1 queda marcada para repoblarse en el mapa nuevo (se conservan equipo, vida y tiempo).
+   */
+  1: (d) => {
+    const out = { ...d, saveVersion: 2, seenExits: d.seenExits ?? {} };
+    // nueva ranura de arma de reserva
+    if (out.loadout) out.loadout = { ...out.loadout, reserva: out.loadout.reserva ?? null };
+    if (out.activeRaid?.loadout) out.activeRaid = { ...out.activeRaid, loadout: { ...out.activeRaid.loadout, reserva: out.activeRaid.loadout.reserva ?? null } };
+    if (out.activeRaid && !out.activeRaid.mapId) out.activeRaid = { ...out.activeRaid, repopulate: true };
+    // el arco ahora gasta flechas: quien ya tuviera arco recibe un carcaj para no quedarse sin poder usarlo
+    const lo = out.activeRaid?.loadout ?? out.loadout ?? {};
+    const all = [...(out.stash ?? []), ...(out.overflow ?? []), lo.arma, ...(lo.mochila ?? [])].filter(Boolean);
+    if (all.some((i: AnySave) => i.def === 'arco')) (out.stash = out.stash ?? []).push({ uid: 'mig2-flechas', def: 'flechas', rarity: 'comun', qty: 12 });
+    return out;
+  },
 };
 
 export function migrate(raw: AnySave): AnySave {

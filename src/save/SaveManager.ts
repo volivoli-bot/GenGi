@@ -14,6 +14,7 @@ export function newSave(): SaveData {
     chapas: 60, stash: [], overflow: [], loadout: emptyLoadout(),
     settings: defaultSettings(), raidLog: [], activeRaid: null,
     stats: { raids: 0, extracted: 0, deaths: 0 },
+    seenExits: {},
   };
 }
 
@@ -29,9 +30,10 @@ function normalize(d: Partial<SaveData>): SaveData {
     stats: { ...base.stats, ...(d.stats ?? {}) },
     stash: (d.stash ?? []).filter(okItem),
     overflow: (d.overflow ?? []).filter(okItem),
-    loadout: { arma: okItem(lo.arma) ? lo.arma : null, torso: okItem(lo.torso) ? lo.torso : null, cabeza: okItem(lo.cabeza) ? lo.cabeza : null, bolsillo: okItem(lo.bolsillo) ? lo.bolsillo : null, mochila: (lo.mochila ?? []).filter(okItem) },
+    loadout: { arma: okItem(lo.arma) ? lo.arma : null, torso: okItem(lo.torso) ? lo.torso : null, cabeza: okItem(lo.cabeza) ? lo.cabeza : null, bolsillo: okItem(lo.bolsillo) ? lo.bolsillo : null, reserva: okItem(lo.reserva) ? lo.reserva : null, mochila: (lo.mochila ?? []).filter(okItem) },
     raidLog: d.raidLog ?? [],
     activeRaid: d.activeRaid ?? null,
+    seenExits: d.seenExits && typeof d.seenExits === 'object' ? d.seenExits : {},
   } as SaveData;
 }
 
