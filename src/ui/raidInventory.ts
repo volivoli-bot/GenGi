@@ -1,7 +1,6 @@
-import { BACKPACK_SLOTS } from '../config/constants';
 import { ITEMS } from '../data/items';
 import { RARITIES } from '../data/rarity';
-import { armorProtection, canPocket, def, ItemInst, itemLabel, itemWeight, speedMult, totalWeight, weaponStats } from '../game/inventory';
+import { armorProtection, backpackSlots, canPocket, def, ItemInst, itemLabel, itemWeight, speedMult, totalWeight, weaponStats } from '../game/inventory';
 import type { RaidScene } from '../raid/RaidScene';
 import { h, itemCell, itemMeta } from './dom';
 import { PRUEBA_V2 } from '../config/v2';
@@ -117,9 +116,11 @@ export class RaidInventory {
       ),
       h('div', { class: 'scroll' },
         h('h3', {}, 'Equipado'),
-        h('div', { class: 'slots five' }, this.cell(lo.arma, 'yo', 'Arma'), this.cell(lo.reserva ?? null, 'yo', 'Reserva'), this.cell(lo.torso, 'yo', 'Torso'), this.cell(lo.cabeza, 'yo', 'Cabeza'), this.cell(lo.bolsillo, 'yo', 'Bolsillo')),
-        h('h3', {}, h('span', {}, 'Mochila'), h('span', {}, `${lo.mochila.length}/${BACKPACK_SLOTS}`)),
-        h('div', { class: 'grid' }, ...Array.from({ length: BACKPACK_SLOTS }, (_, i) => this.cell(lo.mochila[i] ?? null, 'yo'))),
+        h('div', { class: 'slots five' }, this.cell(lo.arma, 'yo', 'Arma'), this.cell(lo.reserva ?? null, 'yo', 'Reserva'), this.cell(lo.torso, 'yo', 'Torso'), this.cell(lo.cabeza, 'yo', 'Cabeza'), this.cell(lo.espalda ?? null, 'yo', 'Espalda')),
+        h('h3', {}, h('span', {}, 'Bolsillo seguro'), h('span', {}, `${(lo.bolsillo ? 1 : 0) + (lo.bolsilloExtra?.length ?? 0)}/${Math.max(sc.snap.pocketSlots ?? 1, 1 + (lo.bolsilloExtra?.length ?? 0))}`)),
+        h('div', { class: 'slots five' }, ...Array.from({ length: Math.max(sc.snap.pocketSlots ?? 1, 1 + (lo.bolsilloExtra?.length ?? 0)) }, (_, i) => this.cell(i === 0 ? lo.bolsillo : lo.bolsilloExtra?.[i - 1] ?? null, 'yo', 'Bolsillo'))),
+        h('h3', {}, h('span', {}, 'Mochila'), h('span', {}, `${lo.mochila.length}/${backpackSlots(lo)}`)),
+        h('div', { class: 'grid' }, ...Array.from({ length: Math.max(backpackSlots(lo), lo.mochila.length) }, (_, i) => this.cell(lo.mochila[i] ?? null, 'yo'))),
         near ? h('h3', {}, h('span', {}, 'En el suelo / contenedor'), h('span', {}, String(near.items.length))) : null,
         near ? (near.items.length ? h('div', { class: 'grid' }, ...near.items.map(it => this.cell(it, 'cerca'))) : h('p', { class: 'hint' }, 'Vacío')) : null,
         h('p', { class: 'hint' }, 'Toca un objeto para ver acciones · mantén pulsado para comparar'),
@@ -195,12 +196,13 @@ export class RaidInventory {
     if (this.sel!.from === 'cerca') { if (nearId !== null) a('Coger', () => sc.invTake(nearId, uid)); }
     else {
       const where = sc.findItem(uid)!.where;
-      if (d.heal) a('Usar', () => sc.invUse(uid));
+      if (d.heal || d.effect) a('Usar', () => sc.invUse(uid));
+      if (d.kind === 'granada') a('Lanzar', () => sc.invUse(uid));
       if (where === 'mochila' && d.slot) a('Equipar', () => sc.invEquip(uid));
       if (where === 'reserva') a('Cambiar a esta', () => sc.swapWeapon());
-      if (where === 'arma' || where === 'torso' || where === 'cabeza' || where === 'reserva') a(it.free ? 'Quitar (se descarta)' : 'Quitar', () => sc.invUnequip(where));
+      if (where === 'arma' || where === 'torso' || where === 'cabeza' || where === 'reserva' || where === 'espalda') a(it.free ? 'Quitar (se descarta)' : 'Quitar', () => sc.invUnequip(where));
       if (where === 'mochila' && canPocket(it) && !it.free) a('Mover al bolsillo seguro', () => sc.invToPocket(uid));
-      if (where === 'bolsillo') a('A la mochila', () => sc.invFromPocket());
+      if (where === 'bolsillo' || where === 'bolsilloExtra') a('A la mochila', () => sc.invFromPocket(uid));
       a('Tirar', () => sc.invDrop(uid), 'danger');
     }
     a('✕', () => undefined, 'ghost');

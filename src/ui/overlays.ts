@@ -18,7 +18,7 @@ export function pauseOverlay(root: HTMLElement, reason: string, onResume: () => 
   return el;
 }
 
-export function summaryOverlay(root: HTMLElement, e: RaidLogEntry, kept: string[], onClose: () => void) {
+export function summaryOverlay(root: HTMLElement, e: RaidLogEntry, kept: string[], news: string[], onClose: () => void) {
   const ok = e.result === 'extraido';
   const el = h('div', { class: 'overlay' },
     h('div', { class: 'card' },
@@ -31,6 +31,7 @@ export function summaryOverlay(root: HTMLElement, e: RaidLogEntry, kept: string[
         h('div', {}, 'Valor al salir', h('b', {}, String(e.valueOut))),
       ),
       h('p', {}, ok ? 'Lo que llevabas en la mochila ha pasado al alijo.' : kept.length ? `Conservas: ${kept.join(', ')}` : 'Has perdido todo tu equipo.'),
+      ...news.map(n => h('p', { class: 'news' }, '★ ' + n)),
       h('button', { class: 'btn main', onclick: onClose }, 'Volver al refugio'),
     ),
   );

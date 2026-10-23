@@ -209,7 +209,7 @@ await E(()=>gengi.start()); await sleep(1500); await E(setup); await E(()=>__cal
  const r2=await E((loc)=>{const s=gengi.raid();return {seen:s.seenExitList(),has:s.seenExitList().includes(loc)}},r.loc);
  ok('7 las salidas vistas siguen vistas en la siguiente raid', r2.has, JSON.stringify(r2));
  // migración 1→2 (guardado v1 → seenExits vacío)
- const st=await E(()=>gengi.state()); ok('7 guardado v2 con seenExits', st.saveVersion===2 && typeof st.seenExits==='object');}
+ const st=await E(()=>gengi.state()); ok('7 guardado v2+ con seenExits', st.saveVersion>=2 && typeof st.seenExits==='object');}
 
 // ---------- R: muerte → se pierden las dos armas ----------
 {await E(setup); const r=await E(async()=>{const s=gengi.raid();__calm();gengi.give('machete','comun');gengi.give('pistola','comun');const lo=s.snap.loadout;

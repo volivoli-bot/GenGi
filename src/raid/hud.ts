@@ -210,24 +210,34 @@ export class Hud {
   }
 
   /** Viñeta roja en el borde de pantalla hacia `ang` (enemigo oculto detrás); k 0..1 = cercanía. */
-  drawVignette(list: { ang: number; k: number }[]) {
+  /** QA: último borde pintado (rojo = amenazas / Acechador; oscuro = Enjambre). */
+  lastVignette = { red: 0, swarm: 0, maxRed: 0 };
+  /**
+   * Borde de pantalla en la dirección de cada amenaza. Rojo: enemigos ocultos detrás y el latido del Acechador.
+   * v3: borde oscuro/morado que vibra hacia los enjambres que se acercan fuera de vista.
+   */
+  drawVignette(list: { ang: number; k: number }[], swarm: { ang: number; k: number }[] = [], now = 0) {
     const g = this.vignette.clear();
-    if (!list.length) return;
+    this.lastVignette = { red: list.length, swarm: swarm.length, maxRed: list.reduce((m, v) => Math.max(m, v.k), 0) };
+    if (!list.length && !swarm.length) return;
     const W = this.sc.scale.width, H = this.sc.scale.height;
-    const band = 46, steps = 6;
-    for (const { ang, k } of list) {
+    const paint = (ang: number, k: number, color: number, band: number, jitter: number) => {
+      const steps = 6;
       const dx = Math.cos(ang), dy = Math.sin(ang);
       const sides: [number, number][] = [];
       if (dx > 0.3) sides.push([0, dx]); if (dx < -0.3) sides.push([1, -dx]);
       if (dy > 0.3) sides.push([2, dy]); if (dy < -0.3) sides.push([3, -dy]);
       for (const [side, w] of sides) for (let i = 0; i < steps; i++) {
-        const a = 0.34 * k * w * (1 - i / steps) / steps * 2;
-        const o = (band / steps) * i, t = band / steps;
-        g.fillStyle(0xff1a1a, a);
+        const a = Math.min(0.75, 0.34 * k * w * (1 - i / steps) / steps * 2);
+        const j = jitter ? Math.sin(now * 40 + i * 1.7) * jitter : 0;
+        const o = (band / steps) * i + j, t = band / steps;
+        g.fillStyle(color, a);
         if (side === 0) g.fillRect(W - o - t, 0, t, H); else if (side === 1) g.fillRect(o, 0, t, H);
         else if (side === 2) g.fillRect(0, H - o - t, W, t); else g.fillRect(0, o, W, t);
       }
-    }
+    };
+    for (const { ang, k } of swarm) paint(ang, 0.8 + 1.2 * k, 0x2a0a3a, 40, 3);
+    for (const { ang, k } of list) paint(ang, k, 0xff1a1a, 46, 0);
   }
 
   drawMinimap(px: number, py: number, exits: { x: number; y: number; open: boolean }[], closed: { x: number; y: number }[], extra: { x: number; y: number; color: number }[], view?: Phaser.Geom.Rectangle) {

@@ -1,6 +1,10 @@
 import { TILE } from '../config/constants';
 
-export type EnemyType = 'errante' | 'corredor' | 'hinchado' | 'abominacion';
+export type EnemyType = 'errante' | 'corredor' | 'hinchado' | 'abominacion'
+  | 'escupidor' | 'chillon' | 'acechador' | 'bruto' | 'reptante' | 'enjambre';
+
+/** Enemigos de la v3 (comportamiento en raid/enemies3.ts). */
+export const V3_TYPES: EnemyType[] = ['escupidor', 'chillon', 'acechador', 'bruto', 'reptante', 'enjambre'];
 
 export interface EnemyDef {
   type: EnemyType;
@@ -21,7 +25,17 @@ export const ENEMIES: Record<EnemyType, EnemyDef> = {
   corredor: { type: 'corredor', nombre: 'Corredor', hp: 18, dmg: 5, speed: 4.6, size: 40, danger: 2, dropChance: 0.15 },
   hinchado: { type: 'hinchado', nombre: 'Hinchado', hp: 40, dmg: 0, speed: 1.3, size: 52, danger: 0, dropChance: 0.3 },
   abominacion: { type: 'abominacion', nombre: 'Abominación', hp: 300, dmg: 18, speed: 2.6, size: 96, danger: 3, dropChance: 0 },
+  // v3 (diseño §4). dmg: Escupidor = bola de ácido; Reptante = daño por segundo del agarre; Enjambre = mordisco.
+  escupidor: { type: 'escupidor', nombre: 'Escupidor', hp: 28, dmg: 6, speed: 1.8, size: 44, danger: 3, dropChance: 0.15 },
+  chillon: { type: 'chillon', nombre: 'Chillón', hp: 22, dmg: 0, speed: 2.1, size: 44, danger: 4, dropChance: 0.15 },
+  acechador: { type: 'acechador', nombre: 'Acechador', hp: 35, dmg: 25, speed: 3.2, size: 44, danger: 3, dropChance: 0.2 },
+  bruto: { type: 'bruto', nombre: 'Bruto', hp: 160, dmg: 30, speed: 1.5, size: 72, danger: 3, dropChance: 0.3 },
+  reptante: { type: 'reptante', nombre: 'Reptante', hp: 45, dmg: 4, speed: 0, size: 52, danger: 3, dropChance: 0.2 },
+  enjambre: { type: 'enjambre', nombre: 'Enjambre', hp: 5, dmg: 3, speed: 3.8, size: 18, danger: 1, dropChance: 0 },
 };
+
+/** Textura del cuerpo físico invisible (el radio del círculo sale del ancho de la textura). */
+export const BODY_TEX: Record<string, string> = { escupidor: 'errante', chillon: 'errante', acechador: 'errante', bruto: 'errante', reptante: 'errante', enjambre: 'errante' };
 
 /** Telegrafiado de ataques (diseño v1). */
 export const ATTACKS = {

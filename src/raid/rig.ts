@@ -5,7 +5,17 @@ import Phaser from 'phaser';
  * Texturas: `${base}_${pieza}` (p. ej. errante_torso). Si falta alguna, se usa la imagen única de la v1 (`base`).
  * Todo el arte v2 mira hacia arriba (-y): el contenedor rota a (mirada + 90°).
  */
-export type RigKind = 'humano' | 'hinchado' | 'abominacion' | 'simple';
+export type RigKind = 'humano' | 'hinchado' | 'abominacion' | 'v3' | 'simple';
+
+/** v3: cuerpo + pieza animada (saco, boca, placa). [cuerpo, caja del cuerpo, pieza, ancho, alto, x, y] en coordenadas de la caja (centro = 0,0). */
+const V3_RIG: Record<string, { body: string; box: number; part?: [string, number, number, number, number] }> = {
+  escupidor: { body: 'escupidor_cuerpo', box: 64, part: ['escupidor_saco', 18, 18, 0, -3] },
+  chillon: { body: 'chillon_cuerpo', box: 64, part: ['chillon_boca', 14, 14, 0, -10] },
+  acechador: { body: 'acechador_cuerpo', box: 64 },
+  bruto: { body: 'bruto_cuerpo', box: 96, part: ['bruto_placa', 80, 33, 0, -26] },
+  reptante: { body: 'reptante', box: 64 },
+  enjambre: { body: 'enjambre_bicho', box: 32 },
+};
 
 const HUMAN_PARTS = ['sombra', 'pie', 'torso', 'brazo', 'cabeza'];
 const P = (x: number, y: number) => ({ x: x - 32, y: y - 32 });
@@ -28,6 +38,14 @@ export class Rig {
   private fogonazo?: Phaser.GameObjects.Image;
   private extras: Phaser.GameObjects.Image[] = [];
   private single?: Phaser.GameObjects.Image;
+  /** v3: pieza animada (saco del Escupidor, boca del Chillón, placa del Bruto) y aura de mutación. */
+  private part?: Phaser.GameObjects.Image;
+  private partBase: [number, number, number] = [0, 0, 0];
+  private aura?: Phaser.GameObjects.Image;
+  /** Tamaño de la caja de arte (para el aura). */
+  box = 64;
+  /** v3: 0..1 intensidad del aviso (saco que se infla, boca que se abre, brazos arriba). */
+  charge = 0;
   private phase = Math.random() * 10;
   private walk = 0;
   /** Animaciones en curso (s restantes). */
@@ -52,7 +70,8 @@ export class Rig {
     const b = o.base;
     this.kind = b === 'hinchado' ? (tex('hinchado_cuerpo') && tex('hinchado_pustula') ? 'hinchado' : 'simple')
       : b === 'abominacion' ? (tex('abominacion_cuerpo') && tex('abominacion_tentaculo') ? 'abominacion' : 'simple')
-        : HUMAN_PARTS.every(p => tex(`${b}_${p}`)) ? 'humano' : 'simple';
+        : V3_RIG[b] ? (tex(V3_RIG[b].body) ? 'v3' : 'simple')
+          : HUMAN_PARTS.every(p => tex(`${b}_${p}`)) ? 'humano' : 'simple';
     this.c = sc.add.container(x, y).setDepth(o.depth);
     const img = (k: string, ox = 0.5, oy = 0.5, w = 64, h = 64) => { const i = sc.add.image(0, 0, k).setOrigin(ox, oy).setDisplaySize(w, h); this.c.add(i); this.parts.push(i); return i; };
     if (this.kind === 'humano') {
@@ -82,6 +101,13 @@ export class Rig {
         this.extras.push(t);
       }
       this.torso = img('abominacion_cuerpo', 0.5, 0.5, 128, 128);
+    } else if (this.kind === 'v3') {
+      const R = V3_RIG[b];
+      this.box = R.box;
+      // el cuerpo ocupa ~70 % de su caja: escala para que el diámetro visible ≈ size
+      this.baseScale = o.size / (R.box * 0.72);
+      this.torso = img(R.body, 0.5, 0.5, R.box, R.box);
+      if (R.part && tex(R.part[0])) { this.part = img(R.part[0], 0.5, 0.5, R.part[1], R.part[2]); this.part.setPosition(R.part[3], R.part[4]); this.partBase = [R.part[1], R.part[2], R.part[4]]; }
     } else {
       // reserva: imagen única de la v1 (mira hacia abajo → girada 180° dentro del contenedor)
       this.baseScale = 1;
@@ -89,6 +115,14 @@ export class Rig {
     }
     this.c.setScale(this.baseScale);
     this.layout(0);
+  }
+
+  /** Aura de mutación bajo el cuerpo (arte v3, 128×128). */
+  setAura(key: string | null) {
+    if (!key || !this.sc.textures.exists(key)) { this.aura?.destroy(); this.aura = undefined; return; }
+    const d = this.kind === 'humano' ? 64 * 1.7 : this.box * 1.5;
+    if (!this.aura) { this.aura = this.sc.add.image(0, 0, key); this.c.addAt(this.aura, 0); }
+    this.aura.setTexture(key).setDisplaySize(d, d);
   }
 
   setWeapon(id: string | null | undefined) {
@@ -136,6 +170,7 @@ export class Rig {
     if (speed01 > 0.05) this.walk += dt * 2.5 * Math.PI * 2 * Math.min(1.4, speed01); else this.walk *= 0.9;
     if (this.swingT >= 0) { this.swingT += dt; if (this.swingT > 0.35) this.swingT = -1; }
     if (this.recoilT > 0) this.recoilT -= dt;
+    if (this.aura) this.aura.rotation += dt * 0.8;
     this.layout(speed01);
   }
 
@@ -186,6 +221,18 @@ export class Rig {
         t.setScale((30 / t.width) * (1 + this.raise * 0.25), (90 / t.height) * (1 + this.raise * 0.3));
       });
       this.torso!.setRotation(moving ? Math.sin(this.walk * 0.5) * 0.04 : 0);
+    } else if (this.kind === 'v3') {
+      const base = this.o.base, k = this.charge;
+      const wob = moving ? Math.sin(this.walk) * (base === 'enjambre' ? 0.25 : 0.05) : 0;
+      const breathe = 1 + 0.02 * Math.sin(this.phase * 3);
+      const rise = base === 'chillon' ? 1 + 0.12 * k : 1;
+      this.torso!.setRotation(wob).setScale((this.box / this.torso!.width) * breathe * rise, (this.box / this.torso!.height) * breathe * rise * (1 - this.crouch * 0.12));
+      if (this.part) {
+        const [w, h, py] = this.partBase;
+        if (base === 'escupidor') this.part.setDisplaySize(w * (1 + 0.9 * k), h * (1 + 0.9 * k)).setTint(k > 0 ? 0xc6ff3c : 0xffffff);
+        else if (base === 'chillon') this.part.setDisplaySize(w * (0.6 + 1.1 * k), h * (0.6 + 1.1 * k)).setY(py - 3 * k);
+        else if (base === 'bruto') this.part.setY(py - 8 * this.raise).setDisplaySize(w, h * (1 - 0.25 * this.raise));
+      }
     } else if (this.single) {
       const wob = moving ? Math.sin(this.walk) * 0.06 : 0;
       this.single.setRotation(Math.PI + wob);

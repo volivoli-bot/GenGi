@@ -4,7 +4,9 @@ import { EnemyType } from './data/enemies';
 import { Rarity } from './data/rarity';
 import { addToList, emptyLoadout, gearValue, itemLabel, loadMagazine, makeItem } from './game/inventory';
 import { cashChapas, ensureFreeGear, equip, toBackpack } from './game/hubOps';
-import { STASH_SLOTS, TILE } from './config/constants';
+import { TILE } from './config/constants';
+import { pocketSlots, stashSlots, stationLevel, deliverCrafts } from './game/refugio';
+import { emptyTrack, evalMissions, refreshAll } from './game/vendors';
 import { newRaidSnapshot, RaidHost, RaidScene } from './raid/RaidScene';
 import { LEGACY_SAMPLE } from './save/migrations';
 import { SaveManager } from './save/SaveManager';
@@ -12,6 +14,11 @@ import type { ExitState, RaidLogEntry } from './save/types';
 import { chooseExits, EXIT_NAMES } from './raid/extraction';
 import { generateMap } from './raid/map';
 import { seeded } from './game/loot';
+import { econCheck } from './game/econCheck';
+import * as V3OPS from './game/vendors';
+import * as REFOPS from './game/refugio';
+import * as HUBOPS from './game/hubOps';
+import { sellPrice } from './game/inventory';
 import { toast } from './ui/dom';
 import { Hub } from './ui/hub';
 import { pauseOverlay, summaryOverlay } from './ui/overlays';
@@ -67,6 +74,10 @@ export class App implements RaidHost {
     const seed = (Math.random() * 2 ** 31) >>> 0;
     // El equipo pasa a la raid: sale del guardado del refugio en la MISMA escritura.
     d.activeRaid = newRaidSnapshot(seed, d.loadout, valueIn);
+    // v3: estaciones que afectan a la raid
+    d.activeRaid.pocketSlots = pocketSlots(d);
+    d.activeRaid.radio = stationLevel(d, 'radio');
+    d.activeRaid.track = emptyTrack();
     d.loadout = emptyLoadout();
     this.save.save();
     this.launchRaid(true);
@@ -112,18 +123,26 @@ export class App implements RaidHost {
     if (result === 'extraido') {
       valueOut = gearValue(lo);
       // la mochila pasa al alijo; si no cabe, al excedente (nunca se pierde nada)
-      for (const it of lo.mochila) { const left = addToList(d.stash, it, STASH_SLOTS); if (left) d.overflow.push(left); }
+      for (const it of lo.mochila) { const left = addToList(d.stash, it, stashSlots(d)); if (left) d.overflow.push(left); }
       if (lo.bolsillo?.def === 'chapas') { d.chapas += lo.bolsillo.qty; lo.bolsillo = null; }
-      d.loadout = { arma: lo.arma, torso: lo.torso, cabeza: lo.cabeza, bolsillo: lo.bolsillo, reserva: lo.reserva ?? null, mochila: [] };
+      const extra = (lo.bolsilloExtra ?? []).filter(it => { if (it.def === 'chapas') { d.chapas += it.qty; return false; } return true; });
+      d.loadout = { arma: lo.arma, torso: lo.torso, cabeza: lo.cabeza, bolsillo: lo.bolsillo, reserva: lo.reserva ?? null, mochila: [], espalda: lo.espalda ?? null, bolsilloExtra: extra };
       cashChapas(d);
       d.stats.extracted++;
     } else {
       // muerte: se pierde todo salvo el bolsillo seguro (también el arma de reserva)
-      d.loadout = { ...emptyLoadout(), bolsillo: lo.bolsillo };
-      if (lo.bolsillo) { kept.push(itemLabel(lo.bolsillo)); valueOut = gearValue(d.loadout); }
+      d.loadout = { ...emptyLoadout(), bolsillo: lo.bolsillo, bolsilloExtra: [...(lo.bolsilloExtra ?? [])] };
+      for (const it of [lo.bolsillo, ...(lo.bolsilloExtra ?? [])]) if (it) kept.push(itemLabel(it));
+      valueOut = gearValue(d.loadout);
       d.stats.deaths++;
     }
     d.stats.raids++;
+    // v3: misiones de los vendedores, fabricación terminada y renovación de stock
+    const exitLoc = detail.exit ? (this.raidScene()?.map.exitLocNames[detail.exit.loc] ?? null) : null;
+    const news = evalMissions(d, snap, result === 'extraido', exitLoc, lo);
+    const crafted = deliverCrafts(d);
+    if (crafted.length) news.push('Fabricado: ' + crafted.join(', '));
+    refreshAll(d);
     const entry: RaidLogEntry = {
       id: snap.id, startedAt: snap.startedAt, endedAt: new Date().toISOString(),
       minute: Math.round((snap.elapsed / 60) * 100) / 100, result,
@@ -138,7 +157,7 @@ export class App implements RaidHost {
     this.save.save(); // una sola escritura atómica: resultado + inventario + registro
     this.inv.close();
     this.pauseEl?.remove(); this.pauseEl = null;
-    const el = summaryOverlay(this.root, entry, kept, () => { el.remove(); this.showHub(); });
+    const el = summaryOverlay(this.root, entry, kept, news, () => { el.remove(); this.showHub(); });
   }
 
   // ---------- Exportar / importar ----------
@@ -191,7 +210,7 @@ export class App implements RaidHost {
         if (!ITEMS[id]) return 'objetos: ' + Object.keys(ITEMS).join(', ');
         const s = app.raidScene();
         if (s) return s.debugGive(id, rarity, qty);
-        const left = addToList(app.save.data.stash, makeItem(id, rarity, qty), STASH_SLOTS);
+        const left = addToList(app.save.data.stash, makeItem(id, rarity, qty), stashSlots(app.save.data));
         app.save.save(); app.hub.render(); return !left;
       },
       chapas: (n: number) => { app.save.data.chapas += n; app.save.save(); app.hub.render(); },
@@ -227,6 +246,35 @@ export class App implements RaidHost {
       move: (x: number, y: number) => { const s = app.raidScene(); if (s) s.joy!.vec.set(x, y); },
       loadLegacy: () => { localStorage.setItem('gengi.save', JSON.stringify(LEGACY_SAMPLE)); location.reload(); },
       reset: () => { app.save.reset(); location.reload(); },
+      // ---- v3 ----
+      /** Sube estaciones del refugio sin coste: station('alijo', 3). */
+      station: (id: string, lv: number) => { (app.save.data.refugio.levels as Record<string, number>)[id] = lv; app.save.save(); app.hub.render(); return app.save.data.refugio.levels; },
+      /** XP de reputación de un vendedor. */
+      repXp: (v: string, xp: number) => { (app.save.data.vendors as Record<string, { xp: number }>)[v].xp = xp; refreshAll(app.save.data); app.save.save(); app.hub.render(); },
+      raids: (n: number) => { app.save.data.stats.raids = n; app.save.save(); app.hub.render(); },
+      tab: (t: string, v?: string) => { (app.hub as unknown as { tab: string }).tab = t; if (v) (app.hub as unknown as { vendor: string }).vendor = v; app.hub.render(); },
+      /** Muta un enemigo cercano / todos los vivos. */
+      mutate: (m: string, all = false) => { const s = app.raidScene(); if (!s) return; const l = all ? s.enemies.list : s.enemies.list.slice(-1); for (const e of l) s.enemies.mutate(e, m as never); },
+      v3: () => { const s = app.raidScene(); return s ? s.v3Stats() : null; },
+      /** Prueba exhaustiva anti-arbitraje (§6). */
+      econ: (n = 60) => econCheck(app.save.data, n),
+      /** Operaciones del refugio/vendedores sobre la partida: op('upgrade','alijo'), op('buyStock','doc',0)… */
+      op: (name: string, ...args: unknown[]) => {
+        const all = { ...V3OPS, ...REFOPS, ...HUBOPS } as unknown as Record<string, (...a: unknown[]) => unknown>;
+        const f = all[name]; if (!f) return 'ops: ' + Object.keys(all).join(', ');
+        const r = f(app.save.data, ...args); app.save.save(); app.hub.render(); return JSON.parse(JSON.stringify(r ?? null));
+      },
+      sellPrice: (uid: string) => { const it = [...app.save.data.stash].find(i => i.uid === uid); return it ? sellPrice(it) : null; },
+      /** Simula el fin de N raids en el refugio (entregas de fabricación, renovación de stock). */
+      endRaids: (n = 1) => { const d = app.save.data; const out: string[] = []; for (let i = 0; i < n; i++) { d.stats.raids++; out.push(...deliverCrafts(d)); refreshAll(d); } app.save.save(); app.hub.render(); return out; },
+      /** Enjambre de n bichos a (dx, dy) casillas del jugador. */
+      swarm: (dx = 10, dy = 0, n?: number) => { const s = app.raidScene(); if (!s) return; return s.spawnSwarm(s.player.x + dx * TILE, s.player.y + dy * TILE, n).length; },
+      /** Reptante con su alcantarilla a (dx, dy) casillas del jugador. */
+      reptante: (dx = 3, dy = 0) => { const s = app.raidScene(); if (!s) return; const e = s.spawnAt('reptante', s.player.x + dx * TILE, s.player.y + dy * TILE); return s.enemies.list.indexOf(e); },
+      grenade: () => app.raidScene()?.throwGrenade(),
+      useFx: (id: string) => app.raidScene()?.useEffect(id),
+      /** Carga un guardado v2 de ejemplo (sin refugio ni vendedores) y recarga. */
+      loadV2: () => { localStorage.setItem('gengi.save', JSON.stringify({ saveVersion: 2, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', chapas: 345, stash: [{ uid: 'v2a', def: 'pistola', rarity: 'militar', qty: 1, traits: [] }, { uid: 'v2b', def: 'vendaje', rarity: 'comun', qty: 4 }], overflow: [], loadout: { arma: { uid: 'v2c', def: 'machete', rarity: 'reforzado', qty: 1 }, torso: null, cabeza: null, mochila: [{ uid: 'v2d', def: 'municion', rarity: 'comun', qty: 20 }], bolsillo: { uid: 'v2e', def: 'botiquin', rarity: 'comun', qty: 1 }, reserva: null }, raidLog: [{ id: 'r1', startedAt: '2026-01-01T00:00:00.000Z', endedAt: '2026-01-01T00:10:00.000Z', minute: 10, result: 'extraido', killedBy: null, valueIn: 10, valueOut: 99, kills: 4, exitType: 'A pie' }], activeRaid: null, seenExits: { m1: [0, 2] }, settings: undefined, stats: { raids: 7, extracted: 5, deaths: 2 } })); location.reload(); },
     };
     (window as unknown as { gengi: typeof api }).gengi = api;
     console.info('GenGi debug: window.gengi →', api.help());

@@ -10,7 +10,7 @@ const E=(f,...a)=>p.evaluate(f,...a);
 await E(()=>gengi.reset()).catch(()=>{}); await sleep(500); await p.waitForFunction(()=>window.gengi);
 // legacy migration
 await E(()=>gengi.loadLegacy()).catch(()=>{}); await sleep(800); await p.waitForFunction(()=>window.gengi);
-let st=await E(()=>gengi.state()); ok('1.5 guardado antiguo migra', st.saveVersion===2 && typeof st.seenExits==='object', `chapas=${st.chapas} alijo=${st.stash.length}`);
+let st=await E(()=>gengi.state()); ok('1.5 guardado antiguo migra', st.saveVersion>=2 && typeof st.seenExits==='object', `chapas=${st.chapas} alijo=${st.stash.length}`);
 // free gear unsellable
 ok('2.1 equipo gratis presente', st.loadout.arma?.free && st.loadout.torso?.free);
 // export/import

@@ -238,13 +238,33 @@ Números en `PRUEBA_V2.applySec` (vendaje 1,5 s, botiquín 2,5 s) y `PRUEBA_V2.a
 - Al terminar: se gasta el objeto, empieza la curación de siempre (venda +30 en 2 s, botiquín +70 en 4 s) y se quitan los estados.
 - Decisión: "Usar" desde el inventario y la curación automática por umbral también tardan lo mismo, pero no requieren mantener nada; un golpe sí las cancela. El daño de estado (sangrado/veneno) no cuenta como golpe.
 
+### Implementación v3 (diseno-v3.md §1-§6, §9; números en `src/config/v3.ts`)
+- Refugio: 6 estaciones × 3 niveles (Alijo, Bolsillo seguro, Generador, Enfermería, Taller, Radio). El Generador limita el nivel del resto. Fabricar tarda 3 raids, con una cola de 2.
+- Materiales (chatarra, tela, componentes, combustible, muestra mutada): salen de cajas, de maleteros de coche (14 por mapa) y de cadáveres. Muestras: Hinchado 50 %, Abominación 2-3, mutados 35 %.
+- Bolsillo seguro de 1 a 4 casillas (sección propia en el inventario). Ranura "Espalda" con mochila grande (+8). No puedes quitártela si está llena: "Vacía la mochila antes de quitártela".
+- Radio: el nivel 2 marca 1 salida activa; el nivel 3 pone un punto en el minimapa donde está el mejor objeto élite (la zona de la Abominación).
+- 3 vendedores (Doc Reyes, Chispas, Hierro) con reputación 1-4, hasta -15 % de precio, y misiones (una activa por vendedor; se renuevan cada 3 raids). Cuando sube la reputación, el stock se repone al momento. El arma de rep. 4 de Chispas trae un 3.er rasgo.
+- Recompra: lo suyo al 40 %, lo demás al 20 %. Nunca supera el 40 % del precio de venta más bajo, así que comprar y revender siempre pierde. La recompra no depende de la reputación ni tiene mínimo de 1 chapa. Comprobación: `econCheck` (5260 combinaciones objeto × rareza × cantidad, 4960 entradas de stock generadas, peor proporción 0,40, ninguna receta da beneficio).
+- 6 enemigos nuevos: Escupidor (min 3), Chillón (4), Acechador (5), Bruto (6), Reptante (7, sale de 14 alcantarillas) y Enjambre (8). Ninguno avisa fuera de pantalla. Los avisos que se ven a través de la niebla van por encima de ella: ácido, Acechador revelado, burbujas, manchas del enjambre.
+- Mutaciones desde el minuto 10 (20 % + 1 %/min, máx. 35 %): blindado, veloz, regenerador, volátil, cada una con su aura de color. Aviso "Minuto 10: aparecen mutados".
+- Consumibles nuevos: adrenalina, antídoto, estimulante y granada (lanzada desde el inventario, 45 de daño). También salen como botín en la raid.
+- Guardado v3: v1 y v2 se migran sin perder nada (alijo, chapas, estadísticas, registro, ajustes).
+- Arte v3: retratos, estaciones y estrellas en `public/art/v3`. Los objetos nuevos llevan iconos provisionales.
+- Rendimiento: JS 1.423 kB (395 kB gzip), +4,6 % sobre la v2. Prueba de estrés con ~100 enemigos y 3 capas de niebla: 14-20 fps (antes 16-17). `fogLayers` sigue configurable.
+
 ### QA
 - `qa/qa.mjs` (v1), `qa/offscreen.mjs`, `qa/fog.mjs`, `qa/stress.mjs`.
 - Nuevo `qa/v2.mjs`: 50 comprobaciones de los 7 puntos, la reserva y el endurecimiento para iPhone (actualizado: «Usar» tarda 1,5 s; cadencias nuevas; tiempos en tiempo de juego).
 - Nuevo `qa/sigilo.mjs`: 25 comprobaciones de sigilo, migración de guardado v1 y caché del service worker.
 - Nuevo `qa/prueba.mjs`: 36 comprobaciones de la prueba v2 (§8) y de la curación con tiempo.
-- Capturas: `qa/shots_v2.mjs` → `shots/v2-*.png`; nuevo `qa/shots_v3.mjs` → `shots/v3-*.png` (sigilo, indicadores y estados, curación, niebla, menú del inventario).
+- Nuevo `qa/v3.mjs`: 42 comprobaciones (economía sin arbitraje, estaciones, bolsillos/mochila, materiales, los 6 enemigos y sus reglas de juego limpio, mutaciones, consumibles, misiones, migración v1/v2 → v3).
+- Capturas: `qa/shots_v2.mjs` → `shots/v2-*.png`; nuevo `qa/shots_v3.mjs` → `shots/v3-*.png` (sigilo, indicadores y estados, curación, niebla, menú del inventario); nuevo `qa/shots_v31.mjs` → `shots/v31-*.png` (refugio, tiendas, misiones, enemigos nuevos, mutados, granada, inventario).
 
 ### Problemas conocidos
 - Ejecutar con el bate (12 × 2,5 = 30) solo mata de un golpe a un Errante cerca del minuto 0; con la vida por minuto ya no, y el superviviente pasa a alerta. Si se quiere que siempre sea muerte silenciosa, subir `backstabMult` o darle al Errante un tope de vida para esto.
 - El borde difuminado de la niebla son 3 capas con máscara (no un degradado real): se ve un escalonado suave. Cuesta rendimiento: en la prueba de estrés (Chrome sin GPU, ~100 enemigos) 3 capas dan 16-17 fps frente a 20-24 con 1 capa, y 19 frente a 29 al principio. Hay que medirlo en el iPhone; si se nota, `VISION.fogLayers: 1` o `2` en `src/config/v2.ts` (sin tocar código).
+- v3: no hay durabilidad, así que el Taller nivel 1 no repara y la misión de Hierro es "extrae con armadura Militar".
+- v3: la Azotea es la "Puerta del hospital".
+- v3: la granada no tiene botón rápido; solo se lanza desde el inventario.
+- v3: el Escupidor y el Chillón se acercan hasta entrar en pantalla antes de atacar. En vertical solo se ven ~4 casillas a los lados y, si no, nunca podrían avisar en pantalla.
+- v3: arreglado un fallo antiguo: `hitStop(0)` dejaba el mundo congelado.

@@ -1,6 +1,7 @@
 import { ITEMS, TRAITS, TraitId } from '../data/items';
 import { RARITIES, Rarity, V1_DROP_RARITIES } from '../data/rarity';
 import { ItemInst, makeItem } from './inventory';
+import { MATERIAL_LOOT, MaterialId } from '../config/v3';
 
 type Rng = () => number;
 
@@ -42,7 +43,24 @@ const TABLE: { id: string; w: number; qty?: [number, number] }[] = [
   { id: 'tablas', w: 6 },
   { id: 'chaleco', w: 2.5 },
   { id: 'casco', w: 3 },
+  // v3: objetos nuevos de Doc Reyes / Hierro, raros en el mapa
+  { id: 'granada', w: 1.2 },
+  { id: 'antidoto', w: 1.2 },
+  { id: 'adrenalina', w: 0.8 },
+  { id: 'estimulante', w: 0.5 },
+  { id: 'mochila_media', w: 0.6 },
 ];
+
+/** v3: una pila de material según el sitio (MATERIAL_LOOT.byZone). */
+export function rollMaterial(rng: Rng, zoneName: string): ItemInst {
+  const w = MATERIAL_LOOT.byZone[zoneName] ?? MATERIAL_LOOT.byZone.Calles;
+  const ents = Object.entries(w) as [MaterialId, number][];
+  let x = rng() * ents.reduce((s, e) => s + e[1], 0);
+  let pick = ents[0][0];
+  for (const [id, k] of ents) { x -= k; if (x <= 0) { pick = id; break; } }
+  const [a, b] = MATERIAL_LOOT.qty;
+  return makeItem(pick, 'comun', a + Math.floor(rng() * (b - a + 1)));
+}
 
 export function rollItem(rng: Rng, bonus = 0, forceRarity?: Rarity, gearOnly = false): ItemInst {
   const table = gearOnly ? TABLE.filter(t => ITEMS[t.id].rolls) : TABLE;

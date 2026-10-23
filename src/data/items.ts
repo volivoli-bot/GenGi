@@ -1,7 +1,7 @@
 import { TILE } from '../config/constants';
 
-export type Slot = 'arma' | 'torso' | 'cabeza';
-export type ItemKind = 'arma' | 'armadura' | 'consumible' | 'municion' | 'bengala' | 'chapas';
+export type Slot = 'arma' | 'torso' | 'cabeza' | 'espalda';
+export type ItemKind = 'arma' | 'armadura' | 'consumible' | 'municion' | 'bengala' | 'chapas' | 'material' | 'mochila' | 'granada';
 export type AbilityId = 'golpe' | 'torbellino' | 'perforante' | 'rafaga' | 'aguantar' | 'escanear';
 
 export interface WeaponStats {
@@ -30,6 +30,8 @@ export interface ItemDef {
   weapon?: WeaponStats;
   armor?: ArmorStats;
   heal?: { amount: number; seconds: number };
+  /** v3: consumible con efecto especial (adrenalina, antídoto, estimulante). */
+  effect?: 'adrenalina' | 'antidoto' | 'estimulante';
   desc: string;
 }
 
@@ -57,6 +59,22 @@ export const ITEMS: Record<string, ItemDef> = {
   flechas: { id: 'flechas', nombre: 'Flechas', kind: 'municion', icon: 'flecha', weight: 0.05, value: 3, small: true, rolls: false, maxStack: 30, desc: 'Para el arco. Se pueden recoger del suelo o del cadáver.' },
   municion: { id: 'municion', nombre: 'Munición 9 mm', kind: 'municion', icon: 'municion', weight: 0.02, value: 4, small: true, rolls: false, maxStack: 48, desc: 'Escasa y cara.' },
   bengala: { id: 'bengala', nombre: 'Bengala', kind: 'bengala', icon: 'bengala', weight: 0.5, value: 50, small: true, rolls: false, maxStack: 2, desc: 'Abre la extracción de bengala (min 8-10).' },
+  // ---- v3 (diseno-v3 §1/§3): materiales del refugio y objetos nuevos de Doc Reyes / Hierro
+  mat_chatarra: { id: 'mat_chatarra', nombre: 'Chatarra', kind: 'material', icon: 'v3/material_chatarra', weight: 0.4, value: 8, small: true, rolls: false, maxStack: 20, desc: 'Material. Alijo, Taller (munición).' },
+  mat_tela: { id: 'mat_tela', nombre: 'Tela', kind: 'material', icon: 'v3/material_tela', weight: 0.2, value: 9, small: true, rolls: false, maxStack: 20, desc: 'Material. Bolsillo seguro, Enfermería (vendajes).' },
+  mat_componentes: { id: 'mat_componentes', nombre: 'Componentes', kind: 'material', icon: 'v3/material_componentes', weight: 0.3, value: 22, small: true, rolls: false, maxStack: 20, desc: 'Material escaso. Radio, Taller, mejoras de nivel 3.' },
+  mat_combustible: { id: 'mat_combustible', nombre: 'Combustible', kind: 'material', icon: 'v3/material_combustible', weight: 0.6, value: 18, small: true, rolls: false, maxStack: 20, desc: 'Material. Generador.' },
+  mat_muestra: { id: 'mat_muestra', nombre: 'Muestra mutada', kind: 'material', icon: 'v3/material_muestra', weight: 0.2, value: 45, small: true, rolls: false, maxStack: 20, desc: 'De Hinchados, mutados y la Abominación. Enfermería nivel 3.' },
+  adrenalina: { id: 'adrenalina', nombre: 'Adrenalina', kind: 'consumible', icon: null, weight: 0.2, value: 90, small: true, rolls: false, maxStack: 3,
+    effect: 'adrenalina', desc: '8 s: +25 % velocidad y -30 % daño recibido.' },
+  antidoto: { id: 'antidoto', nombre: 'Antídoto', kind: 'consumible', icon: null, weight: 0.2, value: 65, small: true, rolls: false, maxStack: 3,
+    effect: 'antidoto', desc: 'Quita el veneno y te protege de él 30 s.' },
+  estimulante: { id: 'estimulante', nombre: 'Estimulante de visión', kind: 'consumible', icon: null, weight: 0.2, value: 100, small: true, rolls: false, maxStack: 2,
+    effect: 'estimulante', desc: '25 s: ves a los enemigos a 8 casillas, incluso tras muros.' },
+  granada: { id: 'granada', nombre: 'Granada', kind: 'granada', icon: null, weight: 0.5, value: 80, small: true, rolls: false, maxStack: 3,
+    desc: 'Se lanza 5 casillas hacia donde miras. Explota en 1 s (45 de daño). MUCHO ruido.' },
+  mochila_media: { id: 'mochila_media', nombre: 'Mochila mediana', kind: 'mochila', slot: 'espalda', icon: null, weight: 1, value: 120, small: false, rolls: false, maxStack: 1, desc: '+4 casillas de mochila.' },
+  mochila_grande: { id: 'mochila_grande', nombre: 'Mochila grande', kind: 'mochila', slot: 'espalda', icon: null, weight: 2, value: 300, small: false, rolls: false, maxStack: 1, desc: '+8 casillas de mochila.' },
   chapas: { id: 'chapas', nombre: 'Chapas', kind: 'chapas', icon: 'chapa', weight: 0, value: 1, small: true, rolls: false, maxStack: 999, desc: 'Moneda. Se ingresa al extraer.' },
 };
 

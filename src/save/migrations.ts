@@ -41,6 +41,18 @@ export const MIGRATIONS: Record<number, (d: AnySave) => AnySave> = {
     if (all.some((i: AnySave) => i.def === 'arco')) (out.stash = out.stash ?? []).push({ uid: 'mig2-flechas', def: 'flechas', rarity: 'comun', qty: 12 });
     return out;
   },
+  /**
+   * 2 → 3 (v3): refugio con estaciones (todas a nivel 1), tres vendedores sin reputación, mochila de espalda
+   * y casillas extra del bolsillo vacías. No se toca nada de lo que ya había (alijo, equipo, raid activa, salidas vistas).
+   */
+  2: (d) => {
+    const out = { ...d, saveVersion: 3 };
+    const fix = (lo: AnySave) => lo ? { ...lo, espalda: lo.espalda ?? null, bolsilloExtra: Array.isArray(lo.bolsilloExtra) ? lo.bolsilloExtra : [] } : lo;
+    out.loadout = fix(out.loadout);
+    if (out.activeRaid) out.activeRaid = { ...out.activeRaid, loadout: fix(out.activeRaid.loadout) };
+    // refugio y vendedores: los rellena normalize() con valores por defecto (nivel 1, rep. 1, sin stock: se genera al abrir la tienda)
+    return out;
+  },
 };
 
 export function migrate(raw: AnySave): AnySave {

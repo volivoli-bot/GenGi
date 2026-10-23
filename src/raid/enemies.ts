@@ -1,7 +1,13 @@
 import Phaser from 'phaser';
 import { TILE, WORLD } from '../config/constants';
 import { DIFFICULTY } from '../config/difficulty';
-import { ATTACKS, ENEMIES, EnemyDef, EnemyType } from '../data/enemies';
+import { ATTACKS, BODY_TEX, ENEMIES, EnemyDef, EnemyType } from '../data/enemies';
+import { MUTATIONS, MutationId } from '../config/v3';
+import { V3Behaviors } from './enemies3';
+import { ENEMY_V3 } from '../config/v3';
+const ENEMY_V3_TRACK = ENEMY_V3.enjambre.trackTiles;
+/** Los v3 ya multiplican su velocidad por la mutación Veloz en enemies3.ts. */
+const V3_SPEEDK: Record<string, 1> = { escupidor: 1, chillon: 1, acechador: 1, bruto: 1, reptante: 1, enjambre: 1 };
 import type { EnemySnap } from '../save/types';
 import { AI, PRUEBA_V2, STAGGER, STEALTH } from '../config/v2';
 import type { Fx } from './fx';
@@ -31,6 +37,14 @@ export interface RaidCtx {
   pvy(): number;
   flow: FlowField;
   fx: Fx;
+  // ---- v3 ----
+  /** Hacia dónde mira el jugador (el Acechador busca tu espalda). */
+  pfacing?(): number;
+  /** Un Chillón ha gritado. */
+  onScream?(e: Enemy): void;
+  /** Empieza / acaba un agarre del Reptante. */
+  onGrab?(on: boolean): void;
+  vibrate?(ms: number): void;
 }
 
 export interface HitOpts { ang?: number; weapon?: string; crit?: boolean; silent?: boolean; backstab?: boolean }
@@ -97,6 +111,20 @@ export class Enemy {
   markFill: Phaser.GameObjects.Image | null = null;
   markAlert: Phaser.GameObjects.Image | null = null;
   private tintC: number | null = null;
+  // ---- v3 ----
+  /** Mutación (min 10) y grupo (Enjambre). */
+  mut?: MutationId;
+  group?: number;
+  /** Enfriamiento propio (escupitajo, grito, carga, salida del Reptante, mordisco). */
+  cd = 0;
+  /** Sub-estado del comportamiento v3 (Bruto: slam/charge; Reptante: under/warn/grab/up). */
+  sub = '';
+  speedK = 1;
+  submerged = false;
+  lastHitAt = -99;
+  flankPhase = Math.random() * 10;
+  /** Último arma que le golpeó (misiones "mata con arma a distancia"). */
+  lastWeapon?: string;
   constructor(public sprite: Phaser.Physics.Arcade.Image, type: EnemyType, hp: number, dmg: number) {
     this.def = ENEMIES[type];
     this.hp = this.maxHp = hp; this.dmg = dmg;
@@ -107,7 +135,7 @@ export class Enemy {
   get y() { return this.sprite.y; }
   get body() { return this.sprite.body as Phaser.Physics.Arcade.Body; }
   /** ¿Se puede apuntar? (un Hinchado hinchándose ya no) */
-  get targetable() { return !this.dead && this.state !== 'swell'; }
+  get targetable() { return !this.dead && this.state !== 'swell' && !this.submerged; }
 }
 
 export class EnemyManager {
@@ -123,20 +151,24 @@ export class EnemyManager {
   private teleMargin(e: Enemy) { return Math.max(TILE * 0.75, e.def.size * 0.6); }
   /** Regla de diseño: ningún aviso de ataque empieza fuera de la pantalla. */
   canTelegraph(e: Enemy) { return this.c.onScreen(e.x, e.y, this.teleMargin(e)) && this.c.visible(e.x, e.y, e.def.size * 0.3); }
-  private countTele(e: Enemy) { if (this.c.onScreen(e.x, e.y, 0)) this.teleStats.on++; else this.teleStats.off++; }
+  /** v3: comportamientos de los enemigos nuevos. */
+  v3: V3Behaviors;
+  countTele(e: Enemy) { if (this.c.onScreen(e.x, e.y, 0)) this.teleStats.on++; else this.teleStats.off++; }
   constructor(private c: RaidCtx) {
     this.group = c.world.physics.add.group();
+    this.v3 = new V3Behaviors(this, c);
   }
 
   spawn(type: EnemyType, x: number, y: number, statMult = 1, extra?: Partial<EnemySnap>): Enemy {
     const d = ENEMIES[type];
-    const s = this.c.world.physics.add.image(x, y, type).setDisplaySize(d.size, d.size).setDepth(type === 'abominacion' ? 9 : 8).setVisible(false);
+    const s = this.c.world.physics.add.image(x, y, BODY_TEX[type] ?? type).setDisplaySize(d.size, d.size).setDepth(type === 'abominacion' ? 9 : 8).setVisible(false);
     this.group.add(s);
     const body = s.body as Phaser.Physics.Arcade.Body;
     const texW = s.width; // tamaño de textura
     const r = texW * 0.32;
     body.setCircle(r, texW / 2 - r, texW / 2 - r).setCollideWorldBounds(true);
     if (type === 'abominacion') body.setMass(20);
+    if (type === 'bruto' || type === 'reptante') body.setMass(type === 'bruto' ? 6 : 10);
     const e = new Enemy(s, type, Math.round(d.hp * statMult), d.dmg * statMult * PRUEBA_V2.enemyDmgMult);
     e.rig = new Rig(this.c.world, x, y, { base: type, size: d.size, depth: type === 'abominacion' ? 9 : 8 });
     if (extra) {
@@ -144,8 +176,11 @@ export class EnemyManager {
       if (extra.maxHp !== undefined) e.maxHp = extra.maxHp;
       if (extra.dmg !== undefined) e.dmg = extra.dmg;
       e.gx = extra.gx; e.gy = extra.gy; e.bleed = extra.bleed ?? 0;
+      if (extra.group !== undefined) e.group = extra.group;
+      if (extra.mut) this.mutate(e, extra.mut as MutationId, true);
       if (extra.swell !== undefined) { this.startSwell(e, true); e.t = extra.swell; }
     }
+    if (type === 'reptante') { e.gx ??= x; e.gy ??= y; e.submerged = true; e.sub = 'under'; e.cd = 1; body.enable = false; e.rig.setVisible(false); }
     if (type === 'hinchado') {
       e.icon = this.c.world.add.text(x, y - 40, '⚠', { fontSize: '22px', color: '#b6ff3c', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setDepth(30).setVisible(false);
     }
@@ -154,6 +189,16 @@ export class EnemyManager {
     }
     this.list.push(e);
     return e;
+  }
+
+  /** Mutación (diseño §4, min 10): aura de color + rasgo. `restoring` = ya trae la vida guardada. */
+  mutate(e: Enemy, m: MutationId, restoring = false) {
+    if (e.dead || MUTATIONS.exclude.includes(e.def.type)) return false;
+    e.mut = m;
+    e.rig.setAura(`aura_${m}`);
+    if (m === 'veloz') e.speedK = MUTATIONS.veloz.speedMult;
+    if (m === 'blindado' && !restoring) { e.maxHp = Math.round(e.maxHp * MUTATIONS.blindado.hpMult); e.hp = Math.round(e.hp * MUTATIONS.blindado.hpMult); }
+    return true;
   }
 
   /** Diagnóstico QA del sigilo. */
@@ -169,12 +214,15 @@ export class EnemyManager {
     for (const e of this.list) {
       if (e.dead || e.state === 'swell') continue;
       if (e.def.type === 'abominacion' && Math.hypot(e.x - (e.gx ?? e.x), e.y - (e.gy ?? e.y)) > TILE * 3) continue;
-      const r = radiusTiles * TILE * hm * (STEALTH.hearing[e.def.type] ?? 1);
+      if (e.def.type === 'reptante') continue;
+      const r = Math.max(radiusTiles * TILE * hm * (STEALTH.hearing[e.def.type] ?? 1), radiusTiles > 0 ? (STEALTH.minHearTiles[e.def.type] ?? 0) * TILE : 0);
       const d = Math.hypot(e.x - x, e.y - y);
       if (d > r) continue;
       if (d > r * STEALTH.wallMuffle && !lineClear(this.c.walls, e.x, e.y, x, y)) continue;
       this.stealthStats.heard++;
       if (!isUnaware(e)) continue;
+      // el Enjambre no ve, pero lo oye todo: si el ruido está cerca, va directo a por ti
+      if (e.def.type === 'enjambre' && d < TILE * 5) { this.becomeAlert(e); continue; }
       const jx = x + (Math.random() - 0.5) * TILE, jy = y + (Math.random() - 0.5) * TILE;
       // ya yendo a mirar: solo actualiza el destino (los pasos suenan cada 0,25 s)
       if (e.state === 'investigate' && e.goal && e.susPhase !== 'look') { e.goal.x = jx; e.goal.y = jy; e.goal.until = now + DIFFICULTY.noiseMemorySec; continue; }
@@ -211,7 +259,10 @@ export class EnemyManager {
   /** Vista con cono + medidor (solo si no te ha detectado); en alerta te tiene localizado sin cono. */
   private perceive(e: Enemy, acc: number, dist: number, px: number, py: number) {
     const range = (STEALTH.sightTiles[e.def.type] ?? 6) * TILE;
+    if (e.def.type === 'reptante') return;
     if (!isUnaware(e)) {
+      // el Enjambre te rastrea de oído mientras estés cerca
+      if (e.def.type === 'enjambre') { e.sees = dist < ENEMY_V3_TRACK * TILE; if (e.sees) e.lastSeen = { x: px, y: py }; return; }
       e.sees = dist < range * STEALTH.alertSightMult && lineClear(this.c.walls, e.x, e.y, px, py);
       if (e.sees) e.lastSeen = { x: px, y: py };
       return;
@@ -271,8 +322,12 @@ export class EnemyManager {
    */
   damage(e: Enemy, n: number, o: HitOpts = {}) {
     if (!e.targetable) return false;
-    e.hp -= n;
     const ang = o.ang ?? Math.atan2(e.y - this.c.py(), e.x - this.c.px());
+    // Bruto: frente blindado (×0,3 desde su arco frontal)
+    n *= this.v3.armorMult(e, ang);
+    e.hp -= n;
+    e.lastHitAt = this.c.elapsed();
+    if (o.weapon) e.lastWeapon = o.weapon;
     const w = o.weapon ? STAGGER.weapon[o.weapon] : null;
     const weight = STAGGER.weight[e.def.type] ?? 1;
     const vis = this.c.visible(e.x, e.y, e.def.size * 0.4);
@@ -292,7 +347,7 @@ export class EnemyManager {
     if (o.backstab && wasUnaware) this.stealthStats.backstabs++;
     if (e.hp <= 0) {
       // matar sin ser detectado no avisa a los cercanos
-      if (e.def.type === 'hinchado') {
+      if (e.def.type === 'hinchado' || e.mut === 'volatil') {
         // explota siempre, también fuera de pantalla (diseño: fuera de la vista está a >1,8 casillas y no alcanza al jugador)
         this.startSwell(e); return false;
       }
@@ -305,9 +360,10 @@ export class EnemyManager {
     return false;
   }
 
-  private startSwell(e: Enemy, restoring = false) {
+  startSwell(e: Enemy, restoring = false) {
     if (!restoring) { if (this.c.onScreen(e.x, e.y, 0)) this.deathSwell.on++; else this.deathSwell.off++; }
     e.state = 'swell'; e.t = ATTACKS.hinchado.swell; e.hp = 0; e.stagger = 0;
+    if (this.v3.grab?.e === e) this.v3.release();
     e.body.setVelocity(0, 0);
     this.clearTele(e);
     const r = ATTACKS.hinchado.radiusTiles * TILE;
@@ -318,6 +374,7 @@ export class EnemyManager {
   kill(e: Enemy) {
     if (e.dead) return;
     e.dead = true;
+    if (this.v3.grab?.e === e) this.v3.release();
     this.clearTele(e);
     e.icon?.destroy(); e.hpBar?.destroy();
     this.destroyMarks(e);
@@ -327,7 +384,7 @@ export class EnemyManager {
     this.c.world.time.delayedCall(0, () => s.destroy());
     // cae y se queda como cadáver (con tope: los más viejos desaparecen) + salpicadura grande en el suelo
     const azul = e.def.type === 'abominacion';
-    if (e.def.type !== 'hinchado') {
+    if (e.def.type !== 'hinchado' && e.mut !== 'volatil' && !e.submerged) {
       this.c.fx.stain(e.x, e.y, azul, azul ? 1.6 : 0.85);
       e.rig.die();
       this.c.fx.addCorpse(e.rig);
@@ -337,10 +394,10 @@ export class EnemyManager {
     this.list.splice(this.list.indexOf(e), 1);
   }
 
-  private clearTele(e: Enemy) {
+  clearTele(e: Enemy) {
     e.warn?.destroy(); e.warn = null;
     e.tele?.destroy(); e.tele = null;
-    if (!e.dead) { e.tint(null); e.rig.pump = 1; e.rig.crouch = 0; e.rig.raise = 0; }
+    if (!e.dead) { e.tint(null); e.rig.pump = 1; e.rig.crouch = 0; e.rig.raise = 0; e.rig.charge = 0; }
   }
 
   private explode(e: Enemy) {
@@ -372,11 +429,13 @@ export class EnemyManager {
       if (e.bleed > 0) { e.bleed -= dt; this.damageTick(e, 3 * dt); if (e.dead) continue; }
       e.t -= dt;
       // muñeco por piezas: sigue al cuerpo físico; oculto en la niebla
-      const vis = this.c.visible(e.x, e.y, e.def.size * 0.4);
+      const isV3 = this.v3.handles(e);
+      const rawVis = this.c.visible(e.x, e.y, e.def.size * 0.4);
+      const vis = isV3 ? this.v3.visibility(e, rawVis, dist) : rawVis;
       e.visibleNow = vis;
       const spd = Math.hypot(b.velocity.x, b.velocity.y);
-      if (spd > 12 && e.stagger <= 0 && e.state !== 'windup' && e.state !== 'cone') e.facing = Phaser.Math.Angle.RotateTo(e.facing, Math.atan2(b.velocity.y, b.velocity.x), dt * 9);
-      e.rig.update(dt, e.x, e.y, e.facing, spd / Math.max(1, sp), vis);
+      if (!isV3 && spd > 12 && e.stagger <= 0 && e.state !== 'windup' && e.state !== 'cone') e.facing = Phaser.Math.Angle.RotateTo(e.facing, Math.atan2(b.velocity.y, b.velocity.x), dt * 9);
+      e.rig.update(dt, e.x, e.y, e.facing, spd / Math.max(1, sp), e.def.type === 'acechador' ? (vis || rawVis) : e.submerged ? false : vis);
       if (e.stagger > 0) {
         e.stagger -= dt;
         b.velocity.scale(Math.pow(0.02, dt));
@@ -398,6 +457,9 @@ export class EnemyManager {
           if (e.t <= 0) this.explode(e);
           continue;
         }
+      }
+      if (isV3 && this.v3.update(e, dt, dist, px, py)) continue;
+      switch (e.state) {
         case 'windup': this.updateWindup(e, dt, dist); continue;
         case 'attack': this.updateAttack(e, dt, px, py); continue;
         case 'cone': this.updateCone(e, px, py); continue;
@@ -445,13 +507,13 @@ export class EnemyManager {
         const g = e.goal;
         if (e.susPhase === 'turn') {
           b.setVelocity(0, 0);
-          e.facing = Phaser.Math.Angle.RotateTo(e.facing, Math.atan2(g.y - e.y, g.x - e.x), dt * 6);
+          e.facing = Phaser.Math.Angle.RotateTo(e.facing, Math.atan2(g.y - e.y, g.x - e.x), dt * (e.def.type === 'bruto' ? 1.8 : 6));
           e.susT -= dt; if (e.susT <= 0) e.susPhase = 'go';
           continue;
         }
         if (e.susPhase === 'go') {
           if (now > g.until || Math.hypot(g.x - e.x, g.y - e.y) < TILE) { e.susPhase = 'look'; e.susT = STEALTH.suspiciousLookSec; e.lookBase = e.facing; b.setVelocity(0, 0); }
-          else this.moveTo(e, g.x, g.y, sp * STEALTH.suspiciousSpeedMult);
+          else { this.moveTo(e, g.x, g.y, sp * STEALTH.suspiciousSpeedMult); if (isV3) e.facing = Phaser.Math.Angle.RotateTo(e.facing, Math.atan2(b.velocity.y, b.velocity.x), dt * (e.def.type === 'bruto' ? 1.8 : 9)); }
           continue;
         }
         // mira alrededor y vuelve a su rutina
@@ -485,14 +547,16 @@ export class EnemyManager {
         if (Math.abs(Phaser.Math.Angle.Wrap(e.facing - e.turnTo)) < 0.05) e.turnTo = null;
       }
       b.setVelocity(e.wander.x, e.wander.y);
+      if (isV3 && spd > 12) e.facing = Phaser.Math.Angle.RotateTo(e.facing, Math.atan2(b.velocity.y, b.velocity.x), dt * (e.def.type === 'bruto' ? 1.8 : 9));
     }
+    this.v3.updateGlobal(dt);
   }
 
   /** Grupo: al detectarte avisa a los que están cerca (casillas AI.alertTiles). */
   private alert(src: Enemy) {
     const r = AI.alertTiles * TILE;
     for (const o of this.list) {
-      if (o === src || o.dead || o.def.type === 'abominacion' || o.state === 'swell') continue;
+      if (o === src || o.dead || o.def.type === 'abominacion' || o.def.type === 'reptante' || o.state === 'swell') continue;
       if (o.state !== 'idle' && o.state !== 'investigate') continue;
       if (Math.hypot(o.x - src.x, o.y - src.y) > r) continue;
       o.state = 'chase'; o.t = -1; o.meter = 1; o.markT = STEALTH.alertMarkSec; o.goal = null;
@@ -500,7 +564,7 @@ export class EnemyManager {
   }
 
   /** Persecución v2: si te ve, va hacia ti abriéndose en abanico (flanqueo); si no, sigue el campo de flujo por puertas y pasillos. */
-  private chaseMove(e: Enemy, px: number, py: number, sp: number, dist: number) {
+  chaseMove(e: Enemy, px: number, py: number, sp: number, dist: number) {
     if (e.sees) {
       let ax = px - e.x, ay = py - e.y;
       if (e.flankSide && dist > AI.flankUntilTiles * TILE) {
@@ -514,7 +578,7 @@ export class EnemyManager {
   }
 
   /** Movimiento hacia un punto rodeando paredes con el campo de flujo (calculado hacia el jugador). */
-  private pathMove(e: Enemy, x: number, y: number, sp: number) {
+  pathMove(e: Enemy, x: number, y: number, sp: number) {
     const nearPlayer = Math.hypot(x - this.c.px(), y - this.c.py()) < TILE * 3;
     if (nearPlayer && !lineClear(this.c.walls, e.x, e.y, x, y)) {
       const d = this.c.flow.dir(e.x, e.y);
@@ -527,10 +591,10 @@ export class EnemyManager {
   damageTick(e: Enemy, n: number) {
     if (e.dead || e.state === 'swell') return;
     e.hp -= n;
-    if (e.hp <= 0) { if (e.def.type === 'hinchado') this.startSwell(e); else this.kill(e); }
+    if (e.hp <= 0) { if (e.def.type === 'hinchado' || e.mut === 'volatil') this.startSwell(e); else this.kill(e); }
   }
 
-  private moveTo(e: Enemy, x: number, y: number, speed: number, stopDist = 0) {
+  moveTo(e: Enemy, x: number, y: number, speed: number, stopDist = 0) {
     const b = e.body;
     let vx = x - e.x, vy = y - e.y;
     const d = Math.hypot(vx, vy);
@@ -543,7 +607,7 @@ export class EnemyManager {
       e.detour.set(-vy * side, vx * side); e.detourT = 0.6;
     }
     const l = Math.hypot(vx, vy) || 1;
-    speed *= AI.speedMult[e.def.type] ?? 1;
+    speed *= (AI.speedMult[e.def.type] ?? 1) * (e.def.type in V3_SPEEDK ? 1 : e.speedK);
     b.setVelocity((vx / l) * speed, (vy / l) * speed);
   }
 
@@ -653,6 +717,7 @@ export class EnemyManager {
     return this.list.filter(e => !e.dead).map(e => ({
       type: e.def.type, x: Math.round(e.x), y: Math.round(e.y), hp: e.hp, maxHp: e.maxHp, dmg: e.dmg,
       gx: e.gx, gy: e.gy, swell: e.state === 'swell' ? Math.max(0, e.t) : undefined, bleed: e.bleed || undefined,
+      mut: e.mut, group: e.group,
     }));
   }
 

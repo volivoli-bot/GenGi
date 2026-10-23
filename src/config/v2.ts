@@ -74,7 +74,7 @@ export const JUICE = {
 /** Tambaleo: impulso corto + tambaleo; los pesados se mueven menos. */
 export const STAGGER = {
   /** Masa relativa por tipo (divide el impulso). */
-  weight: { errante: 1, corredor: 0.8, hinchado: 1.7, abominacion: 7 } as Record<string, number>,
+  weight: { errante: 1, corredor: 0.8, hinchado: 1.7, abominacion: 7, escupidor: 0.9, chillon: 0.9, acechador: 1, bruto: 4, reptante: 3, enjambre: 0.3 } as Record<string, number>,
   /** Fuerza del arma (px/s de impulso para masa 1) y duración del tambaleo (s). */
   weapon: { punos: [140, 0.12], bate: [330, 0.35], machete: [170, 0.16], arco: [220, 0.18], pistola: [180, 0.14] } as Record<string, [number, number]>,
   impulseSec: 0.12,
@@ -120,7 +120,7 @@ export const AI = {
   corredorLeadSec: 0.35,
   corredorStrafeSec: 0.6,
   /** Ajuste de velocidad v2 (más difícil). */
-  speedMult: { errante: 1.12, corredor: 1.05, hinchado: 1.1, abominacion: 1.05 } as Record<string, number>,
+  speedMult: { errante: 1.12, corredor: 1.05, hinchado: 1.1, abominacion: 1.05, escupidor: 1, chillon: 1, acechador: 1, bruto: 1, reptante: 1, enjambre: 1 } as Record<string, number>,
 };
 
 /** Arma de reserva (Basu, especificación final del cambio de arma). */
@@ -172,7 +172,9 @@ export const STEALTH = {
   /** El oído de los enemigos sube un 3 % por minuto. */
   hearingPerMinute: 0.03,
   /** Oído por tipo (multiplica el radio). */
-  hearing: { errante: 1, corredor: 1, hinchado: 1, abominacion: 1 } as Record<string, number>,
+  hearing: { errante: 1, corredor: 1, hinchado: 1, abominacion: 1, escupidor: 1, chillon: 2, acechador: 1, bruto: 1, reptante: 1, enjambre: 1.6 } as Record<string, number>,
+  /** v3 §7: radio mínimo (casillas) al que oyen CUALQUIER paso (el Acechador oye el sigilo a 2 casillas; el Enjambre lo oye todo). */
+  minHearTiles: { acechador: 2, enjambre: 2.5 } as Record<string, number>,
   /** Cristales y latas por el mapa (se ven si te fijas; ocultos en la niebla como el botín). */
   debrisCount: 70,
   /** Radio de pisada (casillas) y tiempo hasta que la misma pieza vuelve a sonar (s). */
@@ -182,7 +184,7 @@ export const STEALTH = {
   // --- Percepción de los enemigos ---
   /** Vista: cono de 110° y 6 casillas, cortado por paredes. De espaldas no te ven. */
   coneDeg: 110,
-  sightTiles: { errante: 6, corredor: 6, hinchado: 6, abominacion: 6 } as Record<string, number>,
+  sightTiles: { errante: 6, corredor: 6, hinchado: 6, abominacion: 6, escupidor: 8, chillon: 7, acechador: 6, bruto: 6, reptante: 0, enjambre: 0 } as Record<string, number>,
   /** Ya en alerta te siguen localizado (sin cono) hasta este factor del alcance. */
   alertSightMult: 1.3,
   /** Medidor '?': 0,4 s si estás cerca, 1,2 s en el límite del alcance. */

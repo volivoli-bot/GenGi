@@ -172,7 +172,7 @@ const T=48;
  await q.reload();await q.waitForFunction(()=>window.gengi,{timeout:20000});await sleep(500);
  const r=await q.evaluate(()=>{const d=gengi.saveData();return {v:d.saveVersion,chapas:d.chapas,stash:d.stash.map(i=>i.uid+':'+i.def+':'+i.qty),overflow:d.overflow.map(i=>i.uid),mochila:d.loadout.mochila.map(i=>i.uid),reserva:d.loadout.reserva,seen:d.seenExits,set:d.settings};});
  const want=v1.stash.map(i=>i.uid+':'+i.def+':'+i.qty);
- ok('S13 guardado v1 migra a la versión actual', r.v===2, `saveVersion=${r.v}`);
+ ok('S13 guardado v1 migra a la versión actual', r.v===3, `saveVersion=${r.v}`);
  ok('S13 sin perder chapas ni objetos del alijo/excedente/equipo', r.chapas===4321&&want.every(w=>r.stash.includes(w))&&r.overflow.includes('o1')&&r.mochila.includes('m1'), JSON.stringify({chapas:r.chapas,stash:r.stash,overflow:r.overflow}));
  ok('S13 ajustes antiguos conservados + nuevo ajuste de conos activado', r.set.prioridad==='debil'&&r.set.curarUmbral===40&&r.set.conosEnemigos===true&&r.reserva===null, JSON.stringify(r.set));
  // service worker: nombre de caché por build y limpieza de cachés viejas

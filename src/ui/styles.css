@@ -105,3 +105,50 @@ table.cmp td { text-align: right; padding: 1px 2px; }
 table.cmp td:first-child, table.cmp th:first-child { text-align: left; color: var(--dim); }
 table.cmp td.up { color: #4cd964; font-weight: 800; }
 table.cmp td.down { color: #ff6b6b; font-weight: 800; }
+/* ---- v3: refugio y tiendas ---- */
+.tabs button { font-size: 12px; }
+.mats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.mat { background: #000a; border: 2px solid var(--line); border-radius: 10px; padding: 4px 2px; text-align: center; display: flex; flex-direction: column; align-items: center; }
+.mat img { width: 30px; height: 30px; }
+.mat b { font-size: 15px; }
+.mat small { font-size: 9px; color: var(--dim); }
+.station { background: #000a; border: 2px solid var(--line); border-radius: 12px; padding: 8px; margin-top: 8px; }
+.st-head { display: flex; gap: 10px; align-items: center; }
+.st-head > img { width: 56px; height: 56px; flex: none; }
+.st-info b { font-size: 16px; margin-right: 6px; }
+.stars { display: inline-flex; gap: 2px; vertical-align: middle; }
+.stars img { width: 16px; height: 16px; opacity: .25; filter: grayscale(1); }
+.stars img.on { opacity: 1; filter: none; }
+.st-next { margin-top: 6px; font-size: 13px; display: grid; gap: 4px; }
+.st-next .cost { display: flex; flex-wrap: wrap; gap: 4px; }
+.st-next .cost span { font-size: 11px; padding: 2px 6px; border-radius: 6px; background: #0008; border: 1px solid var(--line); }
+.st-next .cost .ok { color: var(--toxico); }
+.st-next .cost .bad { color: #ff8a80; }
+.st-next .btn, .recipe .btn { padding: 8px 10px; font-size: 13px; }
+.recipes { margin-top: 6px; display: grid; gap: 4px; }
+.recipe { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px; }
+.recipe.locked { opacity: .55; }
+.vendors { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.vend { background: #000a; border: 2px solid var(--line); border-radius: 12px; padding: 4px; color: var(--text); display: flex; flex-direction: column; align-items: center; font-weight: 800; font-size: 13px; }
+.vend img { width: 64px; height: 64px; border-radius: 10px; }
+.vend small { color: var(--dim); font-size: 11px; }
+.vend.on { border-color: var(--toxico); box-shadow: 0 0 0 2px #14110f inset; }
+.vhead { display: grid; gap: 4px; margin-top: 8px; }
+.vhead b { font-size: 17px; }
+.rep { font-size: 12px; font-weight: 700; }
+.rep .bar { height: 8px; background: #0009; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; margin: 2px 0; }
+.rep .bar i { display: block; height: 100%; background: var(--toxico); }
+.rep small { color: var(--dim); font-weight: 400; }
+.missions { display: grid; gap: 6px; }
+.mission { display: flex; align-items: center; gap: 8px; background: #000a; border: 2px solid var(--line); border-radius: 12px; padding: 6px 8px; }
+.mission.on { border-color: var(--toxico); }
+.mission .mt { flex: 1; font-size: 13px; }
+.mission .mt small { display: block; color: var(--dim); font-size: 11px; }
+.mission .btn { padding: 8px 10px; font-size: 13px; }
+.mission .btn.ghost { padding: 8px; background: #0008; }
+.mission .row { display: flex; gap: 4px; align-items: center; }
+.tag-on { font-size: 11px; font-weight: 900; color: var(--toxico); }
+.shop .item.gone { opacity: .5; }
+.shop .item .info small { color: var(--dim); font-size: 11px; }
+.shop .item .info span { color: var(--dim); font-size: 11px; }
+.card p.news { color: var(--toxico); font-size: 13px; margin: 4px 0; }

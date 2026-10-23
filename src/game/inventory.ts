@@ -2,6 +2,8 @@ import { ITEMS, ItemDef, Slot, TraitId, WeaponStats } from '../data/items';
 import { RARITIES, Rarity } from '../data/rarity';
 import { BACKPACK_SLOTS, SPEED_PENALTY_MAX, SPEED_PENALTY_PER_WEIGHT } from '../config/constants';
 import { PRUEBA_V2 } from '../config/v2';
+import { NEW_ITEMS } from '../config/v3';
+import { bestBuyback } from './prices';
 
 /** Instancia concreta de un objeto (lo que se guarda). */
 export interface ItemInst {
@@ -14,6 +16,8 @@ export interface ItemInst {
   free?: boolean;
   /** Balas en el cargador (pistola). */
   mag?: number;
+  /** v3: ya tiene el rasgo extra del Taller (una vez por objeto). */
+  mejorado?: boolean;
 }
 
 export interface Loadout {
@@ -24,9 +28,22 @@ export interface Loadout {
   bolsillo: ItemInst | null;
   /** v2: arma de reserva (cambio rápido en raid). Pesa y se pierde al morir como el resto. */
   reserva: ItemInst | null;
+  /** v3: mochila mejor (Hierro): más casillas. */
+  espalda?: ItemInst | null;
+  /** v3: casillas extra del bolsillo seguro (estación Bolsillo nivel 2-3). Se conservan al morir. */
+  bolsilloExtra?: ItemInst[];
 }
 
-export const emptyLoadout = (): Loadout => ({ arma: null, torso: null, cabeza: null, mochila: [], bolsillo: null, reserva: null });
+export const emptyLoadout = (): Loadout => ({ arma: null, torso: null, cabeza: null, mochila: [], bolsillo: null, reserva: null, espalda: null, bolsilloExtra: [] });
+
+/** Todo lo que va en el bolsillo seguro (casilla base + extras). */
+export function pockets(l: Loadout): ItemInst[] {
+  return [l.bolsillo, ...(l.bolsilloExtra ?? [])].filter((x): x is ItemInst => !!x);
+}
+/** Casillas de mochila según la mochila equipada (12 base + 4/8). */
+export function backpackSlots(l: Loadout) {
+  return BACKPACK_SLOTS + (l.espalda ? NEW_ITEMS.mochila[l.espalda.def] ?? 0 : 0);
+}
 
 let counter = 0;
 export function uid() {
@@ -50,7 +67,8 @@ export function itemValue(it: ItemInst): number {
   return Math.round(d.value * RARITIES[it.rarity].valor * it.qty);
 }
 export function canSell(it: ItemInst) { return !it.free && it.def !== 'chapas'; }
-export function sellPrice(it: ItemInst) { return canSell(it) ? Math.max(1, Math.floor(itemValue(it) * 0.4)) : 0; }
+/** v3: lo máximo que te paga algún vendedor (40 % del precio mínimo de su tienda, §6). */
+export function sellPrice(it: ItemInst) { return canSell(it) ? bestBuyback(it).price : 0; }
 
 export function itemWeight(it: ItemInst) {
   return def(it).weight * it.qty * (it.traits?.includes('ligero') ? 0.7 : 1);
@@ -76,7 +94,7 @@ export function totalProtection(l: Loadout) {
 }
 
 export function allItems(l: Loadout): ItemInst[] {
-  return [l.arma, l.reserva ?? null, l.torso, l.cabeza, l.bolsillo, ...l.mochila].filter((x): x is ItemInst => !!x);
+  return [l.arma, l.reserva ?? null, l.torso, l.cabeza, l.espalda ?? null, l.bolsillo, ...(l.bolsilloExtra ?? []), ...l.mochila].filter((x): x is ItemInst => !!x);
 }
 export function totalWeight(l: Loadout) { return allItems(l).reduce((s, it) => s + itemWeight(it), 0); }
 export function speedMult(l: Loadout) {
@@ -86,7 +104,7 @@ export function gearValue(l: Loadout) { return allItems(l).reduce((s, it) => s +
 
 export function canPocket(it: ItemInst) {
   const d = def(it);
-  return d.small && d.kind !== 'armadura';
+  return d.small && d.kind !== 'armadura' && d.kind !== 'mochila';
 }
 
 /** Mete un objeto en una lista con límite de casillas, apilando. Devuelve lo que no cabe (o null). */
@@ -105,7 +123,7 @@ export function addToList(list: ItemInst[], it: ItemInst, maxSlots: number): Ite
   return it;
 }
 
-export function backpackAdd(l: Loadout, it: ItemInst) { return addToList(l.mochila, it, BACKPACK_SLOTS); }
+export function backpackAdd(l: Loadout, it: ItemInst) { return addToList(l.mochila, it, backpackSlots(l)); }
 
 export function countOf(list: ItemInst[], id: string) { return list.filter(i => i.def === id).reduce((s, i) => s + i.qty, 0); }
 

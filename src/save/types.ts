@@ -3,9 +3,10 @@ import type { EnemyType } from '../data/enemies';
 import type { Rarity } from '../data/rarity';
 import type { ItemInst, Loadout } from '../game/inventory';
 import type { ContainerKind } from '../game/loot';
+import type { MutationId, StationId, VendorId } from '../config/v3';
 
 /** Versión actual del formato de guardado. Súbela y añade una migración en migrations.ts al cambiar el formato. */
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 export type TargetPriority = 'cercano' | 'debil' | 'peligroso';
 
@@ -61,6 +62,10 @@ export interface EnemySnap {
   /** Hinchado ya hinchándose: segundos que le quedan. */
   swell?: number;
   bleed?: number;
+  /** v3: mutación (min 10), grupo de enjambre, alcantarilla del Reptante. */
+  mut?: MutationId;
+  group?: number;
+  sewer?: number;
 }
 
 export interface ContainerSnap { id: number; x: number; y: number; kind: ContainerKind; items: ItemInst[]; opened: boolean }
@@ -93,7 +98,40 @@ export interface RaidSnapshot {
   repopulate?: boolean;
   /** v2: flechas clavadas/caídas por el suelo, recuperables. */
   arrows?: { x: number; y: number; qty: number }[];
+  /** v3: casillas del bolsillo seguro y nivel de radio con que se entró (estaciones del refugio). */
+  pocketSlots?: number;
+  radio?: number;
+  /** v3: seguimiento para las misiones de los vendedores. */
+  track?: RaidTrack;
+  /** v3: gritos de Chillón activos (zona de dificultad local). */
+  screams?: { x: number; y: number; until: number }[];
+  /** v3: efectos del jugador (adrenalina, antídoto, estimulante, inmunidad al agarre). */
+  fx?: { adren?: number; antidoto?: number; estim?: number; grabImm?: number };
+  /** v3: siguiente id de grupo de enjambre. */
+  nextGroup?: number;
 }
+
+export interface RaidTrack {
+  heals: number;
+  dmgTaken: number;
+  /** Bajas por tipo: m = cuerpo a cuerpo, r = a distancia, o = otras (explosiones, ácido...). */
+  kills: Record<string, { m: number; r: number; o: number }>;
+}
+
+export interface StockEntry { id: string; rarity: Rarity; qty: number; left: number; traits?: ItemInst['traits'] }
+export interface VendorState {
+  xp: number;
+  stock: StockEntry[];
+  /** Nº de raids (stats.raids) cuando se generó el stock / nivel con que se generó. */
+  stockAt: number;
+  stockLevel: number;
+  offers: string[];
+  active: string | null;
+  /** Progreso de la misión activa (acumulativas). */
+  progress: number;
+}
+export interface CraftJob { recipe: string; readyAt: number }
+export interface Refugio { levels: Record<StationId, number>; crafts: CraftJob[] }
 
 export interface SaveData {
   saveVersion: number;
@@ -110,4 +148,8 @@ export interface SaveData {
   stats: { raids: number; extracted: number; deaths: number };
   /** v2: salidas descubiertas (vistas al menos una vez) por mapa: índices de exitLocs. */
   seenExits: Record<string, number[]>;
+  /** v3: estaciones del refugio y cola de fabricación. */
+  refugio: Refugio;
+  /** v3: los tres vendedores (reputación, stock, misiones). */
+  vendors: Record<VendorId, VendorState>;
 }

@@ -7,13 +7,14 @@ import {
 import { DIFFICULTY, scaling } from '../config/difficulty';
 import { AIM, JUICE, MAP2, MOVE, PROJECTILE, PRUEBA_V2, STAGGER, STEALTH, SWAP, VISION } from '../config/v2';
 import { ABILITIES, AbilityId, ITEMS } from '../data/items';
-import { EnemyType } from '../data/enemies';
+import { EnemyType, V3_TYPES } from '../data/enemies';
+import { ENEMY_V3, MATERIAL_LOOT, MUTATION_IDS, MUTATIONS, NEW_ITEMS, WAVE_V3 } from '../config/v3';
 import { rarityAtLeast, RARITIES } from '../data/rarity';
 import {
-  backpackAdd, canPocket, consume, countOf, def, ItemInst, itemLabel, itemValue, makeItem, slotOf,
+  backpackAdd, backpackSlots, canPocket, consume, countOf, def, ItemInst, itemLabel, itemValue, makeItem, slotOf,
   speedMult, totalProtection, totalWeight, weaponStats,
 } from '../game/inventory';
-import { rollContainer, rollItem, seeded } from '../game/loot';
+import { rollContainer, rollItem, rollMaterial, seeded } from '../game/loot';
 import type { ContainerSnap, ExitState, RaidSnapshot, Settings } from '../save/types';
 import { AimStick } from './aim';
 import { Enemy, EnemyManager, hasDetected, isUnaware, RaidCtx } from './enemies';
@@ -159,6 +160,18 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   private kick = new Phaser.Math.Vector2();
   private behind: { ang: number; k: number }[] = [];
   private pendingMelee: { t: number; e: Enemy; dmg: number; crit: boolean; weapon: string; range: number; heavy: boolean }[] = [];
+  // ---- v3 ----
+  /** Alcantarillas del Reptante (fijas por mapa). */
+  sewers: { x: number; y: number }[] = [];
+  private sewerImgs: { img: Phaser.GameObjects.Image; r: Rect }[] = [];
+  /** Granadas en el aire / con la mecha encendida. */
+  private grenades: { x: number; y: number; t: number; warn: Phaser.GameObjects.Graphics; img: Phaser.GameObjects.Text }[] = [];
+  private estimGfx: Phaser.GameObjects.Graphics | null = null;
+  private warnedMut = false;
+  /** Radio nivel 3: zona de élite con el mejor objeto (punto en el minimapa). */
+  private radioDot: { x: number; y: number } | null = null;
+  /** QA v3. */
+  v3s = { mats: 0, trunks: 0, muestras: 0, grenades: 0, grenadeHits: 0, mutated: 0, screamsSpawned: 0 };
 
   constructor() { super('Raid'); }
 
@@ -170,6 +183,9 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.attackT = 0; this.autosaveT = 0; this.idleT = 0; this.scanT = 0; this.god = false; this.markG = null; this.markImgs = new Map(); this.markTxt = new Map(); this.hitTimes = []; this.miniHpUntil = -1; this.acidStackT = 0; this.statusAcc = { bleed: 0, poison: 0 }; this.statusDealt = { bleed: 0, poison: 0 }; this.applying = null; this.healStats = { done: 0, cancelHit: 0, cancelRelease: 0 }; this.noiseRing = null; this.conesGfx = null; this.debris = []; this.execTarget = null; this.ringR = 0; this.stepT = 0; this.noAmmoWarned = false;
     this.swapT = 0; this.glanceT = 0; this.steadyT = 0; this.hitStopT = 0; this.vel.set(0, 0); this.kick.set(0, 0);
     this.stuck = new Map(); this.groundArrows = []; this.pendingMelee = []; this.behind = [];
+    this.sewers = []; this.sewerImgs = []; this.grenades = []; this.estimGfx = null; this.radioDot = null;
+    this.warnedMut = d.snap.elapsed >= MUTATIONS.fromMinute * 60;
+    this.v3s = { mats: 0, trunks: 0, muestras: 0, grenades: 0, grenadeHits: 0, mutated: 0, screamsSpawned: 0 };
     this.stats = { shots: 0, swaps: 0, attacksDuringSwap: 0, behindWarn: 0, behindVibes: 0, hitStops: 0, crits: 0, doorsOpened: 0, arrowsRecovered: 0, lootPaused: 0, iosKick: 0, backstabs: 0, executes: 0, debrisSteps: 0, autoSkippedUnaware: 0 };
   }
 
@@ -182,6 +198,34 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   elapsed() { return this.snap.elapsed; }
   minute() { return this.snap.elapsed / 60; }
   playerMelee() { return weaponStats(this.snap.loadout.arma).melee; }
+  pfacing() { return this.facing; }
+  vibrate(ms: number) { vibrate(ms); }
+  /** Chillón: atrae a todo en 12 casillas, horda cercana y +60 % de aparición en la zona 2 min. */
+  onScream(e: Enemy) {
+    const C = ENEMY_V3.chillon, s = this.snap;
+    for (const o of this.enemies.list) if (o !== e && !o.dead && o.def.type !== 'reptante' && Math.hypot(o.x - e.x, o.y - e.y) <= C.screamTiles * TILE) {
+      if (isUnaware(o)) { o.state = 'investigate'; o.goal = { x: this.player.x, y: this.player.y, until: s.elapsed + 15 }; o.susPhase = 'go'; }
+    }
+    (s.screams ??= []).push({ x: e.x, y: e.y, until: s.elapsed + C.localSec });
+    const p = this.offscreenPoint(10, 16, e.x, e.y);
+    if (p && this.enemies.list.length < DIFFICULTY.maxAlive) {
+      const n = Math.min(DIFFICULTY.maxAlive - this.enemies.list.length, C.hordeMin + Math.floor(Math.random() * (C.hordeMax - C.hordeMin + 1)));
+      for (let i = 0; i < n; i++) { const o = this.spawnAt(Math.random() < 0.3 ? 'corredor' : 'errante', p.x + (Math.random() - 0.5) * TILE * 3, p.y + (Math.random() - 0.5) * TILE * 3); o.state = 'investigate'; o.goal = { x: e.x, y: e.y, until: s.elapsed + 20 }; o.susPhase = 'go'; this.v3s.screamsSpawned++; }
+    }
+    this.hud?.toast('¡Un Chillón ha gritado! Todo viene hacia aquí', 2.5);
+    vibrate([60, 40, 60]);
+  }
+  onGrab(on: boolean) {
+    if (on) { this.hud?.toast('¡Te ha agarrado! Mueve el joystick de lado a lado', 1.8); this.cancelApply('golpe'); vibrate(120); }
+    this.snap.fx = { ...(this.snap.fx ?? {}), grabImm: this.enemies.v3.grabImm };
+  }
+  /** Multiplicador de aparición por gritos de Chillón activos cerca del jugador. */
+  private localSpawnMult() {
+    const s = this.snap, C = ENEMY_V3.chillon;
+    if (!s.screams?.length) return 1;
+    s.screams = s.screams.filter(k => k.until > s.elapsed);
+    return s.screams.some(k => Math.hypot(k.x - this.player.x, k.y - this.player.y) < C.screamTiles * TILE * 2) ? C.localSpawnMult : 1;
+  }
   /** ¿Lo ve el jugador? (cono de 220° + línea de visión; en la niebla = no visible). */
   visible(x: number, y: number, pad = 0) { return this.vision ? this.vision.sees(x, y, pad) : true; }
 
@@ -240,17 +284,21 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       onWall: (pj, x, y) => { if (pj.kind === 'bala') this.fx.impact(x, y); },
     });
 
+    this.setupSewers();
     if (this.fresh || legacy) this.populate(); else this.enemies.restore(s.enemies);
+    s.fx ??= {}; s.track ??= { heals: 0, dmgTaken: 0, kills: {} };
+    this.enemies.v3.grabImm = s.fx.grabImm ?? 0;
     for (const c of s.containers) this.addContainerObj(c);
     this.nextContainerId = Math.max(0, ...s.containers.map(c => c.id)) + 1;
     for (const a of s.arrows!) this.addGroundArrow(a.x, a.y, a.qty, false);
     this.setupStealth();
 
     for (const i of this.host.seenExits(this.map.id)) this.seen.add(i);
+    this.applyRadio();
     this.extraction = new ExtractionManager(s.exits, this.map, {
       scene: this, px: () => this.player.x, py: () => this.player.y, elapsed: () => s.elapsed,
       noise: (x, y, r) => this.noise(x, y, r),
-      hasFlare: () => countOf(this.snap.loadout.mochila, 'bengala') + (this.snap.loadout.bolsillo?.def === 'bengala' ? 1 : 0) > 0,
+      hasFlare: () => countOf(this.snap.loadout.mochila, 'bengala') + this.pocketCount('bengala') > 0,
       useFlare: () => this.useFlare(),
       payCandidate: () => { const it = this.payItem(); return it ? `${itemLabel(it)} (${RARITIES[it.rarity].nombre})` : null; },
       pay: () => this.pay(),
@@ -350,7 +398,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const relayout = () => { drawPause(); this.aim?.place(hud.aimRest.x, hud.aimRest.y); };
     this.scale.on('resize', relayout);
     this.events.once('shutdown', () => this.scale.off('resize', relayout));
-    if (this.fresh) hud.toast(this.exitsAnnouncement(), 4.5);
+    if (this.fresh) hud.toast(this.exitsAnnouncement() + this.radioNews.map(n => '\n' + n).join(''), 4.5 + this.radioNews.length * 1.5);
   }
 
   /** "Salidas activas: Túnel norte (A pie) y Muelle del almacén (Generador)". */
@@ -523,12 +571,135 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       if (pointInWalls(this.walls, c.x, c.y, 10)) continue;
       this.snap.containers.push({ id: this.nextContainerId++, x: c.x, y: c.y, kind: c.kind, items: rollContainer(rng, c.kind, c.bonus), opened: false });
     }
+    this.addMaterials();
   }
 
-  spawnAt(type: EnemyType, x: number, y: number) {
+  /**
+   * v3 §1: materiales en contenedores (según zona) y maleteros de coches. Con su propio generador para no cambiar
+   * el botín de la v2 de una semilla dada.
+   */
+  private addMaterials() {
+    const rng = seeded((this.snap.seed ^ 0x6d617431) >>> 0);
+    const L = MATERIAL_LOOT;
+    for (const c of this.snap.containers) {
+      if (rng() >= (L.chance[c.kind] ?? 0)) continue;
+      c.items.push(rollMaterial(rng, zoneAt(this.map, c.x, c.y).name)); this.v3s.mats++;
+    }
+    for (const car of this.map.cars) {
+      if (rng() >= L.carTrunkChance) continue;
+      // el maletero queda junto al lado largo del coche, en la calle
+      const horiz = car.w > car.h;
+      const cands = horiz ? [{ x: car.x + car.w / 2, y: car.y - TILE * 0.55 }, { x: car.x + car.w / 2, y: car.y + car.h + TILE * 0.55 }]
+        : [{ x: car.x - TILE * 0.55, y: car.y + car.h / 2 }, { x: car.x + car.w + TILE * 0.55, y: car.y + car.h / 2 }];
+      const p = cands.find(q => !pointInWalls(this.walls, q.x, q.y, 12));
+      if (!p) continue;
+      const items = [rollMaterial(rng, 'Coche')];
+      if (rng() < L.chance.coche - 0.5) items.push(rollMaterial(rng, 'Coche'));
+      this.snap.containers.push({ id: this.nextContainerId++, x: p.x, y: p.y, kind: 'caja', items, opened: false });
+      this.v3s.trunks++; this.v3s.mats += items.length;
+    }
+  }
+
+  /** Alcantarillas (Reptante): en la calle, deterministas por mapa (no tocan el generador del mapa). */
+  private setupSewers() {
+    const rng = seeded((MAP2.layoutSeed ^ 0x5e3e2) >>> 0);
+    const N = ENEMY_V3.reptante.sewers;
+    const sp = this.map.spawns.length ? this.map.spawns : [this.map.spawn];
+    for (let tries = 0; this.sewers.length < N && tries < N * 80; tries++) {
+      const x = TILE * 3 + rng() * (WORLD - TILE * 6), y = TILE * 3 + rng() * (WORLD - TILE * 6);
+      if (zoneAt(this.map, x, y).kind !== 'calle' || pointInWalls(this.walls, x, y, TILE * 1.2)) continue;
+      if (sp.some(q => Math.hypot(q.x - x, q.y - y) < TILE * 8)) continue;
+      if (this.map.exitLocs.some(q => Math.hypot(q.x - x, q.y - y) < TILE * 5)) continue;
+      if (this.sewers.some(q => Math.hypot(q.x - x, q.y - y) < TILE * 12)) continue;
+      this.sewers.push({ x, y });
+    }
+    for (const q of this.sewers) this.addSewerImg(q.x, q.y);
+  }
+  addSewerImg(x: number, y: number) {
+    if (!this.textures.exists('alcantarilla')) return;
+    const img = this.add.image(x, y, 'alcantarilla').setDisplaySize(TILE * 1.1, TILE * 1.1).setDepth(1.6);
+    const r = { x: x - TILE, y: y - TILE, w: TILE * 2, h: TILE * 2 };
+    this.sewerImgs.push({ img, r });
+    this.cullables.push({ o: img, r });
+  }
+
+  /** Radio del refugio: nivel 2 revela una salida activa; nivel 3 dice dónde está el mejor objeto de élite. */
+  private radioNews: string[] = [];
+  private applyRadio() {
+    const s = this.snap, lv = s.radio ?? 0;
+    this.radioNews = [];
+    if (lv >= 2) {
+      const hidden = s.exits.find(e => !this.seen.has(e.loc));
+      const ex = hidden ?? s.exits[0];
+      if (ex && this.fresh) { this.seen.add(ex.loc); this.host.markExitSeen(this.map.id, ex.loc); }
+      if (ex) this.radioNews.push(`📻 Radio: salida activa en ${this.extraction?.locName(ex.loc) ?? this.map.exitLocNames[ex.loc]}`);
+    }
+    if (lv >= 3) {
+      const el = s.containers.filter(c => c.kind === 'elite' && c.items.length);
+      let best: { c: ContainerSnap; it: ItemInst } | null = null;
+      for (const c of el) for (const it of c.items) if (!best || itemValue(it) > itemValue(best.it)) best = { c, it };
+      if (best) { this.radioDot = { x: best.c.x, y: best.c.y }; this.radioNews.push(`📻 Radio: ${itemLabel(best.it)} en ${zoneAt(this.map, best.c.x, best.c.y).name}`); }
+    }
+  }
+
+  spawnAt(type: EnemyType, x: number, y: number, group?: number) {
     x = Phaser.Math.Clamp(x, TILE, WORLD - TILE); y = Phaser.Math.Clamp(y, TILE, WORLD - TILE);
-    if (pointInWalls(this.walls, x, y, 20)) { y += TILE * 1.5; }
-    return this.enemies.spawn(type, x, y, scaling(this.minute()).stats);
+    if (type !== 'reptante' && pointInWalls(this.walls, x, y, 20)) { y += TILE * 1.5; }
+    const e = this.enemies.spawn(type, x, y, scaling(this.minute()).stats, type === 'enjambre' ? { group: group ?? this.newGroup() } : undefined);
+    if (type === 'reptante' && !this.sewers.some(q => Math.hypot(q.x - x, q.y - y) < 4)) this.addSewerImg(x, y);
+    // mutaciones desde el minuto 10
+    const m = this.minute();
+    if (m >= MUTATIONS.fromMinute && !MUTATIONS.exclude.includes(type)) {
+      const ch = Math.min(MUTATIONS.maxChance, MUTATIONS.chance + MUTATIONS.chancePerMinute * (m - MUTATIONS.fromMinute));
+      if (Math.random() < ch && this.enemies.mutate(e, MUTATION_IDS[Math.floor(Math.random() * MUTATION_IDS.length)])) this.v3s.mutated++;
+    }
+    return e;
+  }
+  private newGroup() { const s = this.snap; s.nextGroup = (s.nextGroup ?? 1) + 1; return s.nextGroup; }
+
+  /** Enjambre: un grupo de 8-12 bichos. */
+  spawnSwarm(x: number, y: number, n?: number) {
+    const [a, b] = ENEMY_V3.enjambre.count;
+    const k = n ?? a + Math.floor(Math.random() * (b - a + 1));
+    const g = this.newGroup();
+    const out: Enemy[] = [];
+    for (let i = 0; i < k; i++) out.push(this.spawnAt('enjambre', x + (Math.random() - 0.5) * TILE * 1.6, y + (Math.random() - 0.5) * TILE * 1.6, g));
+    return out;
+  }
+
+  /** v3: ¿toca un enemigo nuevo en esta oleada? (probabilidad por tipo desde su minuto, con tope de vivos). */
+  private spawnV3(m: number): boolean {
+    for (const t of V3_TYPES) {
+      const E = ENEMY_V3[t as keyof typeof ENEMY_V3];
+      if (m < E.fromMinute || Math.random() >= (WAVE_V3[t] ?? 0)) continue;
+      const alive = this.enemies.list.filter(e => e.def.type === t);
+      if (t === 'enjambre') {
+        if (new Set(alive.map(e => e.group)).size >= ENEMY_V3.enjambre.maxGroups) continue;
+        const p = this.offscreenPoint(12, 20); if (!p) continue;
+        this.spawnSwarm(p.x, p.y); return true;
+      }
+      if ('maxAlive' in E && alive.length >= (E as { maxAlive: number }).maxAlive) continue;
+      if (t === 'reptante') {
+        const v = this.cameras.main.worldView;
+        const free = this.sewers.filter(q => !v.contains(q.x, q.y) && !alive.some(e => Math.hypot((e.gx ?? 0) - q.x, (e.gy ?? 0) - q.y) < 4) && Math.hypot(q.x - this.player.x, q.y - this.player.y) < TILE * 26);
+        if (!free.length) continue;
+        const q = free[Math.floor(Math.random() * free.length)];
+        this.spawnAt('reptante', q.x, q.y); return true;
+      }
+      if (t === 'acechador') {
+        // solo en interiores (suelos de baldosa), fuera de cámara
+        const v = this.cameras.main.worldView;
+        const fl = this.map.floors.filter(f => { const cx = f.x + f.w / 2, cy = f.y + f.h / 2; const d = Math.hypot(cx - this.player.x, cy - this.player.y); return d > TILE * 8 && d < TILE * 28 && !v.contains(cx, cy); });
+        if (!fl.length) continue;
+        const f = fl[Math.floor(Math.random() * fl.length)];
+        const x = f.x + TILE + Math.random() * Math.max(1, f.w - TILE * 2), y = f.y + TILE + Math.random() * Math.max(1, f.h - TILE * 2);
+        if (pointInWalls(this.walls, x, y, TILE * 0.6)) continue;
+        this.spawnAt('acechador', x, y); return true;
+      }
+      const p = this.offscreenPoint(12, 22); if (!p) continue;
+      this.spawnAt(t, p.x, p.y); return true;
+    }
+    return false;
   }
 
   /** Punto fuera de cámara a cierta distancia del jugador (o de otro punto). */
@@ -548,6 +719,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   private spawnWave() {
     if (this.enemies.list.length >= DIFFICULTY.maxAlive) return;
     const m = this.minute();
+    if (this.spawnV3(m)) return;
     const mix = m >= DIFFICULTY.moreHinchadosFromMinute ? DIFFICULTY.waveMix.hinchados : m >= DIFFICULTY.corredorFromMinute ? DIFFICULTY.waveMix.corredores : DIFFICULTY.waveMix.early;
     let x = Math.random();
     let type: EnemyType = 'errante';
@@ -584,6 +756,18 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.snap.kills++;
     const items: ItemInst[] = [];
     if (Math.random() < e.def.dropChance) items.push(rollItem(Math.random, 0));
+    // v3: muestras mutadas (Hinchado 50 %, Abominación 2-3, mutado 35 %)
+    const M = MATERIAL_LOOT.muestra;
+    let muestras = 0;
+    if (e.def.type === 'hinchado' && Math.random() < M.hinchado) muestras = 1;
+    if (e.def.type === 'abominacion') muestras = M.abominacionQty[0] + Math.floor(Math.random() * (M.abominacionQty[1] - M.abominacionQty[0] + 1));
+    if (e.mut && Math.random() < M.mutado) muestras += 1;
+    if (muestras) { items.push(makeItem('mat_muestra', 'comun', muestras)); this.v3s.muestras += muestras; }
+    // registro para misiones: muertes por tipo y arma (m = cuerpo a cuerpo, r = a distancia, o = otras)
+    const tr = this.snap.track ??= { heals: 0, dmgTaken: 0, kills: {} };
+    const k = tr.kills[e.def.type] ??= { m: 0, r: 0, o: 0 };
+    const w = e.lastWeapon ? ITEMS[e.lastWeapon]?.weapon : undefined;
+    if (e.lastWeapon === 'punos' || (w && w.melee)) k.m++; else if (w) k.r++; else k.o++;
     // flechas clavadas en el cuerpo: se recuperan del cadáver
     const n = this.stuck.get(e) ?? 0;
     if (n > 0) { items.push(makeItem('flechas', 'comun', n)); this.stuck.delete(e); }
@@ -689,6 +873,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const p = s.player;
     p.x = Math.round(this.player.x); p.y = Math.round(this.player.y);
     s.enemies = this.enemies.snapshot();
+    s.fx = { ...(s.fx ?? {}), grabImm: this.enemies.v3.grabImm };
     this.syncArrows();
     s.saves++;
   }
@@ -702,7 +887,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   // ---------- Impacto (hit-stop, sacudida) ----------
   /** Congela el mundo unos ms (50-80) para que el golpe "pese". */
   hitStop(ms: number) {
-    if (this.paused || this.ended) return;
+    if (this.paused || this.ended || ms <= 0) return; // 0 ms: sin congelar (antes dejaba el mundo a cámara lenta)
     if (this.hitStopT <= 0) this.stats.hitStops++;
     this.hitStopT = Math.max(this.hitStopT, ms);
     this.physics.world.timeScale = 40;
@@ -733,7 +918,11 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const p = this.snap.player;
     let dmg = n;
     if (react) dmg *= (1 - totalProtection(this.snap.loadout)) * (p.aguantar > 0 ? 0.4 : 1);
+    // v3: el Reptante te agarra → el resto te hace la mitad; adrenalina → -30 %
+    dmg *= this.enemies?.v3.dmgMult(cause) ?? 1;
+    if ((this.snap.fx?.adren ?? 0) > 0) dmg *= NEW_ITEMS.adrenalina.dmgTakenMult;
     p.hp -= dmg;
+    if (this.snap.track) this.snap.track.dmgTaken += Math.min(dmg, Math.max(0, p.hp + dmg));
     if (react && this.applying) this.cancelApply('golpe');
     if (react) {
       // mini barra de vida: 2 golpes en 3 s → visible 3 s desde el último
@@ -782,6 +971,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       // sigilo: el ataque automático NUNCA elige a quien no te ha detectado (a esos se les ataca a propósito)
       if (isUnaware(e)) { this.stats.autoSkippedUnaware++; continue; }
       if (!melee && (!this.onScreen(e.x, e.y) || !this.visible(e.x, e.y, e.def.size * 0.3))) continue;
+      if (e.def.type === 'acechador' && !e.visibleNow) continue; // casi invisible: no se apunta solo
       const d = Math.hypot(e.x - px, e.y - py) - e.def.size * 0.3;
       if (d > rangePx) continue;
       if (arcDeg > 0 && d > this.playerRadius) {
@@ -802,12 +992,23 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
 
   private weaponId() { return this.snap.loadout.arma?.def ?? 'punos'; }
   private isBow() { return this.snap.loadout.arma?.def === 'arco'; }
-  private arrowsLeft() { const lo = this.snap.loadout; return countOf(lo.mochila, 'flechas') + (lo.bolsillo?.def === 'flechas' ? lo.bolsillo.qty : 0); }
+  private arrowsLeft() { const lo = this.snap.loadout; return countOf(lo.mochila, 'flechas') + this.pocketCount('flechas'); }
   private takeArrow() {
     const lo = this.snap.loadout;
     if (consume(lo.mochila, 'flechas', 1) > 0) return true;
-    if (lo.bolsillo?.def === 'flechas') { lo.bolsillo.qty--; if (lo.bolsillo.qty <= 0) lo.bolsillo = null; return true; }
-    return false;
+    return this.pocketTake('flechas');
+  }
+  /** v3: bolsillo seguro con varias casillas (bolsillo + bolsilloExtra). */
+  pocketList(): ItemInst[] { const lo = this.snap.loadout; return [lo.bolsillo ?? null, ...(lo.bolsilloExtra ?? [])].filter((x): x is ItemInst => !!x); }
+  pocketCount(id: string) { return this.pocketList().filter(i => i.def === id).reduce((s, i) => s + i.qty, 0); }
+  private pocketTake(id: string) {
+    const lo = this.snap.loadout;
+    if (lo.bolsillo?.def === id) { lo.bolsillo.qty--; if (lo.bolsillo.qty <= 0) lo.bolsillo = null; return true; }
+    const ex = lo.bolsilloExtra ?? [];
+    const i = ex.findIndex(x => x.def === id);
+    if (i < 0) return false;
+    ex[i].qty--; if (ex[i].qty <= 0) ex.splice(i, 1);
+    return true;
   }
 
   /** ¿Puede disparar ya? Gestiona recarga y munición (cargador / flechas). Devuelve false si no. */
@@ -1072,7 +1273,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.useConsumable(this.hasItem(pref) ? pref : other, true);
   }
 
-  private hasItem(id: string) { return countOf(this.snap.loadout.mochila, id) > 0 || this.snap.loadout.bolsillo?.def === id; }
+  private hasItem(id: string) { return countOf(this.snap.loadout.mochila, id) > 0 || this.pocketCount(id) > 0; }
 
   /** Curación en curso (§8.8): se aplica al terminar; hold = desde el botón rápido (soltar cancela). */
   applying: { id: string; t: number; total: number; hold: boolean; pointerId: number | null } | null = null;
@@ -1117,11 +1318,9 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const h = ITEMS[id]?.heal;
     if (!h) return false;
     const lo = this.snap.loadout;
-    if (consume(lo.mochila, id, 1) === 0) {
-      if (lo.bolsillo?.def === id) { lo.bolsillo.qty--; if (lo.bolsillo.qty <= 0) lo.bolsillo = null; }
-      else { this.hud?.toast(`No tienes ${ITEMS[id].nombre.toLowerCase()}`, 1); return false; }
-    }
+    if (consume(lo.mochila, id, 1) === 0 && !this.pocketTake(id)) { this.hud?.toast(`No tienes ${ITEMS[id].nombre.toLowerCase()}`, 1); return false; }
     this.healStats.done++;
+    if (this.snap.track) this.snap.track.heals++;
     p.healLeft = h.amount; p.healRate = h.amount / h.seconds;
     const cured: string[] = [];
     if (S.curaSangrado.includes(id) && p.bleed?.length) { p.bleed = []; cured.push('sangrado'); }
@@ -1142,8 +1341,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
 
   private useFlare() {
     const lo = this.snap.loadout;
-    if (consume(lo.mochila, 'bengala', 1) > 0) { this.host.refreshInventory(); return true; }
-    if (lo.bolsillo?.def === 'bengala') { lo.bolsillo.qty--; if (lo.bolsillo.qty <= 0) lo.bolsillo = null; this.host.refreshInventory(); return true; }
+    if (consume(lo.mochila, 'bengala', 1) > 0 || this.pocketTake('bengala')) { this.host.refreshInventory(); return true; }
     return false;
   }
 
@@ -1151,7 +1349,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   payItem(): ItemInst | null {
     const lo = this.snap.loadout;
     const pick = (list: ItemInst[]) => list.filter(i => !i.free && rarityAtLeast(i.rarity, 'reforzado')).sort((a, b) => itemValue(a) - itemValue(b))[0] ?? null;
-    return pick([...lo.mochila, ...(lo.bolsillo ? [lo.bolsillo] : [])]) ?? pick([lo.reserva ?? null, lo.cabeza, lo.torso, lo.arma].filter((x): x is ItemInst => !!x));
+    return pick([...lo.mochila, ...this.pocketList()]) ?? pick([lo.reserva ?? null, lo.cabeza, lo.torso, lo.arma].filter((x): x is ItemInst => !!x));
   }
 
   private pay() {
@@ -1163,9 +1361,11 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   }
 
   // ---------- Inventario (llamado desde la UI) ----------
-  findItem(uid: string): { it: ItemInst; where: 'arma' | 'reserva' | 'torso' | 'cabeza' | 'bolsillo' | 'mochila' } | null {
+  findItem(uid: string): { it: ItemInst; where: 'arma' | 'reserva' | 'torso' | 'cabeza' | 'bolsillo' | 'espalda' | 'bolsilloExtra' | 'mochila' } | null {
     const lo = this.snap.loadout;
-    for (const k of ['arma', 'reserva', 'torso', 'cabeza', 'bolsillo'] as const) if (lo[k]?.uid === uid) return { it: lo[k]!, where: k };
+    for (const k of ['arma', 'reserva', 'torso', 'cabeza', 'bolsillo', 'espalda'] as const) if (lo[k]?.uid === uid) return { it: lo[k]!, where: k };
+    const ex = lo.bolsilloExtra?.find(i => i.uid === uid);
+    if (ex) return { it: ex, where: 'bolsilloExtra' };
     const it = lo.mochila.find(i => i.uid === uid);
     return it ? { it, where: 'mochila' } : null;
   }
@@ -1176,6 +1376,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     if (!f) return null;
     const lo = this.snap.loadout;
     if (f.where === 'mochila') lo.mochila.splice(lo.mochila.indexOf(f.it), 1);
+    else if (f.where === 'bolsilloExtra') lo.bolsilloExtra!.splice(lo.bolsilloExtra!.indexOf(f.it), 1);
     else lo[f.where] = null;
     if (f.where === 'arma' || f.where === 'torso' || f.where === 'cabeza') this.refreshAbilities();
     if (f.where === 'arma') this.rig.setWeapon(null);
@@ -1187,7 +1388,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const f = this.findItem(uid); if (!f || f.where !== 'mochila') return;
     const slot = slotOf(f.it); if (!slot) return;
     const lo = this.snap.loadout;
-    const prev = lo[slot];
+    const prev = lo[slot] ?? null;
+    if (slot === 'espalda' && lo.mochila.length - 1 + (prev ? 1 : 0) > backpackSlots({ ...lo, espalda: f.it })) { this.hud?.toast('No cabe todo en esa mochila'); return; }
     lo.mochila.splice(lo.mochila.indexOf(f.it), 1);
     lo[slot] = f.it;
     if (slot === 'arma' && prev && !prev.free) {
@@ -1201,9 +1403,14 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.host.refreshInventory();
   }
 
-  invUnequip(slot: 'arma' | 'reserva' | 'torso' | 'cabeza') {
+  invUnequip(slot: 'arma' | 'reserva' | 'torso' | 'cabeza' | 'espalda') {
     if (!this.canEditInventory()) return;
     const lo = this.snap.loadout; const it = lo[slot]; if (!it) return;
+    if (slot === 'espalda') {
+      // la mochila puesta pasa a ocupar una casilla de la mochila base: tiene que caber todo
+      if (lo.mochila.length + 1 > backpackSlots({ ...lo, espalda: null })) { this.hud?.toast('Vacía la mochila antes de quitártela'); return; }
+      lo.espalda = null; lo.mochila.push(it); this.host.refreshInventory(); return;
+    }
     if (it.free) { lo[slot] = null; }
     else { if (backpackAdd(lo, it)) { this.hud?.toast('Mochila llena'); return; } lo[slot] = null; }
     if (slot === 'arma') this.rig.setWeapon(null);
@@ -1216,23 +1423,31 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const lo = this.snap.loadout;
     const f = this.findItem(uid); if (!f || f.where !== 'mochila') return;
     if (!canPocket(f.it)) { this.hud?.toast('Solo objetos pequeños en el bolsillo seguro'); return; }
-    const prev = lo.bolsillo;
     lo.mochila.splice(lo.mochila.indexOf(f.it), 1);
-    lo.bolsillo = f.it;
-    if (prev) lo.mochila.push(prev);
+    const slots = this.snap.pocketSlots ?? 1;
+    lo.bolsilloExtra ??= [];
+    if (!lo.bolsillo) lo.bolsillo = f.it;
+    else if (1 + lo.bolsilloExtra.length < slots) lo.bolsilloExtra.push(f.it);
+    else { const prev = lo.bolsillo; lo.bolsillo = f.it; lo.mochila.push(prev); }
     this.host.refreshInventory();
   }
 
-  invFromPocket() {
+  invFromPocket(uid?: string) {
     if (!this.canEditInventory()) return;
-    const lo = this.snap.loadout; const it = lo.bolsillo; if (!it) return;
-    if (backpackAdd(lo, it)) { this.hud?.toast('Mochila llena'); return; }
-    lo.bolsillo = null;
+    const lo = this.snap.loadout;
+    const f = uid ? this.findItem(uid) : lo.bolsillo ? { it: lo.bolsillo, where: 'bolsillo' as const } : null;
+    if (!f || (f.where !== 'bolsillo' && f.where !== 'bolsilloExtra')) return;
+    if (backpackAdd(lo, f.it)) { this.hud?.toast('Mochila llena'); return; }
+    this.removeItem(f.it.uid);
+    // el bolsillo principal no se queda vacío si hay extras
+    if (!lo.bolsillo && lo.bolsilloExtra?.length) lo.bolsillo = lo.bolsilloExtra.shift()!;
     this.host.refreshInventory();
   }
 
   invDrop(uid: string) {
     if (!this.canEditInventory()) return;
+    const lo = this.snap.loadout;
+    if (lo.espalda?.uid === uid && lo.mochila.length > backpackSlots({ ...lo, espalda: null })) { this.hud?.toast('Vacía la mochila antes de tirarla'); return; }
     const it = this.removeItem(uid); if (!it) return;
     if (it.free) { this.host.refreshInventory(); return; }
     const near = this.nearContainer(LOOT_REACH_TILES * TILE);
@@ -1256,7 +1471,69 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
 
   invUse(uid: string) {
     const f = this.findItem(uid); if (!f) return;
-    if (ITEMS[f.it.def].heal) this.useConsumable(f.it.def);
+    const d = ITEMS[f.it.def];
+    if (d.heal) this.useConsumable(f.it.def);
+    else if (d.effect) this.useEffect(f.it.def);
+    else if (d.kind === 'granada') this.throwGrenade();
+  }
+
+  /** Consume 1 de la mochila o del bolsillo. */
+  private takeOne(id: string) { return consume(this.snap.loadout.mochila, id, 1) > 0 || this.pocketTake(id); }
+
+  /** v3: adrenalina, antídoto, estimulante de visión (instantáneos). */
+  useEffect(id: string) {
+    if (this.ended || this.paused) return false;
+    const fx = this.snap.fx ??= {};
+    const N = NEW_ITEMS;
+    if (!this.takeOne(id)) return false;
+    if (id === 'adrenalina') { fx.adren = N.adrenalina.sec; this.hud?.toast('Adrenalina: +25 % velocidad, -30 % daño (8 s)', 1.5); }
+    if (id === 'antidoto') { fx.antidoto = N.antidoto.immuneSec; this.snap.player.poison = []; this.hud?.toast('Antídoto: sin veneno y protegido 30 s', 1.5); }
+    if (id === 'estimulante') { fx.estim = N.estimulante.sec; this.hud?.toast('Estimulante: ves enemigos a 8 casillas (25 s)', 1.5); }
+    this.host.refreshInventory();
+    return true;
+  }
+
+  /** v3: granada hacia donde miras (5 casillas o hasta la pared); aviso en el suelo y 1 s de mecha. */
+  throwGrenade() {
+    if (this.ended || this.paused) return false;
+    const G = NEW_ITEMS.granada;
+    if (!this.takeOne('granada')) { this.hud?.toast('No tienes granadas', 1); return false; }
+    const a = this.aim?.aiming ? this.aim.angle : this.facing;
+    const L = G.throwTiles * TILE;
+    const t = rayHit(this.walls, this.player.x, this.player.y, this.player.x + Math.cos(a) * L, this.player.y + Math.sin(a) * L);
+    const x = this.player.x + Math.cos(a) * L * Math.max(0, t - 0.04), y = this.player.y + Math.sin(a) * L * Math.max(0, t - 0.04);
+    const warn = this.add.graphics().setDepth(15);
+    const img = this.add.text(this.player.x, this.player.y, '💣', { fontSize: '20px' }).setOrigin(0.5).setDepth(15.5);
+    this.tweens.add({ targets: img, x, y, duration: 260, ease: 'Quad.easeOut' });
+    this.grenades.push({ x, y, t: G.fuseSec, warn, img });
+    this.v3s.grenades++;
+    this.host.refreshInventory();
+    return true;
+  }
+
+  private updateGrenades(dt: number) {
+    const G = NEW_ITEMS.granada, r = G.radiusTiles * TILE;
+    for (let i = this.grenades.length - 1; i >= 0; i--) {
+      const g = this.grenades[i];
+      g.t -= dt;
+      const k = 1 - Math.max(0, g.t) / G.fuseSec;
+      g.warn.clear().fillStyle(0xff3b30, 0.12 + 0.18 * k).fillCircle(g.x, g.y, r).lineStyle(3, 0xff3b30, 0.9).strokeCircle(g.x, g.y, r);
+      if (g.t > 0) continue;
+      g.warn.destroy(); g.img.destroy(); this.grenades.splice(i, 1);
+      for (const e of [...this.enemies.list]) {
+        if (!e.targetable || Math.hypot(e.x - g.x, e.y - g.y) > r + e.def.size * 0.3) continue;
+        if (!lineClear(this.walls, g.x, g.y, e.x, e.y)) continue;
+        this.v3s.grenadeHits++;
+        this.dealDamage(e, G.dmg, Math.atan2(e.y - g.y, e.x - g.x), 'granada', false, JUICE.hitStopHeavyMs);
+      }
+      if (Math.hypot(this.player.x - g.x, this.player.y - g.y) <= r && lineClear(this.walls, g.x, g.y, this.player.x, this.player.y)) this.damagePlayer(G.dmg * G.selfMult, 'Tu granada');
+      const fx = this.add.circle(g.x, g.y, r, 0xffb347, 0.55).setDepth(20);
+      this.tweens.add({ targets: fx, alpha: 0, scale: 1.25, duration: 320, onComplete: () => fx.destroy() });
+      this.fx.stain(g.x, g.y, false, 1.1);
+      this.cameras.main.shake(140, 0.009);
+      this.noise(g.x, g.y, G.noise);
+      vibrate(80);
+    }
   }
 
   canEditInventory() { return !this.paused && !this.ended; }
@@ -1343,6 +1620,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   /** Añade cargas (máx. 5 por tipo; si está lleno se renueva la más gastada). Cada carga lleva su temporizador. */
   addStatus(kind: 'bleed' | 'poison', stacks: number) {
     if (this.ended || this.god || stacks <= 0) return;
+    if (kind === 'poison' && (this.snap.fx?.antidoto ?? 0) > 0) return;
     const S = PRUEBA_V2.status, p = this.snap.player;
     const arr = (kind === 'bleed' ? (p.bleed ??= []) : (p.poison ??= []));
     const dur = kind === 'bleed' ? S.bleedSec : S.poisonSec;
@@ -1581,7 +1859,9 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     if (v.length() > 1) v.normalize();
     const ranged = !weaponStats(lo.arma).melee;
     const aiming = !!this.aim?.aiming && ranged;
-    const max = PLAYER_SPEED_TILES * TILE * speedMult(lo) * (aiming ? MOVE.aimSpeedMult : 1) * (this.applying ? PRUEBA_V2.applyMoveMult : 1);
+    const grabbed = !!this.enemies.v3.grab;
+    if (grabbed) { this.enemies.v3.wiggle(v.x, v.y); v.set(0, 0); }
+    const max = PLAYER_SPEED_TILES * TILE * speedMult(lo) * (aiming ? MOVE.aimSpeedMult : 1) * (this.applying ? PRUEBA_V2.applyMoveMult : 1) * ((this.snap.fx?.adren ?? 0) > 0 ? NEW_ITEMS.adrenalina.speedMult : 1);
     const wk = 1 + MOVE.weightTimePct * totalWeight(lo);
     // sigilo: tres pasos según cuánto empujas el joystick (teclado = correr)
     const mag = Math.min(1, v.length());
@@ -1693,7 +1973,11 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     if (this.exitCheckT <= 0) { this.exitCheckT = 0.25; this.checkExitsSeen(); }
 
     // dificultad: oleadas y Corredor de castigo por estar quieto
-    s.spawnTimer += dt * scaling(minute).spawn;
+    s.spawnTimer += dt * scaling(minute).spawn * this.localSpawnMult();
+    if (!this.warnedMut && minute >= MUTATIONS.fromMinute) { this.warnedMut = true; this.hud.toast('⚠ Minuto 10: aparecen mutados (aura de color: amarilla veloz, gris blindado, naranja volátil, verde regenerador)', 4); }
+    const fxs = s.fx ??= {};
+    for (const k of ['adren', 'antidoto', 'estim'] as const) if ((fxs[k] ?? 0) > 0) fxs[k] = Math.max(0, fxs[k]! - dt);
+    fxs.grabImm = this.enemies.v3.grabImm;
     if (s.spawnTimer >= DIFFICULTY.baseSpawnIntervalSec) { s.spawnTimer = 0; this.spawnWave(); }
     if (s.hordeCd > 0) s.hordeCd -= dt;
     // resto de la población inicial, en goteo y fuera de cámara (no todo de golpe)
@@ -1732,6 +2016,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.combat(dt);
     this.updatePendingMelee(dt);
     this.proj.update(dt);
+    this.updateGrenades(dt);
     this.pickupArrows();
     this.drawReload();
     if (this.ended) return;
@@ -1787,6 +2072,15 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       }
     }
 
+    // estimulante de visión: marca enemigos a 8 casillas, también tras muros
+    const eg = this.estimGfx ??= this.add.graphics().setDepth(25);
+    eg.clear();
+    if ((fxs.estim ?? 0) > 0) {
+      const R = TILE * NEW_ITEMS.estimulante.tiles;
+      eg.lineStyle(2, 0xc6ff3c, 0.35).strokeCircle(this.player.x, this.player.y, R);
+      for (const e of this.enemies.list) if (!e.dead && !e.submerged && Math.hypot(e.x - this.player.x, e.y - this.player.y) < R) eg.lineStyle(3, 0xc6ff3c, 0.9).strokeCircle(e.x, e.y, e.def.size * 0.55);
+    }
+
     this.updateBehind(dt);
     this.drawPlayerMarks(dt);
 
@@ -1805,7 +2099,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       else b.set({ icon: ABILITIES[id].icon, label: ABILITIES[id].nombre, cd: p.cds[id] ?? 0, maxCd: ABILITIES[id].cooldown, enabled: this.swapT <= 0 && (id !== 'rafaga' || (lo.arma?.mag ?? 0) > 0) });
     });
     const qid = this.hasItem(this.settings.rapido) ? this.settings.rapido : this.settings.rapido === 'vendaje' ? 'botiquin' : 'vendaje';
-    const qn = countOf(lo.mochila, qid) + (lo.bolsillo?.def === qid ? lo.bolsillo.qty : 0);
+    const qn = countOf(lo.mochila, qid) + this.pocketCount(qid);
     this.hud.quick.set({ icon: ITEMS[qid].icon, label: ITEMS[qid].nombre, cd: p.healLeft > 0 ? p.healLeft : 0, maxCd: ITEMS[qid].heal!.amount, enabled: qn > 0, badge: String(qn) });
     const rv = lo.reserva ?? null;
     if (this.execTarget) this.hud.swap.set({ icon: 'ui_ejecutar', label: 'Ejecutar', cd: 0, maxCd: 0, enabled: this.attackT <= 0 });
@@ -1817,11 +2111,14 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const exitsView = s.exits.filter(e => known(e.loc)).map(e => ({ x: e.x, y: e.y, open: this.extraction.isOpen(e), name: `${this.extraction.locName(e.loc)} · ${EXIT_NAMES[e.type]}` }));
     this.hud.drawArrows(this.cameras.main, exitsView);
     // amenazas: detectado y NO (en pantalla y visible) → flecha de borde; en la niebla cuenta como no visible
-    const threats = this.enemies.list.filter(e => hasDetected(e) && !(this.onScreen(e.x, e.y) && e.visibleNow)).map(e => ({ x: e.x, y: e.y, type: e.def.type as string }));
+    const threats = this.enemies.list.filter(e => hasDetected(e) && !(this.onScreen(e.x, e.y) && e.visibleNow) && !(e.def.type === 'acechador' && !e.visibleNow) && !e.submerged && e.def.type !== 'enjambre').map(e => ({ x: e.x, y: e.y, type: e.def.type as string }));
     this.hud.drawThreats(this.cameras.main, this.player, threats, s.elapsed);
     const closed = this.map.exitLocs.filter((_, i) => known(i) && !s.exits.some(e => e.loc === i));
-    this.hud.drawMinimap(this.player.x, this.player.y, exitsView, closed, this.scanT > 0 ? this.enemies.list.filter(e => Math.hypot(e.x - this.player.x, e.y - this.player.y) < TILE * PRUEBA_V2.scanTiles).map(e => ({ x: e.x, y: e.y, color: COLORS.peligro })) : [], this.cameras.main.worldView);
-    this.hud.drawVignette(this.behind);
+    const extra = this.scanT > 0 ? this.enemies.list.filter(e => Math.hypot(e.x - this.player.x, e.y - this.player.y) < TILE * PRUEBA_V2.scanTiles).map(e => ({ x: e.x, y: e.y, color: COLORS.peligro })) : [];
+    if (this.radioDot && this.containers.some(c => c.snap.kind === 'elite' && c.snap.x === this.radioDot!.x && c.snap.y === this.radioDot!.y && c.snap.items.length)) extra.push({ x: this.radioDot.x, y: this.radioDot.y, color: 0x3c8cff });
+    this.hud.drawMinimap(this.player.x, this.player.y, exitsView, closed, extra, this.cameras.main.worldView);
+    // borde rojo: enemigos ocultos detrás + latido fuerte del Acechador; borde oscuro que vibra: Enjambre
+    this.hud.drawVignette([...this.behind, ...this.enemies.v3.vignette()], this.enemies.v3.swarmEdges, s.elapsed);
     this.hud.update(dt);
 
     this.autosaveT += dt;
@@ -1853,5 +2150,16 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     return null;
   }
   setVision(on: boolean) { this.vision?.setEnabled(on); }
+  /** QA v3: reglas de justicia, materiales, efectos. */
+  v3Stats() {
+    const v = this.enemies.v3;
+    return {
+      ...this.v3s, fair: { ...v.stats }, tele: { ...this.enemies.teleStats }, grab: v.grab ? { t: v.grab.t } : null, grabImm: v.grabImm,
+      sewers: this.sewers.length, fx: { ...(this.snap.fx ?? {}) }, track: this.snap.track, pocketSlots: this.snap.pocketSlots ?? 1,
+      backpack: backpackSlots(this.snap.loadout), screams: (this.snap.screams ?? []).length, localMult: this.localSpawnMult(),
+      types: this.enemies.list.reduce((m, e) => { m[e.def.type] = (m[e.def.type] ?? 0) + 1; return m; }, {} as Record<string, number>),
+      muts: this.enemies.list.filter(e => e.mut).map(e => ({ type: e.def.type, mut: e.mut, hp: e.hp, maxHp: e.maxHp })),
+    };
+  }
   doorList() { return this.doors.map(o => ({ id: o.d.id, x: o.d.x + o.d.w / 2, y: o.d.y + o.d.h / 2, horiz: o.d.horiz, open: o.open })); }
 }
