@@ -14,11 +14,11 @@ import {
   backpackAdd, backpackSlots, canPocket, loadNoiseTiles, quickSlots, useTimeMult, consume, countOf, def, ItemInst, itemLabel, itemValue, makeItem, slotOf,
   speedMult, totalProtection, totalWeight, weaponStats,
 } from '../game/inventory';
-import { rollContainer, rollEliteDrops, rollItem, rollLair, rollMaterial, seeded } from '../game/loot';
+import { rollContainer, rollEliteDrops, rollItem, rollLair, rollMaterial, seeded, setLootMap } from '../game/loot';
 import { mapDef, SNOW } from '../config/v4';
 import { SNOW_ENEMIES } from '../config/v42';
 import { AttrId, XP, XP_UI } from '../config/levels';
-import { attrK, killXp, xpToNext } from '../game/levels';
+import { attrK, killXp, killXpRaid, xpToNext } from '../game/levels';
 import { RARITY_ORDER } from '../data/rarity';
 import type { ContainerSnap, ExitState, RaidSnapshot, SaveData, Settings } from '../save/types';
 import { AimStick } from './aim';
@@ -38,6 +38,7 @@ import { PERF } from '../config/v32';
 import { rollDamage } from '../game/damage';
 import { Rig } from './rig';
 import { Vision } from './vision';
+import { SnowRules } from './snow';
 import { genTrapero, traperoRejects, valesFor } from './trapero';
 
 export interface RaidHost {
@@ -105,6 +106,8 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   flow!: FlowField;
   fx!: Fx;
   vision: Vision | null = null;
+  /** v4b: huellas, hielo y Ventisca. */
+  snowR: SnowRules | null = null;
   proj!: Projectiles;
   player!: Phaser.Physics.Arcade.Image;
   rig!: Rig;
@@ -261,7 +264,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     const p = this.offscreenPoint(10, 16, e.x, e.y);
     if (p && this.enemies.list.length < DIFFICULTY.maxAlive) {
       const n = Math.min(DIFFICULTY.maxAlive - this.enemies.list.length, C.hordeMin + Math.floor(Math.random() * (C.hordeMax - C.hordeMin + 1)));
-      for (let i = 0; i < n; i++) { const o = this.spawnAt(Math.random() < 0.3 ? 'corredor' : 'errante', p.x + (Math.random() - 0.5) * TILE * 3, p.y + (Math.random() - 0.5) * TILE * 3); o.state = 'investigate'; o.goal = { x: e.x, y: e.y, until: s.elapsed + 20 }; o.susPhase = 'go'; this.v3s.screamsSpawned++; }
+      for (let i = 0; i < n; i++) { const o = this.markWave(this.spawnAt(Math.random() < 0.3 ? 'corredor' : 'errante', p.x + (Math.random() - 0.5) * TILE * 3, p.y + (Math.random() - 0.5) * TILE * 3)); o.state = 'investigate'; o.goal = { x: e.x, y: e.y, until: s.elapsed + 20 }; o.susPhase = 'go'; this.v3s.screamsSpawned++; }
     }
     this.hud?.toast('¡Un Chillón ha gritado! Todo viene hacia aquí', 2.5);
     vibrate([60, 40, 60]);
@@ -278,15 +281,19 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     return s.screams.some(k => Math.hypot(k.x - this.player.x, k.y - this.player.y) < C.screamTiles * TILE * 2) ? C.localSpawnMult : 1;
   }
   /** ¿Lo ve el jugador? (cono de 220° + línea de visión; en la niebla = no visible). */
+  /** v4b: tope de vista de los enemigos (Ventisca). */
+  sightCapTiles() { return this.snowR?.sightCap() ?? 99; }
   visible(x: number, y: number, pad = 0) { return this.vision ? this.vision.sees(x, y, pad) : true; }
 
   create() {
-    this.map = generateMap(this.snap.seed);
+    // v4b: el mapa elegido (si aún no tiene generador, El Arrabal)
+    { const want = mapDef(this.snap.mapDefId); this.map = generateMap(this.snap.seed, want.generador ? { def: want } : {}); }
+    setLootMap(this.mapDef);
     const s = this.snap;
     // Guardado de la v1 (otro mapa): se repuebla en el mapa nuevo conservando equipo, vida y tiempo.
     const legacy = !this.fresh && (s.repopulate || s.mapId !== this.map.id);
     if (legacy) this.repopulateLegacy();
-    s.mapId = this.map.id;
+    s.mapId = this.map.id; s.mapDefId = this.map.defId;
     s.doorsOpen ??= []; s.arrows ??= [];
     this.physics.world.setBounds(0, 0, WORLD, WORLD);
     this.fx = new Fx(this);
@@ -379,6 +386,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     this.applyZoom();
     this.scale.on('resize', this.onResize, this);
     this.vision = new Vision(this, () => this.walls, () => this.wallIndex);
+    this.snowR = new SnowRules(this);
     this.facing = -Math.PI / 2; this.viewFacing = this.facing;
     this.vision.update(this.player.x, this.player.y, this.facing, this.wallsVersion, this.snap.elapsed);
 
@@ -398,7 +406,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       window.removeEventListener('beforeunload', onPageHide);
       this.scale.off('resize', this.onResize, this);
       setWallIndex(null);
-      this.vision?.destroy(); this.vision = null;
+      this.vision?.destroy(); this.vision = null; this.snowR?.destroy(); this.snowR = null; setLootMap(null);
       this.scene.stop('RaidUI');
     });
 
@@ -847,7 +855,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
         lead.flankSide = 0;
         for (let i = 1; i < SNOW_ENEMIES.wolfPack; i++) {
           const o = this.spawnAt('lobo', x + (Math.random() - 0.5) * TILE * 2, y + (Math.random() - 0.5) * TILE * 2, group, false, true);
-          o.flankSide = sides[(i - 1) % 2]; o.state = lead.state; o.goal = lead.goal; o.susPhase = lead.susPhase; o.meter = lead.meter;
+          o.packOf = lead; o.flankSide = sides[(i - 1) % 2]; o.state = lead.state; o.goal = lead.goal; o.susPhase = lead.susPhase; o.meter = lead.meter;
         }
         this.v42s.packs++;
         return lead;
@@ -933,7 +941,9 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     return null;
   }
 
-  private spawnWave() {
+  /** v4b: todo lo que entra por oleada (también las de la v3: chillones, enjambres…) lleva la marca de oleada. */
+  private spawnWave() { const n0 = this.enemies.list.length; this.spawnWaveInner(); for (const e of this.enemies.list.slice(n0)) e.wave = true; }
+  private spawnWaveInner() {
     if (this.enemies.list.length >= DIFFICULTY.maxAlive) return;
     const m = this.minute();
     if (this.spawnV3(m)) return;
@@ -945,8 +955,10 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     if (!p) return;
     const n = type === 'errante' ? DIFFICULTY.erranteGroupMin + Math.floor(Math.random() * (DIFFICULTY.erranteGroupMax - DIFFICULTY.erranteGroupMin + 1)) : 1;
     const room = DIFFICULTY.maxAlive - this.enemies.list.length; // el tope se respeta también dentro del grupo
-    for (let i = 0; i < Math.min(n, room); i++) this.spawnAt(type, p.x + (Math.random() - 0.5) * TILE * 2, p.y + (Math.random() - 0.5) * TILE * 2);
+    for (let i = 0; i < Math.min(n, room); i++) this.markWave(this.spawnAt(type, p.x + (Math.random() - 0.5) * TILE * 2, p.y + (Math.random() - 0.5) * TILE * 2));
   }
+  /** v4b: enemigo de oleada/horda (30 % de experiencia); la manada de lobos que crea también. */
+  private markWave(e: Enemy) { e.wave = true; for (const o of this.enemies.list) if (o.packOf === e) o.wave = true; return e; }
 
   /** Ruido en el mundo. Desde el minuto 10, el ruido fuerte atrae hordas. */
   /** QA: últimos ruidos (x, y, radio, t). */
@@ -963,7 +975,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
       if (!p) return;
       const n = Math.min(DIFFICULTY.maxAlive - this.enemies.list.length, DIFFICULTY.hordeSizeMin + Math.floor(Math.random() * (DIFFICULTY.hordeSizeMax - DIFFICULTY.hordeSizeMin + 1)));
       for (let i = 0; i < n; i++) {
-        const e = this.spawnAt(Math.random() < 0.25 ? 'corredor' : 'errante', p.x + (Math.random() - 0.5) * TILE * 3, p.y + (Math.random() - 0.5) * TILE * 3);
+        const e = this.markWave(this.spawnAt(Math.random() < 0.25 ? 'corredor' : 'errante', p.x + (Math.random() - 0.5) * TILE * 3, p.y + (Math.random() - 0.5) * TILE * 3));
         e.goal = { x, y, until: this.snap.elapsed + 20 }; e.state = 'investigate';
       }
       this.hud?.toast('¡Una horda acude al ruido!');
@@ -1014,7 +1026,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
   /** v4.0: velocidad con la carga (Fuerza: peso que no ralentiza) y la Agilidad. */
   spd(lo = this.snap.loadout) { return speedMult(lo, this.att('fuerza', 'weight')) * (1 + this.att('agilidad', 'speed')); }
   /** v4.0: experiencia de la incursión (sin asegurar hasta extraer), con el multiplicador del mapa. */
-  gainXp(n: number, by: 'kills' | 'cajas' | 'mision' | 'extraer') {
+  gainXp(n: number, by: 'kills' | 'cajas' | 'mision' | 'extraer' | 'boss') {
     if (n <= 0) return;
     const v = n * this.mapDef.xpMult;
     this.snap.xp = (this.snap.xp ?? 0) + v;
@@ -1036,7 +1048,11 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
 
   onEnemyDeath(e: Enemy) {
     this.snap.kills++;
-    this.gainXp(killXp(e.def.type, !!e.elite, e.def.type === 'matriarca'), 'kills');
+    // v4b (Basu): oleadas/hordas ×0,3 y, pasados 1.500 de base por muertes en la incursión, la mitad. El jefe siempre entero (y aparte, sin ×1,5 del helipuerto).
+    const boss = e.def.type === 'matriarca', base = killXp(e.def.type, !!e.elite, boss);
+    const v = boss ? base : killXpRaid(base, e.wave, this.snap.killBase ?? 0);
+    this.snap.killBase = (this.snap.killBase ?? 0) + v;
+    this.gainXp(v, boss ? 'boss' : 'kills');
     if (e.def.type === 'matriarca') { this.v42s.bossKills++; if (!this.quietKills) this.hud?.toast('Has abatido a La Matriarca', 2.5); }
     const items: ItemInst[] = [];
     if (e.elite) { const drops = rollEliteDrops(Math.random); items.push(...drops); this.v31s.eliteKills++; this.v31s.eliteDrops += drops.length; }
@@ -2121,7 +2137,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     if (this.moveTier === 'quieto' || sp < 12) return 0;
     const base = this.moveTier === 'sigilo' ? STEALTH.sigiloNoise : this.moveTier === 'andar' ? STEALTH.andarNoise : STEALTH.correrNoise;
     // v4 §1: ir cargado hace ruido (>12 de peso +1 casilla, >20 +2)
-    return (base + (this.snap.loadout.torso?.def === 'chaleco' ? STEALTH.heavyArmorNoise : 0) + loadNoiseTiles(this.snap.loadout)) * (1 - this.att('sigilo', 'noise'));
+    return (base + (this.snap.loadout.torso?.def === 'chaleco' ? STEALTH.heavyArmorNoise : 0) + loadNoiseTiles(this.snap.loadout)) * (1 - this.att('sigilo', 'noise')) * (this.snowR?.noiseMult(this.player.x, this.player.y) ?? 1);
   }
 
   private updateStealth(dt: number) {
@@ -2221,7 +2237,7 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     if (grabbed) { this.enemies.v3.wiggle(v.x, v.y); v.set(0, 0); }
     const chilled = this.chill.t > 0 ? 1 - this.chill.k : 1;
     const max = PLAYER_SPEED_TILES * TILE * this.spd(lo) * chilled * (aiming ? MOVE.aimSpeedMult : 1) * (this.applying ? PRUEBA_V2.applyMoveMult : 1) * ((this.snap.fx?.adren ?? 0) > 0 ? NEW_ITEMS.adrenalina.speedMult : 1);
-    const wk = 1 + MOVE.weightTimePct * totalWeight(lo);
+    const wk = (1 + MOVE.weightTimePct * totalWeight(lo)) * (this.snowR?.inertiaMult(this.player.x, this.player.y) ?? 1);
     // sigilo: tres pasos según cuánto empujas el joystick (teclado = correr)
     const mag = Math.min(1, v.length());
     this.moveTier = mag < 0.02 ? 'quieto' : mag < STEALTH.sigiloStick ? 'sigilo' : mag < STEALTH.andarStick ? 'andar' : 'correr';
@@ -2373,11 +2389,12 @@ export class RaidScene extends Phaser.Scene implements RaidCtx {
     if (this.idleT >= DIFFICULTY.idleCorredorSec) {
       this.idleT = 0;
       const pt = this.offscreenPoint(10, 14);
-      if (pt) { const e = this.spawnAt('corredor', pt.x, pt.y); e.state = 'investigate'; e.goal = { x: this.player.x, y: this.player.y, until: s.elapsed + 15 }; }
+      if (pt) { const e = this.markWave(this.spawnAt('corredor', pt.x, pt.y)); e.state = 'investigate'; e.goal = { x: this.player.x, y: this.player.y, until: s.elapsed + 15 }; }
     }
 
     this.flow.compute(this.player.x, this.player.y);
     this.updateStealth(dt);
+    this.snowR?.update(dt);
     this.enemies.update(dt);
     if (this.ended) return;
 

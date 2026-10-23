@@ -9,6 +9,7 @@ import { addTrait, costText, craft, craftBlock, deliverCrafts, have, materialCou
 import { abandonMission, acceptMission, buyXpLeft, buyStock, deliverMission, missionDef, missionProgress, raidsToRestock, refreshAll, rep, repProgress, sellTo, stockPrice, vstate } from '../game/vendors';
 import { CRAFT_RAIDS, MISSIONS, RECIPES, STATION_IDS, STATIONS, TRAIT_UPGRADE_COST, VENDOR_IDS, VENDORS, VendorId } from '../config/v3';
 import type { SaveManager } from '../save/SaveManager';
+import { DEFAULT_MAP, MAPS, mapAllowed, mapGate } from '../config/v4';
 import { h, itemCell, itemIcon, itemMeta, toast } from './dom';
 
 export interface HubHost {
@@ -42,6 +43,22 @@ export class Hub {
     this.render();
   }
 
+  /** v4b: Mesa de Mapas: una polaroid por mapa; bloqueado por nivel (candado + «Nv N») o en construcción. */
+  mesaMapas() {
+    const d = this.d, lv = prog(d).level;
+    if (!d.mapSel || !mapAllowed(MAPS.find(m => m.id === d.mapSel) ?? MAPS[0], lv)) d.mapSel = DEFAULT_MAP;
+    return h('div', { class: 'mesa-mapas' }, ...MAPS.map(m => {
+      const g = mapGate(m, lv), ok = g === 'ok' || g === 'superado', on = d.mapSel === m.id;
+      const txt = lv < m.nivelMin ? `Requiere nivel ${m.nivelMin}` : g === 'sin_construir' ? 'En construcción' : g === 'superado' ? 'Superado' : `Nv ${m.nivelMin}${m.nivelMax ? '-' + m.nivelMax : '+'}`;
+      return h('button', {
+        class: 'polaroid' + (on ? ' on' : '') + (ok ? '' : ' locked') + (g === 'superado' ? ' sup' : ''), 'data-map': m.id, 'data-gate': g,
+        onclick: () => { if (!ok) { toast(lv < m.nivelMin ? `${m.nombre}: requiere nivel ${m.nivelMin}` : `${m.nombre}: en construcción`); return; } d.mapSel = m.id; this.host.save.save(); this.render(); },
+      },
+        h('span', { class: 'ph' }, h('img', { src: `art/v4/polaroid_${m.id}.svg`, alt: '' }), ok ? null : h('img', { class: 'lock', src: 'art/v4/candado.svg', alt: 'Bloqueado' })),
+        h('b', {}, m.nombre), h('small', {}, txt));
+    }));
+  }
+
   render() {
     const d = this.d;
     ensureFreeGear(d);
@@ -64,6 +81,7 @@ export class Hub {
       ),
       h('div', { class: 'tabs' }, ...tabs.map(([t, n]) => h('button', { class: this.tab === t ? 'on' : '', onclick: () => { this.tab = t; this.sel = null; this.scrollTop = 0; this.render(); } }, n))),
       h('div', { class: 'scroll' }, body),
+      this.mesaMapas(),
       h('div', { class: 'footer' },
         h('button', { class: 'btn main', onclick: () => this.host.startRaid() }, '▶ EMPEZAR RAID'),
       ),

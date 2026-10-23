@@ -155,6 +155,24 @@ export const MAPS: MapDef[] = [
 ];
 export const DEFAULT_MAP = 'arrabal';
 export function mapDef(id: string | undefined | null): MapDef { return MAPS.find(m => m.id === id) ?? MAPS[0]; }
+/** v4b: mapa de una incursión guardada: por `mapDefId` (MapDef.id) y, en guardados viejos, por el saveId de `mapId`. */
+export function mapOfSnap(s: { mapDefId?: string; mapId?: string } | null | undefined): MapDef {
+  return MAPS.find(m => m.id === s?.mapDefId) ?? MAPS.find(m => m.saveId === s?.mapId || m.id === s?.mapId) ?? MAPS[0];
+}
+/** v4b: ¿se puede entrar? (por debajo del nivel mínimo, no; por encima del máximo sí, marcado «superado»). */
+export function mapAllowed(m: MapDef, level: number) { const g = mapGate(m, level); return g === 'ok' || g === 'superado'; }
+/** v4b: aplica los rangos de nivel al guardado (al cargar e importar): mapa elegido y raid a medias en un mapa no permitido. */
+export function enforceMapGate(d: { mapSel?: string; prog?: { level: number }; activeRaid?: { mapDefId?: string; mapId?: string; repopulate?: boolean } | null }): string[] {
+  const lv = d.prog?.level ?? 1, out: string[] = [];
+  if (d.mapSel && !mapAllowed(mapDef(d.mapSel), lv) || d.mapSel && !MAPS.some(m => m.id === d.mapSel)) { out.push(`mapSel ${d.mapSel} → ${DEFAULT_MAP}`); d.mapSel = DEFAULT_MAP; }
+  const r = d.activeRaid;
+  if (r && (r.mapDefId || r.mapId)) {
+    const m = mapOfSnap(r);
+    const known = MAPS.some(x => x.id === r.mapDefId || x.saveId === r.mapId);
+    if (!known || !mapAllowed(m, lv)) { out.push(`raid ${r.mapDefId ?? r.mapId} → ${DEFAULT_MAP}`); r.mapDefId = DEFAULT_MAP; r.repopulate = true; }
+  }
+  return out;
+}
 /** ¿Se puede entrar con este nivel? (los niveles llegan en la v4.0: hasta entonces todos son nivel 1). */
 export function mapGate(m: MapDef, level: number): 'ok' | 'bloqueado' | 'superado' | 'sin_construir' {
   if (!m.generador) return 'sin_construir';

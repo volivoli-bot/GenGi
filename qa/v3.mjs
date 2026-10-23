@@ -18,7 +18,7 @@ async function page(){
 let p=await page(); const E=(f,...a)=>p.evaluate(f,...a);
 const setup=`
 window.T=48;
-window.__calm=()=>{const s=gengi.raid();gengi.god(true);gengi.clearEnemies();s.snap.stream=null;s.snap.spawnTimer=-1e9;gengi.move(0,0);gengi.aim(null);
+window.__calm=()=>{const s=gengi.raid();gengi.god(true);if(gengi.cfg42)gengi.cfg42.SNOW_ENEMIES.enabled=false;gengi.clearEnemies();s.snap.stream=null;s.snap.spawnTimer=-1e9;gengi.move(0,0);gengi.aim(null);
   if(!window.__hooked){window.__hooked=true;window.__pins=new Map();s.events.on('update',()=>{s.idleT=0;s.snap.spawnTimer=Math.min(s.snap.spawnTimer,-1e6);for(const [e,pos] of window.__pins){if(!e.dead&&e.body){e.body.reset(pos.x,pos.y);}}});}
   window.__pins.clear();};
 window.__gt=()=>gengi.raid().snap.elapsed;
@@ -186,7 +186,7 @@ window.__resetStats=()=>{const s=gengi.raid();const st=s.enemies.v3.stats;for(co
   for(const id of ['adrenalina','antidoto','estimulante','granada'])gengi.give(id,'comun',1);
   gengi.useFx('antidoto');s.addStatus('poison',2);out.poisonImmune=!(s.snap.player.poison?.length);
   gengi.move(1,0);await __waitGame(0.6);const v0=Math.hypot(s.vel.x,s.vel.y);gengi.useFx('adrenalina');await __waitGame(0.6);const v1=Math.hypot(s.vel.x,s.vel.y);gengi.move(0,0);out.adr=v1/v0;
-  gengi.god(false);s.snap.player.hp=100;const h=100;s.damagePlayer(20,'Errante');out.adrDmg=h-s.snap.player.hp;s.snap.player.hp=100;gengi.god(true);
+  gengi.god(false);s.snap.player.hp=100;const h=100;const cc=gengi.cfg31.DAMAGE.enemy.critChance;gengi.cfg31.DAMAGE.enemy.critChance=0;s.damagePlayer(20,'Errante');gengi.cfg31.DAMAGE.enemy.critChance=cc;out.adrDmg=h-s.snap.player.hp;s.snap.player.hp=100;gengi.god(true);
   gengi.useFx('estimulante');out.estim=s.snap.fx.estim>20;
   __open(8);const e=s.spawnAt('errante',s.player.x+4*T,s.player.y);window.__pins.set(e,{x:e.x,y:e.y});gengi.face(0);const hp0=e.hp;gengi.grenade();await __waitGame(1.4);out.gren=hp0-e.hp;out.grenDead=e.dead;
   const v=gengi.v3();out.grenades=v.grenades;out.track=v.track;return out;});

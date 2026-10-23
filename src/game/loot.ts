@@ -1,13 +1,36 @@
 import { ITEMS, TRAITS, TraitId } from '../data/items';
-import { RARITIES, Rarity, V1_DROP_RARITIES } from '../data/rarity';
+import { RARITIES, Rarity, RARITY_ORDER_ALL, V1_DROP_RARITIES } from '../data/rarity';
 import { ItemInst, makeItem } from './inventory';
 import { MATERIAL_LOOT, MaterialId } from '../config/v3';
-import { BAG_LOOT, SNOW } from '../config/v4';
+import { BAG_LOOT, SNOW, type MapDef } from '../config/v4';
 
 type Rng = () => number;
 
+/** v4b (§5): rarezas del mapa activo (lo fija la incursión al empezar). Sin mapa o en el mapa 1 todo sigue como en la v1. */
+let LOOT_MAP: MapDef | null = null;
+export function setLootMap(m: MapDef | null) { LOOT_MAP = m; }
+export function lootMap() { return LOOT_MAP; }
+/** Lleva una rareza al rango del mapa ([mín, máx]; el jefe puede llegar a `rarezaJefe`). */
+export function clampToMap(r: Rarity, boss = false): Rarity {
+  const m = LOOT_MAP;
+  if (!m) return r;
+  const lo = RARITIES[m.rarezas[0]].tier, hi = RARITIES[boss ? m.rarezaJefe : m.rarezas[1]].tier, t = RARITIES[r].tier;
+  if (t < lo) return m.rarezas[0];
+  if (t > Math.max(hi, RARITIES[m.rarezas[1]].tier)) return boss ? m.rarezaJefe : m.rarezas[1];
+  return r;
+}
+
 /** Tirada de rareza: 60/30/10 en la v1. `bonus` (0..1) desplaza hacia arriba en zonas peligrosas. */
 export function rollRarity(rng: Rng, bonus = 0): Rarity {
+  const w = LOOT_MAP?.pesosRareza;
+  if (w) {
+    // mapas 2-4: pesos propios; el bonus sube las rarezas por encima de la más baja del mapa
+    const base = RARITIES[LOOT_MAP!.rarezas[0]].tier;
+    const pool = (Object.entries(w) as [Rarity, number][]).map(([r, v]) => ({ r, w: v * (RARITIES[r].tier === base ? 1 - bonus * 0.6 : 1 + bonus * (RARITIES[r].tier - base)) }));
+    let x = rng() * pool.reduce((a, p) => a + p.w, 0);
+    for (const p of pool) { x -= p.w; if (x <= 0) return clampToMap(p.r); }
+    return clampToMap(pool[pool.length - 1].r);
+  }
   const pool = V1_DROP_RARITIES.map(r => ({ r, w: RARITIES[r].peso * (r === 'comun' ? 1 - bonus * 0.6 : 1 + bonus * (RARITIES[r].tier - 1)) }));
   const total = pool.reduce((s, p) => s + p.w, 0);
   let x = rng() * total;
@@ -66,14 +89,14 @@ export function rollMaterial(rng: Rng, zoneName: string): ItemInst {
   return makeItem(pick, 'comun', a + Math.floor(rng() * (b - a + 1)));
 }
 
-export function rollItem(rng: Rng, bonus = 0, forceRarity?: Rarity, gearOnly = false): ItemInst {
+export function rollItem(rng: Rng, bonus = 0, forceRarity?: Rarity, gearOnly = false, boss = false): ItemInst {
   const table = gearOnly ? TABLE.filter(t => ITEMS[t.id].rolls) : TABLE;
   const total = table.reduce((s, t) => s + t.w, 0);
   let x = rng() * total;
   let pick = table[0];
   for (const t of table) { x -= t.w; if (x <= 0) { pick = t; break; } }
   const d = ITEMS[pick.id];
-  if (d.rolls) return makeRolledGear(rng, pick.id, forceRarity ?? rollRarity(rng, bonus));
+  if (d.rolls) return makeRolledGear(rng, pick.id, forceRarity ? clampToMap(forceRarity, boss) : rollRarity(rng, bonus));
   const q = pick.qty ? pick.qty[0] + Math.floor(rng() * (pick.qty[1] - pick.qty[0] + 1)) : 1;
   return makeItem(pick.id, 'comun', q);
 }
@@ -81,8 +104,9 @@ export function rollItem(rng: Rng, bonus = 0, forceRarity?: Rarity, gearOnly = f
 /** v3.1 §9.5: botín de élite = 2 objetos; uno de equipo una rareza por encima de la tirada normal (tope: Militar). */
 export function rollEliteDrops(rng: Rng): ItemInst[] {
   const normal = rollRarity(rng, 0);
-  const i = V1_DROP_RARITIES.indexOf(normal);
-  const up = V1_DROP_RARITIES[Math.min(V1_DROP_RARITIES.length - 1, i + 1)];
+  let up: Rarity;
+  if (LOOT_MAP?.pesosRareza) up = clampToMap(RARITY_ORDER_ALL[Math.min(RARITY_ORDER_ALL.length - 1, RARITY_ORDER_ALL.indexOf(normal) + 1)]);
+  else { const i = V1_DROP_RARITIES.indexOf(normal); up = V1_DROP_RARITIES[Math.min(V1_DROP_RARITIES.length - 1, i + 1)]; }
   return [rollItem(rng, 0, up, true), rollItem(rng, 0)];
 }
 
@@ -92,13 +116,14 @@ export type ContainerKind = 'caja' | 'cerrada' | 'elite' | 'cadaver';
 export function rollWeighted(rng: Rng, w: Partial<Record<Rarity, number>>): Rarity {
   const e = Object.entries(w) as [Rarity, number][];
   let x = rng() * e.reduce((a, [, v]) => a + v, 0);
-  for (const [r, v] of e) { x -= v; if (x <= 0) return r; }
-  return e[e.length - 1][0];
+  for (const [r, v] of e) { x -= v; if (x <= 0) return clampToMap(r); }
+  return clampToMap(e[e.length - 1][0]);
 }
 
 /** v4 §4: botín de la guarida de la Matriarca: 3 objetos (uno Militar o mejor, 15 % Anomalía) y 50 % de Tarjeta del helipuerto. */
 export function rollLair(rng: Rng): ItemInst[] {
-  const out = [rollItem(rng, 1, rng() < 0.15 ? 'anomalia' : 'militar', true)];
+  const top = LOOT_MAP?.rarezaJefe ?? 'anomalia';
+  const out = [rollItem(rng, 1, rng() < 0.15 ? top : 'militar', true, true)];
   for (let i = 0; i < 2; i++) out.push(rollItem(rng, 1, rollWeighted(rng, SNOW.rarity)));
   if (rng() < SNOW.cardChance) out.push(makeItem('tarjeta_helipuerto', 'comun', 1));
   return out;

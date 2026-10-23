@@ -35,7 +35,8 @@ export class Vision {
   enabled = true;
   facing = 0;
   ox = 0; oy = 0;
-  readonly R = VISION.rangeTiles * TILE;
+  /** v4b: la Ventisca lo baja a 4 casillas. */
+  R = VISION.rangeTiles * TILE;
   readonly nearR = VISION.nearTiles * TILE;
   readonly half = Phaser.Math.DegToRad(VISION.coneDeg / 2);
 

@@ -4,7 +4,7 @@ import { emptyLoadout, ItemInst } from '../game/inventory';
 import { migrate, profileIdFor } from './migrations';
 import { newProgress } from '../game/levels';
 import { ATTR_IDS } from '../config/levels';
-import { ANTI_ROLLBACK } from '../config/v4';
+import { ANTI_ROLLBACK, enforceMapGate } from '../config/v4';
 import { createStorage, SaveStorage } from './storage';
 import { SAVE_VERSION, SaveData, Settings, Refugio, VendorState } from './types';
 import { STATION_IDS, StationDef, STATIONS, VENDOR_IDS, VendorId } from '../config/v3';
@@ -107,10 +107,13 @@ export class SaveManager {
     this.data = this.load();
   }
 
+  /** v4b: correcciones de mapa aplicadas al cargar/importar (QA). */
+  gateLog: string[] = [];
+
   load(): SaveData {
     const raw = this.storage.read();
     if (!raw) return newSave();
-    try { return normalize(migrate(JSON.parse(raw))); }
+    try { const d = normalize(migrate(JSON.parse(raw))); this.gateLog = enforceMapGate(d); return d; }
     catch (e) {
       this.lastError = String(e);
       // No machacamos un guardado que no entendemos: se aparta como copia de seguridad.
@@ -136,6 +139,7 @@ export class SaveManager {
     if (typeof parsed !== 'object' || !parsed) throw new Error('Archivo no válido');
     if (parsed.saveVersion !== undefined && typeof parsed.saveVersion !== 'number') throw new Error('Archivo no válido');
     const d = normalize(migrate(parsed));
+    this.gateLog = enforceMapGate(d); // v4b: los rangos de nivel de los mapas valen también al importar
     delete (d as unknown as Record<string, unknown>).exportedAt;
     // anti-retroceso: una copia anterior de la misma partida no se puede importar
     if (ANTI_ROLLBACK.enabled) {

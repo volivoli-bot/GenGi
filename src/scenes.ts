@@ -13,7 +13,7 @@ export const ART_V3_UI: [string, number, number][] = [['ui_sospecha', 32, 40], [
 /** Arte v3 de Basu para la raid (enemigos nuevos, auras de mutación, efectos y alcantarilla). */
 /** v4 (Basu, gengi-art/v4): arte del mundo ya en uso (helipuerto, candado, nieve, cabaña) y objetos nuevos. Clave 'v4/<nombre>'. */
 export const ART_V4: [string, number, number][] = [['helipuerto', 192, 192], ['candado', 48, 48], ['suelo_nieve', 64, 64], ['suelo_transicion_nieve', 64, 64],
-  ['huella', 16, 24], ['placa_hielo', 96, 64], ['cabana', 160, 128], ['tarjeta_helipuerto', 64, 64],
+  ['huella', 16, 24], ['placa_hielo', 96, 64], ['fx_ventisca', 128, 128], ['cabana', 160, 128], ['tarjeta_helipuerto', 64, 64],
   ['mochila_rinonera', 64, 64], ['mochila_escolar', 64, 64], ['mochila_senderismo', 64, 64], ['mochila_tactica', 64, 64], ['mochila_anomala', 64, 64],
   // v4.0 niveles
   ['ui_subir_nivel', 64, 64],

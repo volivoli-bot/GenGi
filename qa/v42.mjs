@@ -20,7 +20,7 @@ window.__calm=()=>{const s=gengi.raid();gengi.god(true);gengi.clearEnemies();s.s
 window.__gt=()=>gengi.raid().snap.elapsed;
 window.__waitGame=sec=>new Promise(r=>{const t0=__gt();const f=()=>{if(__gt()-t0>=sec)r();else setTimeout(f,20)};f();});
 window.__tp=(x,y)=>{const s=gengi.raid();s.player.setPosition(x,y);s.vel.set(0,0);s.player.body.reset(x,y);};
-window.__snowPt=()=>{const s=gengi.raid();const L=s.map.snow.lair;for(let i=0;i<400;i++){const x=L.cx+(Math.random()-0.5)*L.w*0.8,y=L.cy+(Math.random()-0.5)*L.h*0.8;if(s.snowy(x,y)&&!s.openSpot)return {x,y};if(s.snowy(x,y))return {x,y};}return null;};
+window.__seed=n=>{let a=n>>>0;Math.random=()=>{a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};};window.__snowK=0;window.__snowPt=()=>{const s=gengi.raid();const L=s.map.snow.lair;const pts=[];const st=T/2;for(let x=L.cx-L.w*0.4;x<=L.cx+L.w*0.4;x+=st)for(let y=L.cy-L.h*0.4;y<=L.cy+L.h*0.4;y+=st){if(!s.snowy(x,y)||!s.snowy(x+T*5,y))continue;if(s.walls.some(w=>w.x<x+T*6&&w.x+w.w>x-T*1.5&&w.y<y+T*4.5&&w.y+w.h>y-T*1.5))continue;pts.push({x,y});}if(!pts.length)return {x:L.cx,y:L.cy};return pts[(window.__snowK++*7919)%pts.length];};
 window.__boss=()=>{const s=gengi.raid();const L=s.map.snow.lair;const e=s.spawnAt('matriarca',L.cx,L.cy,undefined,false);e.gx=L.cx;e.gy=L.cy;e.lair=true;return e;};
 `;
 async function endRaid(){ await E(()=>{const s=gengi.raid();if(s&&!s.ended)s.host.endRaid('extraido',{exit:s.snap.exits[0]});}); await sleep(500); await E(()=>document.querySelectorAll('.overlay button, .card button').forEach(b=>{if(/Volver|Continuar|Refugio/i.test(b.textContent))b.click();})); await sleep(300); }
@@ -51,7 +51,7 @@ await E(()=>__calm());
   return {h1,ice1,h2,ice2:c.ice,tint:c.baseTint,snapIce:!!sn,breaks:s.enemies.v4.stats.shellBreaks};});
  ok('B2 Congelado: el primer golpe solo rompe el hielo (50 %), el segundo hace daño completo; el caparazón se guarda', r.h1===90&&r.ice1===false&&r.h2===70&&r.tint===null&&r.snapIce&&r.breaks>=1, JSON.stringify(r));}
 await E(()=>__calm());
-{const r=await E(async()=>{const s=gengi.raid();const pt=__snowPt();__tp(pt.x,pt.y+T*3);
+{const r=await E(async()=>{__seed(42);const s=gengi.raid();const pt=__snowPt();__tp(pt.x,pt.y+T*3);
   const cnt={bleed:0};const orig=s.addStatus.bind(s);s.addStatus=(k,n)=>{if(k==='bleed')cnt.bleed++;};
   const w=s.spawnAt('corredor',pt.x,pt.y,undefined,false);const g=s.spawnAt('errante',s.player.x+T*6,s.player.y+T*6,undefined,false);
   const N=600;let wb=0,gb=0;
@@ -60,14 +60,15 @@ await E(()=>__calm());
   s.addStatus=orig;return {wolf:wb/N,base:gb/N,ai:w.ai};});
  ok('B3 Lobo mutado: ataca como el Corredor y su mordisco sangra el 50 % de las veces', r.ai==='corredor'&&Math.abs(r.wolf-0.5)<0.07&&r.base<r.wolf-0.1, JSON.stringify(r));}
 await E(()=>__calm());
-{const r=await E(async()=>{const s=gengi.raid();const pt=__snowPt();__tp(pt.x,pt.y);s.chillInGod=true;const p0=s.snap.player.poison?.length??0;
+{const r=await E(async()=>{__seed(7);const s=gengi.raid();const pt=__snowPt();__tp(pt.x,pt.y);s.chillInGod=true;const p0=s.snap.player.poison?.length??0;
   const e=s.spawnAt('escupidor',pt.x+T*3,pt.y,undefined,false);s.enemies.v3.spit(e,Math.PI);const h0=s.enemies.v3.iceHits;
   for(let i=0;i<60&&s.enemies.v3.iceHits===h0;i++)await new Promise(r=>setTimeout(r,30));
   s.enemies.kill(e);const k=s.chill.k,t=s.chill.t;const tex=s.enemies.v3.balls[0]?.img.texture.key;
   // velocidad máxima con frío
-  const P=()=>({x:s.player.x,y:s.player.y});gengi.move(1,0);await __waitGame(0.15);let a=P();let g0=s.time.now;await __waitGame(0.4);let b=P();const vSlow=Math.hypot(b.x-a.x,b.y-a.y)/(s.time.now-g0);
-  s.chill.t=0;s.chill.k=0;await __waitGame(0.15);a=P();g0=s.time.now;await __waitGame(0.4);b=P();const vFree=Math.hypot(b.x-a.x,b.y-a.y)/(s.time.now-g0);gengi.move(0,0);
-  s.chillInGod=false;return {hits:s.enemies.v3.iceHits-h0,k,t,poison:(s.snap.player.poison?.length??0)-p0,vRatio:vSlow/vFree};});
+  const plates=s.snowR?.plates;if(s.snowR)s.snowR.plates=[]; // v4b: sin placas de hielo (la inercia ×2 falsea la medida)
+  const P=()=>({x:s.player.x,y:s.player.y});gengi.move(1,0);await __waitGame(0.15);let a=P();let g0=__gt();await __waitGame(0.4);let b=P();const vSlow=Math.hypot(b.x-a.x,b.y-a.y)/(__gt()-g0);
+  s.chill.t=0;s.chill.k=0;await __waitGame(0.15);a=P();g0=__gt();await __waitGame(0.4);b=P();const vFree=Math.hypot(b.x-a.x,b.y-a.y)/(__gt()-g0);gengi.move(0,0);
+  if(s.snowR)s.snowR.plates=plates;s.chillInGod=false;return {hits:s.enemies.v3.iceHits-h0,k,t,poison:(s.snap.player.poison?.length??0)-p0,vRatio:vSlow/vFree};});
  ok('B4 Escarcha: el hielo ralentiza un 40 % durante 2 s, sin veneno', r.hits===1&&Math.abs(r.k-0.4)<1e-6&&r.t>1.5&&r.t<=2&&r.poison===0&&Math.abs(r.vRatio-0.6)<0.08, JSON.stringify(r));}
 // ---------- C. La Matriarca ----------
 await E(()=>__calm());
@@ -128,7 +129,7 @@ await E(()=>__calm());
 await E(()=>__calm());
 {const r=await E(async()=>{const s=gengi.raid();const B=__boss();s.snap.xp=0;s.snap.xpBy={};const k0=s.v42s.bossKills;s.enemies.damage(B,1e6,{silent:true});await __waitGame(0.3);
   const L=s.map.snow.lair;const box=s.snap.containers.find(c=>c.kind==='elite'&&Math.hypot(c.x-L.cx,c.y-L.cy)<T*3);
-  return {xp:s.snap.xpBy.kills??0,mult:s.mapDef.xpMult,kills:s.v42s.bossKills-k0,box:box?box.items.map(i=>i.def+':'+i.rarity):null,toast:s.hud.msg?.text};});
+  return {xp:(s.snap.xpBy.kills??0)+(s.snap.xpBy.boss??0),mult:s.mapDef.xpMult,kills:s.v42s.bossKills-k0,box:box?box.items.map(i=>i.def+':'+i.rarity):null,toast:s.hud.msg?.text};});
  ok('C8 al matarla: 400 de experiencia (jefe) y su botín en la guarida (3 objetos, uno Militar o mejor)', r.xp===400*r.mult&&r.kills===1&&r.box&&r.box.length>=3&&r.box.some(x=>/:(militar|anomalia|reliquia)$/.test(x)), JSON.stringify(r));}
 // ---------- D. Guardar y restaurar a mitad de incursión ----------
 await E(()=>__calm());

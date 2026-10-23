@@ -16,13 +16,22 @@ export const XP = {
   extractPerMin: 8,
   /** Extraer por el helipuerto multiplica la experiencia de la incursión. */
   helipadMult: 1.5,
+  /** v4b (Basu): las oleadas y hordas dan el 30 %. */
+  waveMult: 0.3,
+  /** v4b (Basu): a partir de 1.500 de experiencia base por muertes en una incursión, cada muerte da la mitad (antes del ×mapa). */
+  killSoftCap: 1500,
+  overCapMult: 0.5,
 };
 
 /**
  * Coste de pasar del nivel n al n+1: niveles 1-9 → base + perLevel × n; del 10 en adelante, el anterior × growth.
  * (90, 120, …, 330, 363, 399, …)
  */
-export const XP_CURVE = { base: 60, perLevel: 30, linearUntil: 9, growth: 1.1 };
+export const XP_CURVE = {
+  base: 60, perLevel: 30, linearUntil: 9,
+  /** v4b (Dott/Basu): crecimiento por tramos [desde el nivel, ×]: 10-14 ×1,10; 15-24 ×1,20; 25+ ×1,10. */
+  bands: [[10, 1.1], [15, 1.2], [25, 1.1]] as [number, number][],
+};
 
 /**
  * Muerte. Modos (para que Dott pruebe):

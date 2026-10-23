@@ -182,3 +182,17 @@ table.cmp td.down { color: #ff6b6b; font-weight: 800; }
 .hub-head .nivel i { display: block; width: 52px; height: 3px; background: #0009; margin-top: 2px; }
 .hub-head .nivel u { display: block; height: 100%; background: #ffc94a; text-decoration: none; }
 @keyframes gengiGlow { from { box-shadow: 0 0 4px #ffc94a55; } to { box-shadow: 0 0 14px #ffc94acc; } }
+
+/* v4b: Mesa de Mapas */
+.mesa-mapas { display: flex; gap: 6px; padding: 8px 0 0; }
+.mesa-mapas .polaroid { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 4px 4px 3px; background: #efe6d2; color: #2a2620; border: 2px solid #0000; border-radius: 4px; transform: rotate(-1.5deg); box-shadow: 0 2px 6px #0008; font-size: 10px; line-height: 1.15; }
+.mesa-mapas .polaroid:nth-child(even) { transform: rotate(1.5deg); }
+.mesa-mapas .polaroid .ph { position: relative; width: 100%; aspect-ratio: 1; background: #222; overflow: hidden; }
+.mesa-mapas .polaroid .ph img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mesa-mapas .polaroid .ph img.lock { position: absolute; inset: 22%; width: 56%; height: 56%; object-fit: contain; filter: drop-shadow(0 1px 3px #000); }
+.mesa-mapas .polaroid b { font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.mesa-mapas .polaroid small { font-size: 9px; color: #5a4f40; }
+.mesa-mapas .polaroid.locked .ph img:first-child { filter: grayscale(1) brightness(.55); }
+.mesa-mapas .polaroid.locked small { color: #a3261b; font-weight: 700; }
+.mesa-mapas .polaroid.on { border-color: #ffc94a; box-shadow: 0 0 10px #ffc94a99; }
+.mesa-mapas .polaroid.sup small { color: #2e6b2e; }

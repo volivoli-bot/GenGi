@@ -33,7 +33,9 @@
 - Referencia: una buena incursión en el mapa 1 da unos 550 de experiencia (40 muertes, 2 élites, 15 cajas, una misión y extraer en el minuto 13).
 - Experiencia para pasar del nivel n al n+1:
   - Niveles 1 a 9: 60 + 30 × n (90, 120, 150, 180, 210, 240, 270, 300, 330).
-  - Del nivel 10 en adelante: la del nivel anterior × 1,10.
+  - Niveles 10 a 14: la del nivel anterior × 1,10. Niveles 15 a 24: × 1,20. Del 25 en adelante: × 1,10 (Dott). Objetivo: del 18 al 25, unas 5 incursiones buenas en el Cráter.
+- Las oleadas y hordas dan el 30 % de la experiencia normal. A partir de 1.500 de experiencia base por muertes en una incursión, las muertes dan la mitad (antes del multiplicador del mapa).
+- El ×1,5 del helipuerto no se aplica a la experiencia del jefe.
 - Resultado:
   - Llegar al nivel 5 cuesta 540, una incursión muy buena.
   - Del 5 al 10 cuesta 1.350, unas 2-3 incursiones buenas.

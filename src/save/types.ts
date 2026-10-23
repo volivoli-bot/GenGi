@@ -79,6 +79,8 @@ export interface EnemySnap {
   elite?: boolean;
   /** v4: guardián helado de la guarida. */
   lair?: boolean;
+  /** v4b: salió en una oleada/horda (da el 30 % de experiencia). */
+  wave?: boolean;
   /** v4.2: el Congelado conserva el caparazón. */
   ice?: boolean;
 }
@@ -130,7 +132,10 @@ export interface RaidSnapshot {
   nextGroup?: number;
   /** v4.0: experiencia de la incursión aún no asegurada (se suma al extraer) y su desglose. */
   xp?: number;
-  xpBy?: Partial<Record<'kills' | 'cajas' | 'mision' | 'extraer', number>>;
+  xpBy?: Partial<Record<'kills' | 'cajas' | 'mision' | 'extraer' | 'boss', number>>;
+  /** v4b: id de la definición del mapa (MapDef.id; `mapId` es su saveId) y experiencia base por muertes acumulada (para el tope de 1.500). */
+  mapDefId?: string;
+  killBase?: number;
 }
 
 export interface RaidTrack {
@@ -160,6 +165,8 @@ export interface Refugio { levels: Record<StationId, number>; crafts: CraftJob[]
 
 export interface SaveData {
   saveVersion: number;
+  /** v4b: mapa elegido en la Mesa de Mapas (MapDef.id). */
+  mapSel?: string;
   createdAt: string;
   updatedAt: string;
   chapas: number;

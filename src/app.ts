@@ -3,7 +3,7 @@ import * as V42CFG from './config/v42';
 import * as V32CFG from './config/v32';
 import { DMG_LOG, rollDamage, meanMult } from './game/damage';
 import { genTrapero, valesFor, traperoPrice } from './raid/trapero';
-import { rollEliteDrops, rollItem } from './game/loot';
+import { lootMap, rollContainer, rollEliteDrops, rollItem, rollLair, setLootMap } from './game/loot';
 import * as V3CFG from './config/v3';
 import { basePrice, buyPrice } from './game/prices';
 import { canSell, freeItem } from './game/inventory';
@@ -38,7 +38,7 @@ import { Hub } from './ui/hub';
 import { pauseOverlay, summaryOverlay } from './ui/overlays';
 import { RaidInventory } from './ui/raidInventory';
 import { AttrSheet } from './ui/attributes';
-import { bankXp, deathPenalty, extractXp, keepRaidXpOnDeath, prog, xpToNext } from './game/levels';
+import { bankXp, deathPenalty, extractRaidXp, keepRaidXpOnDeath, prog, xpToNext } from './game/levels';
 import * as LVCFG from './config/levels';
 import * as LVOPS from './game/levels';
 
@@ -96,7 +96,11 @@ export class App implements RaidHost {
     const seed = this.nextSeed ?? (Math.random() * 2 ** 31) >>> 0;
     this.nextSeed = null;
     // El equipo pasa a la raid: sale del guardado del refugio en la MISMA escritura.
+    // v4b: Mesa de Mapas: solo se entra en un mapa permitido por nivel
+    const sel = V4CFG.mapDef(d.mapSel ?? V4CFG.DEFAULT_MAP);
+    if (!V4CFG.mapAllowed(sel, d.prog?.level ?? 1)) { toast(V4CFG.mapGate(sel, d.prog?.level ?? 1) === 'sin_construir' ? 'Ese mapa aún está en construcción' : `Requiere nivel ${sel.nivelMin}`); d.mapSel = V4CFG.DEFAULT_MAP; this.hub.render(); return; }
     d.activeRaid = newRaidSnapshot(seed, d.loadout, valueIn);
+    d.activeRaid.mapDefId = sel.id;
     // v3: estaciones que afectan a la raid
     d.activeRaid.pocketSlots = pocketSlots(d);
     d.activeRaid.radio = stationLevel(d, 'radio');
@@ -172,8 +176,9 @@ export class App implements RaidHost {
     const lv0 = prog(d).level;
     if (result === 'extraido') {
       const heli = detail.exit?.type === 'helipuerto';
-      const mult = V4CFG.mapDef(snap.mapId).xpMult;
-      const raw = ((snap.xp ?? 0) + extractXp(snap.elapsed / 60) * mult) * (heli ? LVCFG.XP.helipadMult : 1);
+      // v4b: el mapa por su MapDef.id (snap.mapId es el saveId); el ×1,5 del helipuerto no toca la experiencia del jefe
+      const mult = V4CFG.mapOfSnap(snap).xpMult;
+      const raw = extractRaidXp(snap.xp ?? 0, snap.xpBy?.boss ?? 0, snap.elapsed / 60, mult, heli);
       bankXp(d, raw);
       xpNews.push(`+${Math.round(raw)} de experiencia${heli ? ' (helipuerto ×1,5)' : ''}`);
       if (heli) {
@@ -300,6 +305,7 @@ export class App implements RaidHost {
       /** QA v4: guardado de la v3.2 (versión 4) sin mochila, con salidas vistas del mapa v2 y una raid activa del mapa viejo. */
       loadV4old: (withRaid = false) => { localStorage.setItem('gengi.save', JSON.stringify({ ...JSON.parse(JSON.stringify(app.save.data)), saveVersion: 4, seenExits: { 'ciudad-v2': [0, 2] }, loadout: { ...emptyLoadout(), arma: null, espalda: null, mochila: [makeItem('vendaje', 'comun', 2)] }, activeRaid: withRaid ? { ...newRaidSnapshot(4242, { ...emptyLoadout(), espalda: null, mochila: [makeItem('vendaje', 'comun', 1)] }, 0), mapId: 'ciudad-v2' } : null })); location.reload(); },
       /** v4.0 niveles: configuración, operaciones puras y atajos sobre el guardado. */
+      v4b: () => ({ app, save: app.save, cfg: V4CFG, setLevel: (n: number) => { prog(app.save.data).level = n; app.save.save(); if (!app.raidScene()) app.hub.render(); } }),
       lv: () => ({ cfg: LVCFG, ops: LVOPS, prog: () => JSON.parse(JSON.stringify(prog(app.save.data))), bank: (n: number) => { const up = bankXp(app.save.data, n); app.save.save(); if (!app.raidScene() && !app.save.data.activeRaid) app.hub.render(); return up; },
         setAttr: (a: string, n: number) => { prog(app.save.data).attrs[a as LVCFG.AttrId] = n; app.save.save(); }, setFree: (n: number) => { prog(app.save.data).free = n; app.save.save(); },
         setStation: (sid: string, n: number) => { (app.save.data.refugio.levels as Record<string, number>)[sid] = n; app.save.save(); if (!app.raidScene() && !app.save.data.activeRaid) app.hub.render(); },
@@ -314,6 +320,13 @@ export class App implements RaidHost {
       dmgLog: DMG_LOG,
       /** QA v3.1: n tiradas de daño (base, lado). */
       rollDmg: (base: number, side: 'player' | 'enemy', n = 10000) => { const out: { dmg: number; crit: boolean }[] = []; for (let i = 0; i < n; i++) out.push(rollDamage(base, side)); DMG_LOG[side].length = 0; return { out, mean: meanMult(side) }; },
+      /** v4b: reparto de rarezas del equipo en un mapa (cajas normales, de élite y la guarida). */
+      lootDist: (mapId: string, n = 3000, seed = 5) => {
+        const prev = lootMap(); setLootMap(V4CFG.mapDef(mapId)); const rng = seeded(seed); const out: Record<string, Record<string, number>> = { caja: {}, elite: {}, lair: {} };
+        const add = (k: string, its: { rarity: string; def: string }[]) => { for (const it of its) if (ITEMS[it.def]?.rolls) out[k][it.rarity] = (out[k][it.rarity] ?? 0) + 1; };
+        for (let i = 0; i < n; i++) { add('caja', rollContainer(rng, 'cerrada', 0.2)); add('elite', rollEliteDrops(rng)); if (i < n / 5) add('lair', rollLair(rng)); }
+        setLootMap(prev); return out;
+      },
       eliteDrops: (n = 1000, seed = 7) => { const rng = seeded(seed); const out: { a: string; ar: string; b: string; br: string }[] = []; for (let i = 0; i < n; i++) { const [x, y] = rollEliteDrops(rng); out.push({ a: x.def, ar: x.rarity, b: y.def, br: y.rarity }); } return out; },
       traperoRate: (n = 1000) => { let c = 0; for (let i = 0; i < n; i++) if (genTrapero(seeded(1000 + i), [], { x: 0, y: 0 }, [])) c++; return c / n; },
       valesFor: (id: string, qty = 1) => valesFor(makeItem(id, 'comun', qty)),

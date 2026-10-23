@@ -424,3 +424,79 @@ Números en `PRUEBA_V2.applySec` (vendaje 1,5 s, botiquín 2,5 s) y `PRUEBA_V2.a
 ### QA v4.2
 - `qa/v42.mjs`: 16/16. Cubre la guarida, los cambios de la nieve, el caparazón, la sangría, la ralentización, los 4 ataques, la llamada, la fase 2, la espalda, la IA natural, la muerte y su botín, y restaurar a media pelea.
 - Todas las suites anteriores se ejecutan contra la build v4.2 (`runv42all.sh`).
+
+### Implementación v4b (reglas de la nieve y rarezas por mapa)
+- **Reglas de la nieve** (`config/v42.ts`, `SNOW_RULES`; código en `raid/snow.ts`):
+  - **Huellas** (arte `huella`): dejas una cada 0,6 casillas en la nieve y duran 20 s (máx. 70). Los enemigos que aún no te han detectado y encuentran una (a 1,3 casillas) siguen el rastro hacia las más nuevas. Los enemigos que se mueven cerca también dejan huellas, más oscuras.
+  - **La nieve amortigua**: el ruido de los pasos ×0,7 en la nieve.
+  - **Placas de hielo**: 12 placas visibles (arte `placa_hielo`), fijas por trazado y franja. Al pisarlas crujen (ruido de 5 casillas, aviso la primera vez) y resbalan (inercia ×2).
+  - **Ventisca** (todo el mapa): la primera llega entre los 3 y 4 minutos, y luego cada 3-4 min. Dura 25 s con la vista del jugador y de los enemigos a 4 casillas, con aviso 5 s antes y la capa `fx_ventisca`.
+  - **Columnas de la arena**: la presa ya tenía 6 columnas de 1,2 casillas (cortan las lanzas); ahora lo comprueba la QA.
+- **Rarezas por mapa** (§5): la incursión fija el mapa activo y las tiradas usan su rango y sus `pesosRareza`. Mapa 1: Común-Militar, como antes (la Chatarra sigue sin caer), y solo la guarida da Anomalía. Mapa 2: Común-Anomalía. Mapa 3: Reforzado-Reliquia. Mapa 4: Militar-Reliquia. El jefe puede llegar a `rarezaJefe`.
+- **Depuración**: `gengi.lootDist(mapa)` da el reparto de rarezas de las cajas, la élite y la guarida, y `enemies.despawn(e)` quita un enemigo sin dejar cadáver (para capturas).
+
+### QA v4b
+- `qa/v4b.mjs`: rarezas de los 4 mapas, placas, amortiguación, crujido, resbalón, huellas, rastreo, huellas de enemigos, Ventisca y columnas.
+- **Arreglo de `qa/v3.mjs`, que fallaba a veces**:
+  - La granada fallaba si el sitio de prueba caía en la nieve: el Errante salía Congelado y su caparazón partía el daño a la mitad. Ahora la suite v3 apaga los enemigos de la nieve.
+  - La adrenalina fallaba con el 10 % de crítico enemigo (×1,5). Ahora esa comprobación se hace con el crítico a 0.
+- Capturas: `shots/v4_2-nieve-enemigos.png` (repetida: manada de 3 lobos, sin cadáveres), `shots/v4b-ventisca.png` y `shots/v4b-placa-hielo.png`.
+- **Pendiente**: búnker con código y remonte, Segundo aliento, Radio 2/3 y los iconos del Gimnasio y la Pizarra.
+
+### Revisión de experiencia v4b (Dott y Basu)
+- **Helipuerto**: el ×1,5 ya no se aplica a la experiencia del jefe (la Matriarca da 400, aparte). Fórmula al extraer: `(experiencia − jefe + extracción × mapa) × 1,5 + jefe`.
+- **Mapa por su id de definición**: la incursión guarda `mapDefId` (MapDef.id) además de `mapId` (el saveId, «arrabal-v4»). Los multiplicadores se buscan por `mapDefId`; en guardados viejos se busca por el saveId.
+- **Oleadas y hordas**: dan el 30 % de experiencia, sin tope. Cuenta todo lo que entra por oleada (también chillones y enjambres de la v3), las hordas por ruido, los gritos del chillón y el corredor por quedarse quieto. No cuenta la población inicial.
+- **Tope blando**: cuando la experiencia base por muertes de la incursión pasa de 1.500, cada muerte siguiente da la mitad. Se aplica antes del ×mapa y el jefe siempre da la suya entera.
+- Valores en `config/levels.ts`: `XP.waveMult 0,3`, `XP.killSoftCap 1500`, `XP.overCapMult 0,5`.
+- **Curva** (`XP_CURVE.bands`): lineal del 1 al 9 (60 + 30n). Después cada nivel cuesta lo del anterior × 1,10 (10-14), × 1,20 (15-24) y × 1,10 (25 en adelante). El 14 cuesta 531, el 15 638, el 24 3.291 y el 25 3.620.
+- **Mesa de Mapas** (encima de «▶ EMPEZAR RAID»):
+  - Una polaroid por mapa.
+  - Por debajo del nivel mínimo sale con candado y «Requiere nivel N». No se puede elegir ni empezar.
+  - Los mapas sin generador salen con candado y «En construcción».
+  - Por encima del nivel máximo sale «Superado», pero sigue disponible. Si no, un nivel 10 no tendría ningún mapa jugable hasta que exista la Vía Muerta.
+  - Los rangos se aplican también al cargar y al importar. Si el mapa elegido no está permitido, se vuelve a El Arrabal. Si hay una incursión a medias en un mapa no permitido, se repuebla en El Arrabal.
+
+**Simulación de una incursión buena en el mapa 1** (40 muertes, 2 élites, 15 cajas, una misión media de 105, extraer en el minuto 13):
+
+| Muertes de oleada | Experiencia | Por helipuerto |
+|---|---|---|
+| 0 % | 530 | 795 |
+| 35 % | 479 | 718 |
+| 50 % | 457 | 685 |
+| 100 % | 384 | 576 |
+
+- Los componentes son: cajas 30, misión 105 (60-150), extracción 144, élites 42 y 38 muertes normales a 5,5 de media (209).
+- El tope de 1.500 no se nota en una incursión normal, que hace unos 180 de base por muertes.
+- Dott tenía razón: con la mitad de las muertes de oleada queda en unos 460, por debajo de 550.
+
+**Incursiones necesarias con la curva nueva** (incursión buena ≈ 457):
+
+| Nivel | Experiencia total (antes → ahora) | Incursiones buenas en el mapa 1 |
+|---|---|---|
+| 5 | 540 → 540 | 1,2 |
+| 10 | 1.890 → 1.890 | 4,1 |
+| 15 | 4.105 → 4.105 | 9,0 |
+| 20 | 7.674 → 8.850 | 19,4 |
+| 25 | 13.422 → 20.659 | 45,2 |
+
+- **Del 18 al 25** cuesta 14.233 (antes 7.382). En el Cráter (×6) una incursión buena da unos 2.740-2.870, así que hacen falta **unas 5 incursiones buenas** (4,5 sin oleadas, 5,2 con la mitad de oleadas y 6,2 con todo oleadas). Cumple el objetivo de Dott.
+- Del 10 al 18 en la Vía Muerta (×2,5) son unas 4 incursiones buenas.
+
+### QA de la revisión de experiencia v4b
+- `qa/v4b.mjs` (X1-X6 y M1-M4) comprueba:
+  - la curva por tramos;
+  - las oleadas ×0,3 y el tope de 1.500 con ×0,5;
+  - que lo que entra por oleada lleva la marca;
+  - que se guarda `mapDefId`;
+  - el helipuerto sin el ×1,5 sobre el jefe (610);
+  - un segundo MapDef ×2,5, resuelto por mapDefId y por saveId;
+  - la Mesa de Mapas: candado, «Requiere nivel 5», no se puede empezar por debajo del nivel y «Superado» sigue disponible;
+  - la importación de un guardado con un mapa no permitido.
+- `__snowPt` es ahora determinista: recorre una rejilla en vez de usar puntos al azar.
+- `qa/v42.mjs`: ahora es determinista.
+  - B3 y B4 usan un `Math.random` con semilla (`__seed`). `__snowPt` recorre una rejilla y solo da puntos con un pasillo libre de 6 casillas.
+  - B4 quita las placas de hielo mientras mide la velocidad y la mide en tiempo de juego, no de reloj.
+  - Antes fallaba de vez en cuando: un 50 % medido con 600 tiradas al azar, o el jugador resbalaba sobre una placa.
+- Resultado final contra la build v4b: qa 23/23, offscreen 11/11, fog sin fallos, v2 50/50, sigilo 25/25, prueba 36/36, v3 42/42, v31 48/48, v32 13/13, v4 51/51, levels 36/36, v42 16/16 y v4b 26/26.
+- Captura nueva: `shots/v4b-mesa-mapas.png`.

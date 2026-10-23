@@ -47,3 +47,15 @@ export const MATRIARCA = {
   /** Barra de vida sobre ella. */
   barW: 140,
 };
+
+/** v4b (§4): reglas de la nieve. */
+export const SNOW_RULES = {
+  /** Huellas: duran 20 s; una cada 0,6 casillas recorridas en la nieve. Los enemigos que las encuentran las siguen. */
+  prints: { enabled: true, lifeSec: 20, everyTiles: 0.6, max: 70, enemyMax: 40, enemyEverySec: 0.7, findTiles: 1.3, aheadPrints: 4, followSec: 4, checkEverySec: 0.4, alpha: 0.55 },
+  /** La nieve amortigua: andar hace un 30 % menos ruido. */
+  muffle: 0.7,
+  /** Placas de hielo visibles: crujen (5 casillas de ruido) y resbalan (inercia ×2). */
+  ice: { plates: 12, wTiles: 2, hTiles: 1.35, creakTiles: 5, creakCdSec: 1.2, inertiaMult: 2, minFromLairTiles: 6, seedSalt: 0x1ce },
+  /** Ventisca: cada 3-4 min, 25 s; la visión de todos baja a 4 casillas. Aviso 5 s antes. */
+  ventisca: { enabled: true, firstSec: [180, 240] as [number, number], everySec: [180, 240] as [number, number], durationSec: 25, warnSec: 5, sightTiles: 4, overlayAlpha: 0.42 },
+};

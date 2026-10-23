@@ -9,7 +9,7 @@ export function xpToNext(n: number): number {
   const C = XP_CURVE;
   if (n <= C.linearUntil) return C.base + C.perLevel * n;
   let v = C.base + C.perLevel * C.linearUntil;
-  for (let i = C.linearUntil + 1; i <= n; i++) v *= C.growth;
+  for (let i = C.linearUntil + 1; i <= n; i++) { let g = 1; for (const [from, k] of C.bands) if (i >= from) g = k; v *= g; }
   return Math.round(v);
 }
 /** Experiencia total para llegar al nivel n desde el 1. */
@@ -43,6 +43,17 @@ export const keepRaidXpOnDeath = () => XP_DEATH.mode === 'nada';
 export function killXp(type: string, elite: boolean, boss = false) {
   if (boss) return XP.boss;
   return (XP.kill[type] ?? 0) * (elite ? XP.eliteMult : 1);
+}
+/** v4b: experiencia base de una muerte con las reglas de Basu (oleada ×0,3; pasado el tope de 1.500 base por incursión, ×0,5). Devuelve la base que suma al contador. */
+export function killXpRaid(base: number, wave: boolean, killBaseSoFar: number) {
+  let v = base * (wave ? XP.waveMult : 1);
+  if (killBaseSoFar >= XP.killSoftCap) v *= XP.overCapMult;
+  return v;
+}
+/** v4b: experiencia que se asegura al extraer. El ×1,5 del helipuerto no se aplica a la del jefe. `raidXp` y `bossXp` ya llevan el ×mapa. */
+export function extractRaidXp(raidXp: number, bossXp: number, minutes: number, mapMult: number, heli: boolean) {
+  const rest = Math.max(0, raidXp - bossXp) + extractXp(minutes) * mapMult;
+  return rest * (heli ? XP.helipadMult : 1) + bossXp;
 }
 export const extractXp = (minutes: number) => XP.extractBase + XP.extractPerMin * Math.floor(minutes);
 /** Misión: 60-150 según la dificultad (0-1). */

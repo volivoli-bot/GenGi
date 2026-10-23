@@ -62,6 +62,8 @@ export interface RaidCtx {
   // ---- v4.2 ----
   /** Ralentiza al jugador (fracción 0-1) durante `sec` s (se queda el más fuerte). */
   slowPlayer?(k: number, sec: number): void;
+  /** v4b: tope de vista de los enemigos (Ventisca), en casillas. */
+  sightCapTiles?(): number;
   /** Hace aparecer un enemigo (llamada de la Matriarca). */
   summon?(type: EnemyType, x: number, y: number): Enemy | null;
   toast?(msg: string, sec?: number): void;
@@ -162,6 +164,10 @@ export class Enemy {
   baseTint: number | null = null;
   /** v4: guardián de la guarida de la Matriarca. */
   lair = false;
+  /** v4b: de oleada/horda (30 % de experiencia). */
+  wave = false;
+  /** v4b: líder de la manada a la que pertenece (lobos). */
+  packOf: Enemy | null = null;
   tint(c: number | null) { c ??= this.baseTint; if (c !== this.tintC) { this.tintC = c; this.rig?.setTint(c); } }
   get x() { return this.sprite.x; }
   get y() { return this.sprite.y; }
@@ -213,6 +219,7 @@ export class EnemyManager {
       if (extra.group !== undefined) e.group = extra.group;
       if (extra.mut) this.mutate(e, extra.mut as MutationId, true);
       if (extra.elite) { e.elite = true; e.rig.setElite(ELITE.scale); }
+      if (extra.wave) e.wave = true;
       if (extra.lair) { e.lair = true; if (type !== 'matriarca') { e.baseTint = 0x9fd8ff; e.tint(null); } }
       if (extra.swell !== undefined) { this.startSwell(e, true); e.t = extra.swell; }
     }
@@ -314,7 +321,7 @@ export class EnemyManager {
 
   /** Vista con cono + medidor (solo si no te ha detectado); en alerta te tiene localizado sin cono. */
   private perceive(e: Enemy, acc: number, dist: number, px: number, py: number) {
-    const range = (STEALTH.sightTiles[e.def.type] ?? 6) * TILE;
+    const range = Math.min(STEALTH.sightTiles[e.def.type] ?? 6, this.c.sightCapTiles?.() ?? 99) * TILE;
     if (e.def.type === 'reptante') return;
     if (!isUnaware(e)) {
       // el Enjambre te rastrea de oído mientras estés cerca
@@ -429,6 +436,14 @@ export class EnemyManager {
     const r = ATTACKS.hinchado.radiusTiles * TILE;
     e.warn = this.c.world.add.image(e.x, e.y, 'aviso-ataque').setDisplaySize(r * 2, r * 2).setDepth(5);
     e.icon?.setVisible(false);
+  }
+
+  /** Depuración/QA: quita un enemigo sin cadáver, sin experiencia ni botín. */
+  despawn(e: Enemy) {
+    if (e.dead || !this.list.includes(e)) return;
+    e.dead = true; e.icon?.destroy(); e.hpBar?.destroy(); this.destroyMarks(e);
+    const sp = e.sprite; this.c.world.time.delayedCall(0, () => sp.destroy());
+    e.rig.destroy(); this.list.splice(this.list.indexOf(e), 1);
   }
 
   kill(e: Enemy) {
@@ -800,7 +815,7 @@ export class EnemyManager {
     return this.list.filter(e => !e.dead).map(e => ({
       type: e.def.type, x: Math.round(e.x), y: Math.round(e.y), hp: e.hp, maxHp: e.maxHp, dmg: e.dmg,
       gx: e.gx, gy: e.gy, swell: e.state === 'swell' ? Math.max(0, e.t) : undefined, bleed: e.bleed || undefined,
-      mut: e.mut, group: e.group, elite: e.elite || undefined, lair: e.lair || undefined, ice: e.def.type === 'congelado' ? e.ice : undefined,
+      mut: e.mut, group: e.group, elite: e.elite || undefined, lair: e.lair || undefined, wave: e.wave || undefined, ice: e.def.type === 'congelado' ? e.ice : undefined,
     }));
   }
 
